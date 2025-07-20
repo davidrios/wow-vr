@@ -388,7 +388,7 @@ impl MPQFile {
         buf.split(|&byte| byte == b'\n')
             .map(|part| {
                 if part.len() == 0 {
-                    Ok("".to_string())
+                    Ok(String::from(""))
                 } else {
                     String::from_utf8(part[0..part.len() - 1].to_vec()).map_err(Error::from)
                 }

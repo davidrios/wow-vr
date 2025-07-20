@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bitflags = { workspace = true }
 byteorder = { workspace = true }
+custom_debug = { workspace = true }
 flate2 = { workspace = true }
 num_enum = { workspace = true }
 once_cell = { workspace = true }

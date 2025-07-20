@@ -302,7 +302,7 @@ fn read_block_table(reader: &File, header: &FileHeader) -> Result<Vec<BlockTable
 }
 
 impl MPQFile {
-    fn get_hash_table_entry(self: &Self, filename: &str) -> Result<&HashTableEntry, Error> {
+    fn get_hash_table_entry(&self, filename: &str) -> Result<&HashTableEntry, Error> {
         let hash_a = hash(filename, HashType::HashA)?;
         let hash_b = hash(filename, HashType::HashB)?;
 
@@ -311,7 +311,7 @@ impl MPQFile {
             .ok_or(Error::FileNotFound)
     }
 
-    pub fn read_file(self: &Self, filename: &str) -> Result<Vec<u8>, Error> {
+    pub fn read_file(&self, filename: &str) -> Result<Vec<u8>, Error> {
         let entry = self.get_hash_table_entry(filename)?;
 
         let block = self
@@ -383,7 +383,7 @@ impl MPQFile {
         Ok(res)
     }
 
-    pub fn get_file_list(self: &mut Self) -> Result<Vec<String>, Error> {
+    pub fn get_file_list(&mut self) -> Result<Vec<String>, Error> {
         let buf = self.read_file("(listfile)")?;
         buf.split(|&byte| byte == b'\n')
             .map(|part| {

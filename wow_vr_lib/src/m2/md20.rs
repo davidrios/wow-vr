@@ -89,6 +89,35 @@ impl Data {
     pub fn flags(&self) -> &Flags {
         &self.flags
     }
+
+    pub fn vertices(&mut self) -> Result<Vec<[f32; 3]>, Error> {
+        Ok(vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 2.0, 0.0],
+            [2.0, 2.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ])
+    }
+
+    pub fn uv_0(&mut self) -> Result<Vec<[f32; 2]>, Error> {
+        Ok(vec![[0.0, 1.0], [0.5, 0.0], [1.0, 0.0], [0.5, 1.0]])
+    }
+
+    pub fn normals(&mut self) -> Result<Vec<[f32; 3]>, Error> {
+        Ok(vec![
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+        ])
+    }
+
+    pub fn triangles(&mut self) -> Result<Vec<u32>, Error> {
+        Ok(vec![
+            0, 3, 1, // t1
+            1, 3, 2, // t2
+        ])
+    }
 }
 
 pub fn parse_chunk(raw_data: &Arc<Vec<u8>>, ofs: u64) -> Result<Box<Data>, Error> {

@@ -4,6 +4,7 @@
    Licensed on MIT
 */
 
+use bevy::render::mesh;
 use std::{
     io::{self, Cursor},
     string::FromUtf8Error,
@@ -73,6 +74,25 @@ pub struct M2 {
     raw_data: Arc<Vec<u8>>,
     file_id: String,
     data: Box<md20::Data>,
+}
+
+impl M2 {
+    pub fn to_mesh(&mut self) -> Result<mesh::Mesh, Error> {
+        Ok(mesh::Mesh::new(
+            mesh::PrimitiveTopology::TriangleList,
+            bevy::asset::RenderAssetUsages::default(),
+        )
+        // Add 4 vertices, each with its own position attribute (coordinate in
+        // 3D space), for each of the corners of the parallelogram.
+        .with_inserted_attribute(mesh::Mesh::ATTRIBUTE_POSITION, self.data.vertices()?)
+        // Assign a UV coordinate to each vertex.
+        .with_inserted_attribute(mesh::Mesh::ATTRIBUTE_UV_0, self.data.uv_0()?)
+        // Assign normals (everything points outwards)
+        .with_inserted_attribute(mesh::Mesh::ATTRIBUTE_NORMAL, self.data.normals()?)
+        // After defining all the vertices and their attributes, build each triangle using the
+        // indices of the vertices that make it up in a counter-clockwise order.
+        .with_inserted_indices(mesh::Indices::U32(self.data.triangles()?)))
+    }
 }
 
 pub fn load(raw_data: Vec<u8>, file_id: String) -> Result<M2, Error> {

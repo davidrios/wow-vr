@@ -1,10 +1,4 @@
-//! This example demonstrates the built-in 3d shapes in Bevy.
-//! The scene includes a patterned texture and a rotation for visualizing the normals and UVs.
-//!
-//! You can toggle wireframes with the space bar except on wasm. Wasm does not support
-//! `POLYGON_MODE_LINE` on the gpu.
-
-use std::f32::consts::PI;
+use std::{f32::consts::PI, path::PathBuf};
 
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
@@ -16,6 +10,7 @@ use bevy::{
         render_resource::{Extent3d, TextureDimension, TextureFormat},
     },
 };
+use wow_vr_lib::{m2, mpq};
 
 fn main() {
     App::new()
@@ -55,12 +50,24 @@ fn setup(
         ..default()
     });
 
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("Data")
+        .join("common-2.MPQ");
+    let mpq_file = mpq::load(&path).unwrap();
+
+    let fname = "World\\AZEROTH\\BOOTYBAY\\PASSIVEDOODAD\\BOOTYENTRANCE\\BootyBayEntrance_02.m2";
+    let data = mpq_file.read_file(fname).unwrap();
+
+    let mut m2_obj = m2::load(data, fname.to_string()).unwrap();
+
     let shapes = [
         meshes.add(Cuboid::default()),
         meshes.add(Tetrahedron::default()),
         meshes.add(Capsule3d::default()),
         meshes.add(Torus::default()),
-        meshes.add(Cylinder::default()),
+        // meshes.add(Cylinder::default()),
+        meshes.add(m2_obj.to_mesh().unwrap()),
         meshes.add(Cone::default()),
         meshes.add(ConicalFrustum::default()),
         meshes.add(Sphere::default().mesh().ico(5).unwrap()),

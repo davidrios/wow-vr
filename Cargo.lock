@@ -2827,6 +2827,7 @@ version = "0.0.1"
 dependencies = [
  "bevy",
  "log",
+ "wow_vr_lib",
 ]
 
 [[package]]
@@ -5406,6 +5407,7 @@ dependencies = [
 name = "wow_vr_lib"
 version = "0.0.1"
 dependencies = [
+ "bevy",
  "bitflags 2.9.1",
  "byteorder",
  "custom_debug",

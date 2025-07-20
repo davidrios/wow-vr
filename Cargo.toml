@@ -10,6 +10,7 @@ bevy = { version = "0.16.1", features = ["dynamic_linking", "wayland"] }
 byteorder = "1.5.0"
 flate2 = "1.1.2"
 log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
+num_enum = "0.7.4"
 once_cell = "1.21.3"
 thiserror = "2.0.12"
 

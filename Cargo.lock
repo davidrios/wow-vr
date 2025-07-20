@@ -5329,6 +5329,7 @@ dependencies = [
  "bitflags 2.9.1",
  "byteorder",
  "flate2",
+ "num_enum",
  "once_cell",
  "thiserror 2.0.12",
 ]

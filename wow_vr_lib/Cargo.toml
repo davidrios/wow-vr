@@ -7,5 +7,6 @@ edition = "2024"
 bitflags = { workspace = true }
 byteorder = { workspace = true }
 flate2 = { workspace = true }
+num_enum = { workspace = true }
 once_cell = { workspace = true }
 thiserror = { workspace = true }

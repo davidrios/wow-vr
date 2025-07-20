@@ -1,9 +1,10 @@
 use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use flate2::read::ZlibDecoder;
+use num_enum::{TryFromPrimitive, TryFromPrimitiveError};
 use std::{
     collections::HashMap,
-    fs,
+    fs::{self, File},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
@@ -14,6 +15,9 @@ use std::{
 pub enum Error {
     #[error("Invalid MPQ file")]
     InvalidFile,
+
+    #[error("Corrupted MPQ file")]
+    CorruptedFile,
 
     #[error("File not loaded, load it first")]
     NotLoaded,
@@ -26,6 +30,9 @@ pub enum Error {
 
     #[error("Generic error: {0}")]
     Generic(&'static str),
+
+    #[error("Invalid compression type {0}")]
+    InvalidChunkType(#[from] TryFromPrimitiveError<CompressionType>),
 
     #[error("Unsupported compression {0:?}")]
     UnsupportedCompression(CompressionType),
@@ -84,7 +91,8 @@ fn decrypt(data: &[u8], key: u32) -> Result<Vec<u8>, Error> {
     Ok(result)
 }
 
-#[derive(Debug, Copy, Clone)]
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, TryFromPrimitive)]
 pub enum CompressionType {
     Huffmann = 0x01,
     Zlib = 0x02,
@@ -93,23 +101,6 @@ pub enum CompressionType {
     Sparse = 0x20,
     AdpcmMono = 0x40,
     AdpcmStereo = 0x80,
-}
-
-impl TryFrom<u8> for CompressionType {
-    type Error = Error;
-
-    fn try_from(value: u8) -> Result<Self, Error> {
-        match value {
-            0x01 => Ok(CompressionType::Huffmann),
-            0x02 => Ok(CompressionType::Zlib),
-            0x08 => Ok(CompressionType::Pkware),
-            0x10 => Ok(CompressionType::Bzip2),
-            0x20 => Ok(CompressionType::Sparse),
-            0x40 => Ok(CompressionType::AdpcmMono),
-            0x80 => Ok(CompressionType::AdpcmStereo),
-            _ => Err(Error::UnknownCompression(value)),
-        }
-    }
 }
 
 fn decompress(compression_type: CompressionType, data: &[u8]) -> Result<Vec<u8>, Error> {
@@ -145,6 +136,12 @@ fn hash(string: &str, hash_type: HashType) -> Result<u32, Error> {
         seed2 = ch as u64 + seed1 + seed2 + (seed2 << 5) + 3 & 0xFFFFFFFF;
     }
     Ok(seed1 as u32)
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
+struct HashTableKey {
+    hash_a: u32,
+    hash_b: u32,
 }
 
 #[derive(Debug)]
@@ -189,11 +186,7 @@ impl BlockTableEntry {
     }
 }
 
-fn hash_table_key(hash_a: u32, hash_b: u32) -> String {
-    format!("{}-{}", hash_a.to_string(), hash_b.to_string())
-}
-
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub struct FileHeader {
     pub header_size: u32,
     pub archive_size: u32,
@@ -223,130 +216,108 @@ bitflags! {
 
 pub struct MPQFile {
     file_path: PathBuf,
-    header: Option<FileHeader>,
-    hash_table: Option<HashMap<String, HashTableEntry>>,
-    block_table: Option<Vec<BlockTableEntry>>,
+    header: FileHeader,
+    hash_table: HashMap<HashTableKey, HashTableEntry>,
+    block_table: Vec<BlockTableEntry>,
+}
+
+pub fn load(file_path: &Path) -> Result<MPQFile, Error> {
+    let mut reader = fs::OpenOptions::new().read(true).open(&file_path)?;
+
+    let mut magic_buf = [0u8; 4];
+    reader.read_exact(&mut magic_buf)?;
+    if &magic_buf != MAGIC_STRING {
+        return Err(Error::InvalidFile);
+    }
+
+    let mut header = FileHeader {
+        header_size: reader.read_u32::<LittleEndian>()?,
+        archive_size: reader.read_u32::<LittleEndian>()?,
+        format_version: reader.read_u16::<LittleEndian>()?,
+        sector_shift: reader.read_u16::<LittleEndian>()?,
+        hash_table_offset: reader.read_u32::<LittleEndian>()?,
+        block_table_offset: reader.read_u32::<LittleEndian>()?,
+        hash_table_entries: reader.read_u32::<LittleEndian>()?,
+        block_table_entries: reader.read_u32::<LittleEndian>()?,
+        extended_block_table_offset: None,
+        hash_table_offset_high: None,
+        hash_table_offset_low: None,
+    };
+    if header.format_version == 1 {
+        header.extended_block_table_offset = Some(reader.read_u64::<LittleEndian>()?);
+        header.hash_table_offset_high = Some(reader.read_u16::<LittleEndian>()?);
+        header.hash_table_offset_low = Some(reader.read_u16::<LittleEndian>()?);
+    }
+
+    Ok(MPQFile {
+        file_path: file_path.to_owned(),
+        header,
+        hash_table: read_hash_table(&reader, &header)?,
+        block_table: read_block_table(&reader, &header)?,
+    })
+}
+
+fn read_hash_table(
+    reader: &File,
+    header: &FileHeader,
+) -> Result<HashMap<HashTableKey, HashTableEntry>, Error> {
+    let key = hash("(hash table)", HashType::Table);
+
+    // let reader = fs::OpenOptions::new().read(true).open(&self.file_path)?;
+    let mut data_e = vec![0u8; header.hash_table_entries as usize * 16];
+    reader.read_exact_at(&mut data_e, header.hash_table_offset as u64)?;
+    let data = decrypt(&data_e, key?)?;
+
+    let mut res: HashMap<HashTableKey, HashTableEntry> =
+        HashMap::with_capacity(header.hash_table_entries as usize);
+
+    for i in 0..header.hash_table_entries {
+        let start = i as usize * 16;
+        let entry = HashTableEntry::from(&data[start..start + 16])?;
+        let key = HashTableKey {
+            hash_a: entry.hash_a,
+            hash_b: entry.hash_b,
+        };
+        res.insert(key, entry);
+    }
+
+    Ok(res)
+}
+
+fn read_block_table(reader: &File, header: &FileHeader) -> Result<Vec<BlockTableEntry>, Error> {
+    let key = hash("(block table)", HashType::Table);
+
+    let mut data_e = vec![0u8; header.block_table_entries as usize * 16];
+    reader.read_exact_at(&mut data_e, header.block_table_offset as u64)?;
+    let data = decrypt(&data_e, key?)?;
+
+    let mut res: Vec<BlockTableEntry> = Vec::with_capacity(header.block_table_entries as usize);
+
+    for i in 0..header.block_table_entries {
+        let start = i as usize * 16;
+        let entry = BlockTableEntry::from(&data[start..start + 16])?;
+        res.push(entry);
+    }
+    Ok(res)
 }
 
 impl MPQFile {
-    pub fn new(file_path: &Path) -> MPQFile {
-        MPQFile {
-            file_path: file_path.to_owned(),
-            header: None,
-            hash_table: None,
-            block_table: None,
-        }
-    }
-
-    pub fn load(self: &mut Self) -> Result<(), Error> {
-        if self.header.is_some() {
-            return Ok(());
-        }
-
-        let mut reader = fs::OpenOptions::new().read(true).open(&self.file_path)?;
-
-        let mut magic_buf = [0u8; 4];
-        reader.read_exact(&mut magic_buf)?;
-        if &magic_buf != MAGIC_STRING {
-            return Err(Error::InvalidFile);
-        }
-
-        let mut header = FileHeader {
-            header_size: reader.read_u32::<LittleEndian>()?,
-            archive_size: reader.read_u32::<LittleEndian>()?,
-            format_version: reader.read_u16::<LittleEndian>()?,
-            sector_shift: reader.read_u16::<LittleEndian>()?,
-            hash_table_offset: reader.read_u32::<LittleEndian>()?,
-            block_table_offset: reader.read_u32::<LittleEndian>()?,
-            hash_table_entries: reader.read_u32::<LittleEndian>()?,
-            block_table_entries: reader.read_u32::<LittleEndian>()?,
-            extended_block_table_offset: None,
-            hash_table_offset_high: None,
-            hash_table_offset_low: None,
-        };
-        if header.format_version == 1 {
-            header.extended_block_table_offset = Some(reader.read_u64::<LittleEndian>()?);
-            header.hash_table_offset_high = Some(reader.read_u16::<LittleEndian>()?);
-            header.hash_table_offset_low = Some(reader.read_u16::<LittleEndian>()?);
-        }
-        self.header = Some(header);
-
-        self.read_hash_table()?;
-        self.read_block_table()?;
-
-        Ok(())
-    }
-
-    fn read_hash_table(self: &mut Self) -> Result<(), Error> {
-        let key = hash("(hash table)", HashType::Table);
-        let Some(ref header) = self.header else {
-            return Err(Error::NotLoaded);
-        };
-
-        let reader = fs::OpenOptions::new().read(true).open(&self.file_path)?;
-        let mut data_e = vec![0u8; header.hash_table_entries as usize * 16];
-        reader.read_exact_at(&mut data_e, header.hash_table_offset as u64)?;
-        let data = decrypt(&data_e, key?)?;
-
-        let mut res: HashMap<String, HashTableEntry> =
-            HashMap::with_capacity(header.hash_table_entries as usize);
-
-        for i in 0..header.hash_table_entries {
-            let start = i as usize * 16;
-            let entry = HashTableEntry::from(&data[start..start + 16])?;
-            let key = hash_table_key(entry.hash_a, entry.hash_b);
-            res.insert(key, entry);
-        }
-
-        self.hash_table = Some(res);
-
-        Ok(())
-    }
-
-    fn read_block_table(self: &mut Self) -> Result<(), Error> {
-        let key = hash("(block table)", HashType::Table);
-        let Some(ref header) = self.header else {
-            return Err(Error::NotLoaded);
-        };
-
-        let reader = fs::OpenOptions::new().read(true).open(&self.file_path)?;
-        let mut data_e = vec![0u8; header.block_table_entries as usize * 16];
-        reader.read_exact_at(&mut data_e, header.block_table_offset as u64)?;
-        let data = decrypt(&data_e, key?)?;
-
-        let mut res: Vec<BlockTableEntry> = Vec::with_capacity(header.block_table_entries as usize);
-
-        for i in 0..header.block_table_entries {
-            let start = i as usize * 16;
-            let entry = BlockTableEntry::from(&data[start..start + 16])?;
-            res.push(entry);
-        }
-        self.block_table = Some(res);
-        Ok(())
-    }
-
     fn get_hash_table_entry(self: &Self, filename: &str) -> Result<&HashTableEntry, Error> {
         let hash_a = hash(filename, HashType::HashA)?;
         let hash_b = hash(filename, HashType::HashB)?;
 
-        let Some(ref hash_table) = self.hash_table else {
-            return Err(Error::NotLoaded);
-        };
-
-        if let Some(entry) = hash_table.get(&hash_table_key(hash_a, hash_b)) {
-            Ok(entry)
-        } else {
-            Err(Error::FileNotFound)
-        }
+        self.hash_table
+            .get(&HashTableKey { hash_a, hash_b })
+            .ok_or(Error::FileNotFound)
     }
 
     pub fn read_file(self: &Self, filename: &str) -> Result<Vec<u8>, Error> {
         let entry = self.get_hash_table_entry(filename)?;
-        let (Some(header), Some(block_table)) = (&self.header, &self.block_table) else {
-            return Err(Error::NotLoaded);
-        };
 
-        let block = &block_table[entry.block_table_index as usize];
+        let block = self
+            .block_table
+            .get(entry.block_table_index as usize)
+            .ok_or(Error::CorruptedFile)?;
 
         let block_flags = BlockFlags::from_bits_retain(block.flags);
         if !block_flags.contains(BlockFlags::EXISTS) {
@@ -359,6 +330,7 @@ impl MPQFile {
         if block.archive_size == 0 {
             return Ok(vec![]);
         }
+
         let reader = fs::OpenOptions::new().read(true).open(&self.file_path)?;
         let mut raw_data = vec![0u8; block.archive_size as usize];
         reader.read_exact_at(&mut raw_data, block.offset as u64)?;
@@ -373,7 +345,7 @@ impl MPQFile {
             });
         }
 
-        let sector_size = 512 << header.sector_shift;
+        let sector_size = 512 << (&self.header).sector_shift;
         let sectors = (block.size as usize / sector_size) + 1;
 
         let mut data_c = Cursor::new(&raw_data);
@@ -467,12 +439,11 @@ mod tests {
             .join("Data")
             .join("common.MPQ");
 
-        let mut mpq_file = MPQFile::new(&path);
-        mpq_file.load().unwrap();
+        let mut mpq_file = load(&path).unwrap();
         dbg!(&mpq_file.header);
         let entry = mpq_file.get_hash_table_entry("(listfile)").unwrap();
         dbg!(entry);
-        let block = &mpq_file.block_table.as_ref().unwrap()[entry.block_table_index as usize];
+        let block = &mpq_file.block_table[entry.block_table_index as usize];
         dbg!(block);
         dbg!(BlockFlags::from_bits_retain(block.flags));
         dbg!(

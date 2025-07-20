@@ -363,8 +363,6 @@ impl MPQFile {
         let mut raw_data = vec![0u8; block.archive_size as usize];
         reader.read_exact_at(&mut raw_data, block.offset as u64)?;
 
-        //
-        // const isCompressed = (blockEntry.flags & MPQ_FILE_COMPRESS) === MPQ_FILE_COMPRESS;
         let is_compressed = block_flags.contains(BlockFlags::COMPRESS);
 
         if block_flags.contains(BlockFlags::SINGLE_UNIT) {
@@ -374,34 +372,27 @@ impl MPQFile {
                 raw_data
             });
         }
-        //
-        // const sectorSize = BigInt(512) << BigInt(this.header.sectorShift);
+
         let sector_size = 512 << header.sector_shift;
-        // let sectors = Number(BigInt(blockEntry.size) / sectorSize) + 1;
         let sectors = (block.size as usize / sector_size) + 1;
-        //
-        // const positions = [];
+
         let mut data_c = Cursor::new(&raw_data);
         let mut positions = Vec::with_capacity(sectors + 1);
-        // for (let i = 0; i < sectors + 1; i++)
-        // 	positions.push(fileData.readUInt32LE());
         for _ in 0..sectors + 1 {
             positions.push(data_c.read_u32::<LittleEndian>()?);
         }
+
         let mut res = Vec::with_capacity(block.size as usize);
         let mut res_c = Cursor::new(&mut res);
-        //
-        // const result = BufferWrapper.alloc(blockEntry.size);
+
         let mut compr_algo: (u8, Option<CompressionType>) = (0, None);
-        // for (let i = 0; i < sectors; i++) {
         for i in 0..sectors {
-            // 	fileData.seek(positions[i]);
             data_c.seek(SeekFrom::Start(positions[i] as u64))?;
-            // 	let sector = fileData.readBuffer(positions[i + 1] - positions[i]);
             let size = positions[i + 1] - positions[i];
+
             let mut sector = vec![0; size as usize];
             data_c.read_exact(&mut sector)?;
-            // 	if (isCompressed && sector.byteLength > 0 && blockEntry.size > blockEntry.archiveSize) {
+
             if is_compressed && size > 0 && block.size > block.archive_size {
                 if compr_algo.0 == 0 {
                     compr_algo.0 = sector[0];
@@ -417,8 +408,6 @@ impl MPQFile {
 
             res_c.write_all(&sector)?;
         }
-        // result.seek(0);
-        // return result;
         Ok(res)
     }
 
@@ -474,9 +463,9 @@ mod tests {
     #[test]
     fn mpq_works() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join("test.mpq");
+            .join("..")
+            .join("Data")
+            .join("common.MPQ");
 
         let mut mpq_file = MPQFile::new(&path);
         mpq_file.load().unwrap();

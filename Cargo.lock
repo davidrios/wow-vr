@@ -5323,6 +5323,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wow_vr_lib"
+version = "0.0.1"
+dependencies = [
+ "bitflags 2.9.1",
+ "byteorder",
+ "flate2",
+ "once_cell",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "x11-dl"
 version = "2.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

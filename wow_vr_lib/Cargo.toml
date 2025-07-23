@@ -16,3 +16,6 @@ thiserror = { workspace = true }
 tobj = { workspace = true }
 wow-m2 = { workspace = true }
 wow-mpq = { workspace = true }
+
+[features]
+debug-print-all = ["wow-m2/debug-print-all"]

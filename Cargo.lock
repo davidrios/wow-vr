@@ -5975,6 +5975,7 @@ dependencies = [
  "anyhow",
  "bitflags 2.9.1",
  "bytes",
+ "custom_debug",
  "glam 0.30.4",
  "log",
  "memchr",

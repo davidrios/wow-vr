@@ -146,12 +146,8 @@ mod tests {
         let fname = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
 
         let mut m2 = load_from_mpq(&mut mpq_col, fname).unwrap();
-        dbg!(&m2.model.header);
-        dbg!(&m2.model.materials);
-        dbg!(&m2.model.textures);
-        dbg!(&m2.skins[0].header);
-        dbg!(&m2.skins[0].material_lookup);
-        dbg!(&m2.load_textures(&mut mpq_col).unwrap());
+        dbg!(&m2.model);
+        dbg!(&m2.skins);
 
         assert_eq!(0, 1);
     }

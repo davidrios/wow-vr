@@ -140,11 +140,6 @@ mod tests {
         let mut mpq_col = MPQCollection::load(&vec![
             base_path.join("common.MPQ").as_path(),
             base_path.join("common-2.MPQ").as_path(),
-            // base_path.join("expansion.MPQ").as_path(),
-            // base_path.join("lichking.MPQ").as_path(),
-            // base_path.join("patch.MPQ").as_path(),
-            // base_path.join("patch-2.MPQ").as_path(),
-            // base_path.join("patch-3.MPQ").as_path(),
         ])
         .unwrap();
 

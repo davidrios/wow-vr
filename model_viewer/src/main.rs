@@ -12,7 +12,7 @@ use bevy::{
 };
 use bevy_asset::UnapprovedPathMode;
 use bevy_obj::ObjPlugin;
-use wow_vr_lib::m2;
+use wow_vr_lib::{m2, mpq::MPQCollection};
 
 fn main() {
     let mut plugin = AssetPlugin::default();
@@ -60,17 +60,26 @@ fn setup(
         ..default()
     });
 
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("Data")
-        .join("common-2.MPQ");
-    let mut mpq_file = wow_mpq::OpenOptions::new().open(&path).unwrap();
+        .join("Data");
+
+    let mut mpq_col = MPQCollection::load(&vec![
+        base_path.join("common.MPQ").as_path(),
+        base_path.join("common-2.MPQ").as_path(),
+        base_path.join("expansion.MPQ").as_path(),
+        base_path.join("lichking.MPQ").as_path(),
+        base_path.join("patch.MPQ").as_path(),
+        base_path.join("patch-2.MPQ").as_path(),
+        base_path.join("patch-3.MPQ").as_path(),
+    ])
+    .unwrap();
 
     let fname = "world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2";
-    let mut m2_obj = m2::load_from_mpq(&mut mpq_file, fname).unwrap();
+    let mut m2_obj = m2::load_from_mpq(&mut mpq_col, fname).unwrap();
 
     let fname2 = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
-    let mut m2_obj2 = m2::load_from_mpq(&mut mpq_file, fname2).unwrap();
+    let mut m2_obj2 = m2::load_from_mpq(&mut mpq_col, fname2).unwrap();
 
     let fishingbox = Mesh3d::from(
         asset_server.load(

@@ -10,14 +10,23 @@ use bevy::{
         render_resource::{Extent3d, TextureDimension, TextureFormat},
     },
 };
-use wow_vr_lib::{m2, mpq};
+use bevy_asset::UnapprovedPathMode;
+use bevy_obj::ObjPlugin;
+use wow_vr_lib::m2;
 
 fn main() {
+    let mut plugin = AssetPlugin::default();
+    plugin.mode = AssetMode::Unprocessed;
+    plugin.unapproved_path_mode = UnapprovedPathMode::Allow;
+
     App::new()
         .add_plugins((
-            DefaultPlugins.set(ImagePlugin::default_nearest()),
+            DefaultPlugins
+                .set(ImagePlugin::default_nearest())
+                .set(plugin),
             #[cfg(not(target_arch = "wasm32"))]
             WireframePlugin::default(),
+            ObjPlugin::default(),
         ))
         .add_systems(Startup, setup)
         .add_systems(
@@ -44,6 +53,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     let debug_material = materials.add(StandardMaterial {
         base_color_texture: Some(images.add(uv_debug_texture())),
@@ -54,12 +64,33 @@ fn setup(
         .join("..")
         .join("Data")
         .join("common-2.MPQ");
-    let mpq_file = mpq::load(&path).unwrap();
+    let mut mpq_file = wow_mpq::OpenOptions::new().open(&path).unwrap();
 
-    let fname = "World\\AZEROTH\\BOOTYBAY\\PASSIVEDOODAD\\BOOTYENTRANCE\\BootyBayEntrance_02.m2";
-    let data = mpq_file.read_file(fname).unwrap();
+    let fname = "world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2";
+    let mut m2_obj = m2::load_from_mpq(&mut mpq_file, fname).unwrap();
 
-    let mut m2_obj = m2::load(data, fname.to_string()).unwrap();
+    let fname2 = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
+    let mut m2_obj2 = m2::load_from_mpq(&mut mpq_file, fname2).unwrap();
+
+    let fishingbox = Mesh3d::from(
+        asset_server.load(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("Data")
+                .join("exports/world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.obj"),
+        ),
+    );
+    commands.spawn((
+        fishingbox,
+        MeshMaterial3d(debug_material.clone()),
+        Transform::from_xyz(
+            -SHAPES_X_EXTENT / 2. + 6 as f32 / (7 - 1) as f32 * SHAPES_X_EXTENT,
+            2.0,
+            Z_EXTENT / 2.,
+        )
+        .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+        Shape,
+    ));
 
     let shapes = [
         meshes.add(Cuboid::default()),
@@ -68,10 +99,11 @@ fn setup(
         meshes.add(Torus::default()),
         // meshes.add(Cylinder::default()),
         meshes.add(m2_obj.to_mesh().unwrap()),
-        meshes.add(Cone::default()),
-        meshes.add(ConicalFrustum::default()),
+        // meshes.add(Cone::default()),
+        meshes.add(m2_obj2.to_mesh().unwrap()),
+        // meshes.add(ConicalFrustum::default()),
         meshes.add(Sphere::default().mesh().ico(5).unwrap()),
-        meshes.add(Sphere::default().mesh().uv(32, 18)),
+        // meshes.add(Sphere::default().mesh().uv(32, 18)),
     ];
 
     let extrusions = [
@@ -84,7 +116,7 @@ fn setup(
         meshes.add(Extrusion::new(Triangle2d::default(), 1.)),
     ];
 
-    let num_shapes = shapes.len();
+    let num_shapes = shapes.len() + 1;
 
     for (i, shape) in shapes.into_iter().enumerate() {
         commands.spawn((
@@ -94,8 +126,8 @@ fn setup(
                 -SHAPES_X_EXTENT / 2. + i as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
                 2.0,
                 Z_EXTENT / 2.,
-            )
-            .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+            ),
+            // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
             Shape,
         ));
     }
@@ -111,8 +143,8 @@ fn setup(
                     + i as f32 / (num_extrusions - 1) as f32 * EXTRUSION_X_EXTENT,
                 2.0,
                 -Z_EXTENT / 2.,
-            )
-            .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+            ),
+            // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
             Shape,
         ));
     }

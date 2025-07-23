@@ -1,12 +1,16 @@
-use std::{io::Cursor, sync::Arc};
+use std::{
+    io::{Cursor, Seek},
+    sync::Arc,
+};
 
+use bevy::math::{U8Vec4, Vec2, Vec3};
 use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt};
 use custom_debug::Debug;
 
-use crate::{common_types::CAaBox, utils};
+use crate::{common_types::CAaBox, errors::Error, utils};
 
-use super::{Error, Magic};
+use super::Magic;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,44 +23,79 @@ bitflags! {
 }
 
 #[derive(Debug)]
-pub struct OffsetSize {
-    offset: u64,
-    size: u64,
+pub struct ArrayPositions {
+    model_name: utils::OffsetSize,
+    global_loops: utils::OffsetSize,
+    animations: utils::OffsetSize,
+    animation_lookup: utils::OffsetSize,
+    bones: utils::OffsetSize,
+    vertices: utils::OffsetSize,
+    colors: utils::OffsetSize,
+    textures: utils::OffsetSize,
+    texture_weights: utils::OffsetSize,
+    texture_transforms: utils::OffsetSize,
+    replaceable_texture_lookups: utils::OffsetSize,
+    materials: utils::OffsetSize,
+    texture_combos: utils::OffsetSize,
+    transparency_lookups: utils::OffsetSize,
+    texture_transform_lookups: utils::OffsetSize,
+    bone_indices: utils::OffsetSize,
+    bone_combos: utils::OffsetSize,
+    texture_coords_combos: utils::OffsetSize,
+    collision_indices: utils::OffsetSize,
+    collision_positions: utils::OffsetSize,
+    collision_facenormals: utils::OffsetSize,
+    attachments: utils::OffsetSize,
+    attachments_lookup_table: utils::OffsetSize,
+    events: utils::OffsetSize,
+    lights: utils::OffsetSize,
+    cameras: utils::OffsetSize,
+    camera_lookup_table: utils::OffsetSize,
+    ribbon_emitters: utils::OffsetSize,
+    particle_emitters: utils::OffsetSize,
+    texture_combiner_combos: Option<utils::OffsetSize>,
 }
 
 #[derive(Debug)]
-pub struct ArrayPositions {
-    model_name: OffsetSize,
-    global_loops: OffsetSize,
-    animations: OffsetSize,
-    animation_lookup: OffsetSize,
-    bones: OffsetSize,
-    vertices: OffsetSize,
-    view_count: u32,
-    colors: OffsetSize,
-    textures: OffsetSize,
-    texture_weights: OffsetSize,
-    texture_transforms: OffsetSize,
-    replaceable_texture_lookups: OffsetSize,
-    materials: OffsetSize,
-    texture_combos: OffsetSize,
-    transparency_lookups: OffsetSize,
-    texture_transform_lookups: OffsetSize,
-    bone_indices: OffsetSize,
-    bone_combos: OffsetSize,
-    texture_coords_combos: OffsetSize,
-    collision_indices: OffsetSize,
-    collision_positions: OffsetSize,
-    collision_facenormals: OffsetSize,
-    attachments: OffsetSize,
-    attachments_lookup_table: OffsetSize,
-    events: OffsetSize,
-    lights: OffsetSize,
-    cameras: OffsetSize,
-    camera_lookup_table: OffsetSize,
-    ribbon_emitters: OffsetSize,
-    particle_emitters: OffsetSize,
-    texture_combiner_combos: Option<OffsetSize>,
+pub struct VerticeData {
+    #[debug(with = utils::buf_len_fmt)]
+    vertices: Vec<Vec3>,
+    #[debug(with = utils::buf_len_fmt)]
+    uv: Vec<Vec2>,
+    #[debug(with = utils::buf_len_fmt)]
+    uv2: Vec<Vec2>,
+    #[debug(with = utils::buf_len_fmt)]
+    normals: Vec<Vec3>,
+    #[debug(with = utils::buf_len_fmt)]
+    bone_weights: Vec<U8Vec4>,
+    #[debug(with = utils::buf_len_fmt)]
+    bone_indices: Vec<U8Vec4>,
+}
+
+impl VerticeData {
+    pub fn vertices(&mut self) -> &Vec<Vec3> {
+        &self.vertices
+    }
+    pub fn uv(&mut self) -> &Vec<Vec2> {
+        &self.uv
+    }
+    pub fn uv2(&mut self) -> &Vec<Vec2> {
+        &self.uv2
+    }
+    pub fn normals(&mut self) -> &Vec<Vec3> {
+        &self.normals
+    }
+    pub fn bone_weights(&mut self) -> &Vec<U8Vec4> {
+        &self.bone_weights
+    }
+    pub fn bone_indices(&mut self) -> &Vec<U8Vec4> {
+        &self.bone_indices
+    }
+}
+
+#[derive(Debug)]
+pub struct ArrayData {
+    vertice_data: Option<VerticeData>,
 }
 
 #[derive(Debug)]
@@ -68,6 +107,8 @@ pub struct Data {
     model_name: Option<String>,
     flags: Flags,
     array_positions: ArrayPositions,
+    array_data: ArrayData,
+    view_count: usize,
     bounding_box: CAaBox,
     bounding_sphere_radius: f32,
     collision_box: CAaBox,
@@ -90,26 +131,40 @@ impl Data {
         &self.flags
     }
 
-    pub fn vertices(&mut self) -> Result<Vec<[f32; 3]>, Error> {
-        Ok(vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 2.0, 0.0],
-            [2.0, 2.0, 0.0],
-            [1.0, 0.0, 0.0],
-        ])
+    pub fn view_count(&self) -> usize {
+        self.view_count
     }
 
-    pub fn uv_0(&mut self) -> Result<Vec<[f32; 2]>, Error> {
-        Ok(vec![[0.0, 1.0], [0.5, 0.0], [1.0, 0.0], [0.5, 1.0]])
-    }
+    pub fn vertice_data(&mut self) -> Result<&mut VerticeData, Error> {
+        Ok(self.array_data.vertice_data.get_or_insert({
+            let vertice_count = self.array_positions.vertices.size as usize / 3;
+            let mut data_c = Cursor::new(self.raw_data.as_ref());
+            data_c
+                .seek_relative(self.offset as i64 + self.array_positions.vertices.offset as i64)?;
+            let mut vertices = Vec::with_capacity(vertice_count);
+            let mut normals = Vec::with_capacity(vertice_count);
+            let mut uv = Vec::with_capacity(vertice_count);
+            let mut uv2 = Vec::with_capacity(vertice_count);
+            let mut bone_weights = Vec::with_capacity(vertice_count);
+            let mut bone_indices = Vec::with_capacity(vertice_count);
+            for _ in 0..vertice_count {
+                vertices.push(utils::read_vec3(&mut data_c)?);
+                bone_weights.push(utils::read_u8vec4(&mut data_c)?);
+                bone_indices.push(utils::read_u8vec4(&mut data_c)?);
+                normals.push(utils::read_vec3(&mut data_c)?);
+                uv.push(utils::read_vec2(&mut data_c)?);
+                uv2.push(utils::read_vec2(&mut data_c)?);
+            }
 
-    pub fn normals(&mut self) -> Result<Vec<[f32; 3]>, Error> {
-        Ok(vec![
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-        ])
+            VerticeData {
+                vertices,
+                uv,
+                uv2,
+                normals,
+                bone_weights,
+                bone_indices,
+            }
+        }))
     }
 
     pub fn triangles(&mut self) -> Result<Vec<u32>, Error> {
@@ -138,7 +193,7 @@ pub fn parse_chunk(raw_data: &Arc<Vec<u8>>, ofs: u64) -> Result<Box<Data>, Error
     let bones = get_offsetsize(&mut data_c)?;
     let bone_indices = get_offsetsize(&mut data_c)?;
     let vertices = get_offsetsize(&mut data_c)?;
-    let view_count = data_c.read_u32::<LittleEndian>()?;
+    let view_count = data_c.read_u32::<LittleEndian>()? as usize;
     let colors = get_offsetsize(&mut data_c)?;
     let textures = get_offsetsize(&mut data_c)?;
     let texture_weights = get_offsetsize(&mut data_c)?;
@@ -181,6 +236,7 @@ pub fn parse_chunk(raw_data: &Arc<Vec<u8>>, ofs: u64) -> Result<Box<Data>, Error
         bounding_sphere_radius,
         collision_box,
         collision_sphere_radius,
+        view_count,
         array_positions: ArrayPositions {
             model_name,
             global_loops,
@@ -189,7 +245,6 @@ pub fn parse_chunk(raw_data: &Arc<Vec<u8>>, ofs: u64) -> Result<Box<Data>, Error
             bones,
             bone_indices,
             vertices,
-            view_count,
             colors,
             textures,
             texture_weights,
@@ -214,40 +269,23 @@ pub fn parse_chunk(raw_data: &Arc<Vec<u8>>, ofs: u64) -> Result<Box<Data>, Error
             particle_emitters,
             texture_combiner_combos,
         },
+        array_data: ArrayData { vertice_data: None },
     }))
 }
 
-fn get_offsetsize(data_c: &mut Cursor<&Vec<u8>>) -> Result<OffsetSize, Error> {
-    Ok(OffsetSize {
+fn get_offsetsize(data_c: &mut Cursor<&Vec<u8>>) -> Result<utils::OffsetSize, Error> {
+    Ok(utils::OffsetSize {
         size: data_c.read_u32::<LittleEndian>()? as u64,
         // const modelNameOfs = this.data.readUInt32LE();
         offset: data_c.read_u32::<LittleEndian>()? as u64,
     })
 }
 
-pub fn read_string_from_buffer(buffer: &[u8], os: &OffsetSize) -> Result<String, Error> {
+pub fn read_string_from_buffer(buffer: &[u8], os: &utils::OffsetSize) -> Result<String, Error> {
     let mut name_buf = (&buffer[os.offset as usize..(os.offset + os.size) as usize]).to_vec();
     if name_buf.last() == Some(&0) {
         name_buf.pop();
     }
 
     Ok(String::from_utf8(name_buf)?)
-}
-
-// async parseChunk
-pub fn parse_rest(data_c: &mut Cursor<&Vec<u8>>, fname: &str) -> Result<(), Error> {
-    // const listfile = core.view.casc.listfile;
-    // let baseName = listfile.getByID(this.fileID);
-    // baseName = baseName.substring(0, baseName.length - 3);
-    let base_name = &fname[..fname.len() - 3];
-    dbg!(base_name);
-    // this.skins = new Array(this.viewCount);
-    // for (let i = 0; i < this.viewCount; i++)
-    // 	this.skins[i] = new Skin(listfile.getByFilename(`${baseName}${i.toString().padStart(2, 0)}.skin`));
-    //
-    // // for (let i = 0, n = this.textures.length; i < n; i++)
-    // // 	this.textures[i].fileDataID = this.data.readUInt32LE();
-    //
-    // this.skeletonFileID = listfile.getByFilename(`${baseName}.skel`);
-    Ok(())
 }

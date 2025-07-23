@@ -1,51 +1,16 @@
 use bitflags::bitflags;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use flate2::read::ZlibDecoder;
-use num_enum::{TryFromPrimitive, TryFromPrimitiveError};
+use num_enum::TryFromPrimitive;
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    io::{Cursor, Read, Seek, SeekFrom, Write},
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
-    string::FromUtf8Error,
 };
 
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("Invalid MPQ file")]
-    InvalidFile,
-
-    #[error("Corrupted MPQ file")]
-    CorruptedFile,
-
-    #[error("File not loaded, load it first")]
-    NotLoaded,
-
-    #[error("Error decoding value")]
-    Decode,
-
-    #[error("File not found in hash table")]
-    FileNotFound,
-
-    #[error("Generic error: {0}")]
-    Generic(&'static str),
-
-    #[error("Invalid compression type {0}")]
-    InvalidChunkType(#[from] TryFromPrimitiveError<CompressionType>),
-
-    #[error("Unsupported compression {0:?}")]
-    UnsupportedCompression(CompressionType),
-
-    #[error("Unknown compression {0}")]
-    UnknownCompression(u8),
-
-    #[error("io error")]
-    Io(#[from] io::Error),
-
-    #[error("UTF8 conversion error")]
-    FromUtf8Error(#[from] FromUtf8Error),
-}
+use crate::errors::Error;
 
 static ENCRYPTION_TABLE: once_cell::sync::Lazy<Vec<u32>> = once_cell::sync::Lazy::new(|| {
     let mut seed = 0x00100001;

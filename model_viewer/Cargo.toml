@@ -5,5 +5,9 @@ edition = "2024"
 
 [dependencies]
 bevy = { workspace = true }
+bevy_asset = { workspace = true }
+bevy_obj = { workspace = true }
 log = { workspace = true }
+tobj = { workspace = true }
+wow-mpq = { workspace = true }
 wow_vr_lib = { path = "../wow_vr_lib" }

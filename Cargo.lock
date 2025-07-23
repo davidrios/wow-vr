@@ -5979,6 +5979,7 @@ dependencies = [
  "log",
  "memchr",
  "thiserror 2.0.12",
+ "wow-utils",
 ]
 
 [[package]]
@@ -6003,6 +6004,13 @@ dependencies = [
  "sha1",
  "tempfile",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "wow-utils"
+version = "0.2.0"
+dependencies = [
+ "custom_debug",
 ]
 
 [[package]]

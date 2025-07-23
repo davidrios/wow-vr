@@ -1,13 +1,18 @@
 use bevy::{
+    asset::RenderAssetUsages,
+    image::Image,
     math::{Vec2, Vec3},
-    render::mesh,
+    render::{
+        mesh,
+        render_resource::{Extent3d, TextureDimension, TextureFormat},
+    },
 };
 use std::io::Cursor;
 use wow_m2::common::{C2Vector, C3Vector};
 
 use custom_debug::Debug;
 
-use crate::errors::Error;
+use crate::{errors::Result, mpq::MPQCollection};
 
 #[derive(Debug)]
 pub struct M2 {
@@ -28,7 +33,7 @@ fn c2_to_vec2(vec: C2Vector) -> Vec2 {
 }
 
 impl M2 {
-    pub fn to_mesh(&mut self) -> Result<mesh::Mesh, Error> {
+    pub fn to_mesh(&mut self) -> Result<mesh::Mesh> {
         let mut vertices: Vec<Vec3> = vec![];
         let mut uvs: Vec<Vec2> = vec![];
         let mut normals: Vec<Vec3> = vec![];
@@ -65,10 +70,33 @@ impl M2 {
         .with_inserted_attribute(mesh::Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_indices(mesh::Indices::U32(triangles)))
     }
+
+    pub fn load_textures(&mut self, mpq_col: &mut MPQCollection) -> Result<Vec<Image>> {
+        let mut res = Vec::with_capacity(self.model.textures.len());
+
+        for t in &self.model.textures {
+            let filename = t.filename.string.to_string_lossy();
+            dbg!(&filename);
+            let texdata = mpq_col.read_file(&filename)?;
+            res.push(Image::new_fill(
+                Extent3d {
+                    width: 100 as u32,
+                    height: 100 as u32,
+                    depth_or_array_layers: 1,
+                },
+                TextureDimension::D2,
+                &texdata,
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::RENDER_WORLD,
+            ));
+        }
+
+        Ok(res)
+    }
 }
 
-pub fn load_from_mpq(mpq_file: &mut wow_mpq::Archive, fname: &str) -> Result<M2, Error> {
-    let m2data = mpq_file.read_file(fname)?;
+pub fn load_from_mpq(mpq_col: &mut MPQCollection, fname: &str) -> Result<M2> {
+    let m2data = mpq_col.read_file(fname)?;
     let mut reader = Cursor::new(&m2data);
     let mut model = Box::new(wow_m2::M2Model::parse(&mut reader)?);
 
@@ -88,7 +116,7 @@ pub fn load_from_mpq(mpq_file: &mut wow_mpq::Archive, fname: &str) -> Result<M2,
     let mut skins = Vec::<wow_m2::OldSkin>::with_capacity(num_skins);
     for i in 0..num_skins {
         let fname = format!("{}{:02}.skin", base_file_name, i);
-        let skin_data = mpq_file.read_file(&fname)?;
+        let skin_data = mpq_col.read_file(&fname)?;
         let mut skin_reader = Cursor::new(skin_data);
         let parsed_skin = wow_m2::OldSkin::parse(&mut skin_reader)?;
         skins.push(parsed_skin);
@@ -105,22 +133,30 @@ mod tests {
 
     #[test]
     fn load_m2_with_skins() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("Data")
-            .join("common-2.MPQ");
+            .join("Data");
 
-        let mut mpq_file = wow_mpq::OpenOptions::new().open(&path).unwrap();
-        dbg!(mpq_file.header());
+        let mut mpq_col = MPQCollection::load(&vec![
+            base_path.join("common.MPQ").as_path(),
+            base_path.join("common-2.MPQ").as_path(),
+            // base_path.join("expansion.MPQ").as_path(),
+            // base_path.join("lichking.MPQ").as_path(),
+            // base_path.join("patch.MPQ").as_path(),
+            // base_path.join("patch-2.MPQ").as_path(),
+            // base_path.join("patch-3.MPQ").as_path(),
+        ])
+        .unwrap();
 
-        dbg!(mpq_file.list().unwrap());
+        let fname = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
 
-        let fname =
-            "World\\AZEROTH\\BOOTYBAY\\PASSIVEDOODAD\\BOOTYENTRANCE\\BootyBayEntrance_02.m2";
-
-        let m2 = load_from_mpq(&mut mpq_file, fname).unwrap();
+        let mut m2 = load_from_mpq(&mut mpq_col, fname).unwrap();
         dbg!(&m2.model.header);
+        dbg!(&m2.model.materials);
+        dbg!(&m2.model.textures);
         dbg!(&m2.skins[0].header);
+        dbg!(&m2.skins[0].material_lookup);
+        dbg!(&m2.load_textures(&mut mpq_col).unwrap());
 
         assert_eq!(0, 1);
     }

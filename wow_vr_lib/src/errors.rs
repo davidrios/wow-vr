@@ -1,3 +1,5 @@
+use std::string::FromUtf8Error;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("MpqError")]
@@ -5,6 +7,9 @@ pub enum Error {
 
     #[error("M2Error")]
     M2Error(#[from] wow_m2::M2Error),
+
+    #[error("Generic error: {0}")]
+    Generic(&'static str),
     // #[error("Invalid compression type {0}")]
     // InvalidCompressionType(#[from] TryFromPrimitiveError<mpq::CompressionType>),
     //
@@ -26,6 +31,8 @@ pub enum Error {
     // #[error("io error")]
     // Io(#[from] io::Error),
     //
-    // #[error("UTF8 conversion error")]
-    // FromUtf8Error(#[from] FromUtf8Error),
+    #[error("UTF8 conversion error")]
+    FromUtf8Error(#[from] FromUtf8Error),
 }
+
+pub type Result<T> = std::result::Result<T, Error>;

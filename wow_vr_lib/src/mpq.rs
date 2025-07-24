@@ -5,7 +5,7 @@ use wow_mpq::Archive;
 
 use crate::errors::{Error, Result};
 
-pub fn header_fmt(archives: &Vec<Archive>, f: &mut fmt::Formatter) -> fmt::Result {
+pub fn header_fmt(archives: &Vec<Box<Archive>>, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "[\n")?;
     for a in archives {
         write!(f, "{:?}: {:#?},\n", a.path(), a.header())?;
@@ -17,7 +17,7 @@ pub fn header_fmt(archives: &Vec<Archive>, f: &mut fmt::Formatter) -> fmt::Resul
 #[derive(Debug)]
 pub struct MPQCollection {
     #[debug(with = header_fmt)]
-    pub archives: Vec<Archive>,
+    pub archives: Vec<Box<Archive>>,
 
     #[debug(skip)]
     pub file_map: HashMap<String, usize>,
@@ -32,7 +32,7 @@ impl MPQCollection {
         let mut archives = Vec::with_capacity(paths.len());
         let mut file_map = HashMap::new();
         for idx in 0..paths.len() {
-            let mut archive = wow_mpq::OpenOptions::new().open(&paths[idx])?;
+            let mut archive = Box::new(wow_mpq::OpenOptions::new().open(&paths[idx])?);
             for file_info in &archive.list()? {
                 file_map.insert(format_file_name(&file_info.name), idx);
             }

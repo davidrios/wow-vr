@@ -22,8 +22,8 @@ use crate::{
 #[derive(Debug)]
 pub struct M2 {
     model: Box<wow_m2::M2Model>,
-    skins: Vec<wow_m2::OldSkin>,
-    pub textures: VecDeque<Image>,
+    skins: Vec<Box<wow_m2::OldSkin>>,
+    pub textures: VecDeque<Box<Image>>,
 }
 
 fn c3_to_vec3(vec: C3Vector) -> Vec3 {
@@ -95,7 +95,7 @@ impl M2 {
     }
 }
 
-pub fn blp_to_image(mut blp: wow_m2::BlpTexture) -> Result<Image> {
+pub fn blp_to_image(mut blp: wow_m2::BlpTexture) -> Result<Box<Image>> {
     dbg!(&blp);
     let mip = &mut blp.mipmaps[0];
 
@@ -107,7 +107,7 @@ pub fn blp_to_image(mut blp: wow_m2::BlpTexture) -> Result<Image> {
         _ => return Err(Error::Generic("unsupported texture format")),
     };
 
-    let mut image = Image::default();
+    let mut image = Box::new(Image::default());
     image.texture_descriptor.size = Extent3d {
         width: mip.width,
         height: mip.height,
@@ -144,12 +144,12 @@ pub fn load_from_mpq(mpq_col: &mut MPQCollection, fname: &str) -> Result<M2> {
     let base_file_name = &fname[..fname.len() - 3];
 
     let num_skins = model.header.num_skin_profiles.unwrap_or(0) as usize;
-    let mut skins = Vec::<wow_m2::OldSkin>::with_capacity(num_skins);
+    let mut skins = Vec::<Box<wow_m2::OldSkin>>::with_capacity(num_skins);
     for i in 0..num_skins {
         let fname = format!("{}{:02}.skin", base_file_name, i);
         let skin_data = mpq_col.read_file(&fname)?;
         let mut skin_reader = Cursor::new(skin_data);
-        let parsed_skin = wow_m2::OldSkin::parse(&mut skin_reader)?;
+        let parsed_skin = Box::new(wow_m2::OldSkin::parse(&mut skin_reader)?);
         skins.push(parsed_skin);
     }
 

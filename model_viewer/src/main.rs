@@ -88,7 +88,7 @@ fn setup2(
     let mut m2_obj = m2::load_from_mpq(&mut mpq_col, fname)?;
     m2_obj.load_textures(&mut mpq_col)?;
     let m2_mat = materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(m2_obj.textures.pop_front().unwrap())),
+        base_color_texture: Some(images.add(*m2_obj.textures.pop_front().unwrap())),
         ..default()
     });
 
@@ -96,7 +96,7 @@ fn setup2(
     let mut m2_obj2 = m2::load_from_mpq(&mut mpq_col, fname2)?;
     m2_obj2.load_textures(&mut mpq_col)?;
     let m2_mat2 = materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(m2_obj2.textures.pop_front().unwrap())),
+        base_color_texture: Some(images.add(*m2_obj2.textures.pop_front().unwrap())),
         ..default()
     });
 

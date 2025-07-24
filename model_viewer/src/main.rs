@@ -12,7 +12,10 @@ use bevy::{
 };
 use bevy_asset::UnapprovedPathMode;
 use bevy_obj::ObjPlugin;
-use wow_vr_lib::{m2, mpq::MPQCollection};
+use wow_vr_lib::{
+    m2,
+    mpq::{MpqCollection, ReadFromMpq},
+};
 
 fn main() {
     let mut plugin = AssetPlugin::default();
@@ -74,7 +77,7 @@ fn setup2(
         .join("..")
         .join("Data");
 
-    let mut mpq_col = MPQCollection::load(&vec![
+    let mut mpq_col = MpqCollection::load(&vec![
         base_path.join("common.MPQ").as_path(),
         base_path.join("common-2.MPQ").as_path(),
         base_path.join("expansion.MPQ").as_path(),
@@ -85,18 +88,20 @@ fn setup2(
     ])?;
 
     let fname = "world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2";
-    let mut m2_obj = m2::load_from_mpq(&mut mpq_col, fname)?;
-    m2_obj.load_textures(&mut mpq_col)?;
+    let m2_obj: m2::M2 = mpq_col.read_file(fname)?;
+    let image: Image =
+        mpq_col.read_file(&m2_obj.model.textures[0].filename.string.to_string_lossy())?;
     let m2_mat = materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(*m2_obj.textures.pop_front().unwrap())),
+        base_color_texture: Some(images.add(image)),
         ..default()
     });
 
     let fname2 = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
-    let mut m2_obj2 = m2::load_from_mpq(&mut mpq_col, fname2)?;
-    m2_obj2.load_textures(&mut mpq_col)?;
+    let m2_obj2: m2::M2 = mpq_col.read_file(fname2)?;
+    let image: Image =
+        mpq_col.read_file(&m2_obj2.model.textures[0].filename.string.to_string_lossy())?;
     let m2_mat2 = materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(*m2_obj2.textures.pop_front().unwrap())),
+        base_color_texture: Some(images.add(image)),
         ..default()
     });
 
@@ -126,9 +131,9 @@ fn setup2(
         meshes.add(Capsule3d::default()),
         meshes.add(Torus::default()),
         // meshes.add(Cylinder::default()),
-        meshes.add(m2_obj.to_mesh()?),
+        meshes.add(Mesh::try_from(m2_obj)?),
         // meshes.add(Cone::default()),
-        meshes.add(m2_obj2.to_mesh()?),
+        meshes.add(Mesh::try_from(m2_obj2)?),
         // meshes.add(ConicalFrustum::default()),
         meshes.add(Sphere::default().mesh().ico(5)?),
         // meshes.add(Sphere::default().mesh().uv(32, 18)),

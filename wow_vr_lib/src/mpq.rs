@@ -15,7 +15,7 @@ pub fn header_fmt(archives: &Vec<Box<Archive>>, f: &mut fmt::Formatter) -> fmt::
 }
 
 #[derive(Debug)]
-pub struct MPQCollection {
+pub struct MpqCollection {
     #[debug(with = header_fmt)]
     pub archives: Vec<Box<Archive>>,
 
@@ -27,8 +27,12 @@ fn format_file_name(val: &str) -> String {
     val.to_lowercase().replace("\\", "/")
 }
 
-impl MPQCollection {
-    pub fn load(paths: &[&Path]) -> Result<MPQCollection> {
+pub trait ReadFromMpq<T> {
+    fn read_file(&mut self, name: &str) -> Result<T>;
+}
+
+impl MpqCollection {
+    pub fn load(paths: &[&Path]) -> Result<MpqCollection> {
         let mut archives = Vec::with_capacity(paths.len());
         let mut file_map = HashMap::new();
         for idx in 0..paths.len() {
@@ -39,10 +43,12 @@ impl MPQCollection {
             archives.push(archive);
         }
 
-        Ok(MPQCollection { archives, file_map })
+        Ok(MpqCollection { archives, file_map })
     }
+}
 
-    pub fn read_file(&mut self, name: &str) -> Result<Vec<u8>> {
+impl ReadFromMpq<Vec<u8>> for MpqCollection {
+    fn read_file(&mut self, name: &str) -> Result<Vec<u8>> {
         let fname = format_file_name(name);
         let index = self
             .file_map
@@ -69,7 +75,7 @@ mod tests {
             .join("..")
             .join("Data");
 
-        let mut mpq_col = MPQCollection::load(&vec![
+        let mut mpq_col = MpqCollection::load(&vec![
             base_path.join("common.MPQ").as_path(),
             base_path.join("common-2.MPQ").as_path(),
         ])

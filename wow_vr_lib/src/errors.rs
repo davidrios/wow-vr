@@ -8,6 +8,12 @@ pub enum Error {
     #[error("M2Error")]
     M2Error(#[from] wow_m2::M2Error),
 
+    #[error("DdsError")]
+    DdsError(#[from] ddsfile::Error),
+
+    #[error("BevyTextureError")]
+    BevyTextureError(#[from] bevy_image::TextureError),
+
     #[error("Generic error: {0}")]
     Generic(&'static str),
     // #[error("Invalid compression type {0}")]

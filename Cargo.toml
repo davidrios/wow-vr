@@ -7,10 +7,12 @@ resolver = "3"
 [workspace.dependencies]
 bevy = { version = "0.16.1", features = ["dynamic_linking", "wayland"] }
 bevy_asset = { version = "0.16.1" }
+bevy_image = { version = "0.16.1" }
 bevy_obj = { version = "0.16.1" }
 bitflags = "2.9.1"
 byteorder = "1.5.0"
 custom_debug = "0.6.2"
+ddsfile = "0.5.2"
 flate2 = "1.1.2"
 log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
 num_enum = "0.7.4"

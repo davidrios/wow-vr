@@ -49,12 +49,22 @@ const EXTRUSION_X_EXTENT: f32 = 16.0;
 const Z_EXTENT: f32 = 5.0;
 
 fn setup(
+    commands: Commands,
+    meshes: ResMut<Assets<Mesh>>,
+    images: ResMut<Assets<Image>>,
+    materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
+    setup2(commands, meshes, images, materials, asset_server).unwrap()
+}
+
+fn setup2(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
-) {
+) -> Result<()> {
     let debug_material = materials.add(StandardMaterial {
         base_color_texture: Some(images.add(uv_debug_texture())),
         ..default()
@@ -72,14 +82,23 @@ fn setup(
         base_path.join("patch.MPQ").as_path(),
         base_path.join("patch-2.MPQ").as_path(),
         base_path.join("patch-3.MPQ").as_path(),
-    ])
-    .unwrap();
+    ])?;
 
     let fname = "world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2";
-    let mut m2_obj = m2::load_from_mpq(&mut mpq_col, fname).unwrap();
+    let mut m2_obj = m2::load_from_mpq(&mut mpq_col, fname)?;
+    m2_obj.load_textures(&mut mpq_col)?;
+    let m2_mat = materials.add(StandardMaterial {
+        base_color_texture: Some(images.add(m2_obj.textures.pop_front().unwrap())),
+        ..default()
+    });
 
     let fname2 = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
-    let mut m2_obj2 = m2::load_from_mpq(&mut mpq_col, fname2).unwrap();
+    let mut m2_obj2 = m2::load_from_mpq(&mut mpq_col, fname2)?;
+    m2_obj2.load_textures(&mut mpq_col)?;
+    let m2_mat2 = materials.add(StandardMaterial {
+        base_color_texture: Some(images.add(m2_obj2.textures.pop_front().unwrap())),
+        ..default()
+    });
 
     let fishingbox = Mesh3d::from(
         asset_server.load(
@@ -107,12 +126,24 @@ fn setup(
         meshes.add(Capsule3d::default()),
         meshes.add(Torus::default()),
         // meshes.add(Cylinder::default()),
-        meshes.add(m2_obj.to_mesh().unwrap()),
+        meshes.add(m2_obj.to_mesh()?),
         // meshes.add(Cone::default()),
-        meshes.add(m2_obj2.to_mesh().unwrap()),
+        meshes.add(m2_obj2.to_mesh()?),
         // meshes.add(ConicalFrustum::default()),
-        meshes.add(Sphere::default().mesh().ico(5).unwrap()),
+        meshes.add(Sphere::default().mesh().ico(5)?),
         // meshes.add(Sphere::default().mesh().uv(32, 18)),
+    ];
+
+    let shape_textures = [
+        &debug_material,
+        &debug_material,
+        &debug_material,
+        &debug_material,
+        // &debug_material,
+        &m2_mat,
+        // &debug_material,
+        &m2_mat2,
+        &debug_material,
     ];
 
     let extrusions = [
@@ -130,7 +161,7 @@ fn setup(
     for (i, shape) in shapes.into_iter().enumerate() {
         commands.spawn((
             Mesh3d(shape),
-            MeshMaterial3d(debug_material.clone()),
+            MeshMaterial3d(shape_textures[i].clone()),
             Transform::from_xyz(
                 -SHAPES_X_EXTENT / 2. + i as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
                 2.0,
@@ -190,6 +221,8 @@ fn setup(
             ..default()
         },
     ));
+
+    Ok(())
 }
 
 fn rotate(mut query: Query<&mut Transform, With<Shape>>, time: Res<Time>) {

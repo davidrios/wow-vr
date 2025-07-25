@@ -1,9 +1,19 @@
-use std::{collections::HashMap, fmt, path::Path};
+use std::{
+    collections::HashMap,
+    fmt,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
+use bevy::ecs::resource::Resource;
+use bevy_image::Image;
 use custom_debug::Debug;
 use wow_mpq::Archive;
 
-use crate::errors::{Error, Result};
+use crate::{
+    errors::{Error, Result},
+    m2::M2,
+};
 
 pub fn header_fmt(archives: &Vec<Box<Archive>>, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "[\n")?;
@@ -63,6 +73,70 @@ impl ReadFromMpq<Vec<u8>> for MpqCollection {
     }
 }
 
+type ResourceMap<T> = Arc<Mutex<HashMap<String, Arc<T>>>>;
+
+trait CacheProvider<T> {
+    fn get_cache(&self) -> &ResourceMap<T>;
+}
+
+#[derive(Resource)]
+pub struct MpqResource {
+    mpq_collection: MpqCollection,
+    loaded_m2s: ResourceMap<M2>,
+    loaded_images: ResourceMap<Image>,
+}
+
+impl CacheProvider<M2> for MpqResource {
+    fn get_cache(&self) -> &ResourceMap<M2> {
+        &self.loaded_m2s
+    }
+}
+
+impl CacheProvider<Image> for MpqResource {
+    fn get_cache(&self) -> &ResourceMap<Image> {
+        &self.loaded_images
+    }
+}
+
+impl MpqResource {
+    pub fn new(mpq_collection: MpqCollection) -> Self {
+        return Self {
+            mpq_collection,
+            loaded_m2s: Arc::new(Mutex::new(HashMap::new())),
+            loaded_images: Arc::new(Mutex::new(HashMap::new())),
+        };
+    }
+
+    pub fn from_paths(mpq_paths: &[&Path]) -> Result<Self> {
+        Ok(Self::new(MpqCollection::load(mpq_paths)?))
+    }
+
+    fn get_or_load<T: 'static>(&mut self, name: &str) -> Result<Arc<T>>
+    where
+        Self: CacheProvider<T>,
+        MpqCollection: ReadFromMpq<T>,
+    {
+        let cache = self.get_cache();
+        let loaded_ref = Arc::clone(cache);
+        let mut loaded = loaded_ref.lock().unwrap();
+        Ok(if let Some(entry) = loaded.get(name) {
+            Arc::clone(entry)
+        } else {
+            let obj: Arc<T> = Arc::new(self.mpq_collection.read_file(name)?);
+            loaded.insert(String::from(name), Arc::clone(&obj));
+            obj
+        })
+    }
+
+    pub fn get_m2(&mut self, name: &str) -> Result<Arc<M2>> {
+        self.get_or_load(name)
+    }
+
+    pub fn get_image(&mut self, name: &str) -> Result<Arc<Image>> {
+        self.get_or_load(name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -82,11 +156,11 @@ mod tests {
         .unwrap();
 
         let fname = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
-        let data = mpq_col.read_file(fname).unwrap();
+        let data: Vec<u8> = mpq_col.read_file(fname).unwrap();
         assert!(data.len() > 0);
 
         let fname = "world/generic/human/passive doodads/bottles/Glass2Bottle02.blp";
-        let data = mpq_col.read_file(fname).unwrap();
+        let data: Vec<u8> = mpq_col.read_file(fname).unwrap();
         assert!(data.len() > 0);
     }
 }

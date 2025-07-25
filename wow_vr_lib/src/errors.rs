@@ -14,6 +14,9 @@ pub enum Error {
     #[error("BevyTextureError")]
     BevyTextureError(#[from] bevy_image::TextureError),
 
+    #[error("Asset not found {0}")]
+    AssetNotFound(String),
+
     #[error("Generic error: {0}")]
     Generic(&'static str),
     // #[error("Invalid compression type {0}")]

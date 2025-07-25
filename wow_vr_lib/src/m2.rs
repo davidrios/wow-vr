@@ -37,10 +37,10 @@ fn c2_to_vec2(vec: C2Vector) -> Vec2 {
     Vec2 { x: vec.x, y: vec.y }
 }
 
-impl TryFrom<M2> for mesh::Mesh {
+impl TryFrom<&M2> for mesh::Mesh {
     type Error = Error;
 
-    fn try_from(value: M2) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: &M2) -> std::result::Result<Self, Self::Error> {
         let vertex_count = value.model.vertices.len();
 
         let mut vertices = Vec::with_capacity(vertex_count);

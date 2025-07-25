@@ -12,25 +12,38 @@ use bevy::{
 };
 use bevy_asset::UnapprovedPathMode;
 use bevy_obj::ObjPlugin;
-use wow_vr_lib::{
-    m2,
-    mpq::{MpqCollection, ReadFromMpq},
-};
+use wow_vr_lib::mpq::MpqResource;
 
 fn main() {
     let mut plugin = AssetPlugin::default();
     plugin.mode = AssetMode::Unprocessed;
     plugin.unapproved_path_mode = UnapprovedPathMode::Allow;
 
+    let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("Data");
+
     App::new()
         .add_plugins((
             DefaultPlugins
-                .set(ImagePlugin::default_nearest())
+                .set(ImagePlugin::default_linear())
                 .set(plugin),
             #[cfg(not(target_arch = "wasm32"))]
             WireframePlugin::default(),
             ObjPlugin::default(),
         ))
+        .insert_resource(
+            MpqResource::from_paths(&[
+                base_path.join("common.MPQ").as_path(),
+                base_path.join("common-2.MPQ").as_path(),
+                base_path.join("expansion.MPQ").as_path(),
+                base_path.join("lichking.MPQ").as_path(),
+                base_path.join("patch.MPQ").as_path(),
+                base_path.join("patch-2.MPQ").as_path(),
+                base_path.join("patch-3.MPQ").as_path(),
+            ])
+            .unwrap(),
+        )
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -57,8 +70,17 @@ fn setup(
     images: ResMut<Assets<Image>>,
     materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
+    mpq_resource: ResMut<MpqResource>,
 ) {
-    setup2(commands, meshes, images, materials, asset_server).unwrap()
+    setup2(
+        commands,
+        meshes,
+        images,
+        materials,
+        asset_server,
+        mpq_resource,
+    )
+    .unwrap()
 }
 
 fn setup2(
@@ -67,43 +89,30 @@ fn setup2(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
+    mut mpq_resource: ResMut<MpqResource>,
 ) -> Result<()> {
     let debug_material = materials.add(StandardMaterial {
         base_color_texture: Some(images.add(uv_debug_texture())),
         ..default()
     });
 
-    let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("Data");
-
-    let mut mpq_col = MpqCollection::load(&vec![
-        base_path.join("common.MPQ").as_path(),
-        base_path.join("common-2.MPQ").as_path(),
-        base_path.join("expansion.MPQ").as_path(),
-        base_path.join("lichking.MPQ").as_path(),
-        base_path.join("patch.MPQ").as_path(),
-        base_path.join("patch-2.MPQ").as_path(),
-        base_path.join("patch-3.MPQ").as_path(),
-    ])?;
-
     let fname = "world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2";
-    let m2_obj: m2::M2 = mpq_col.read_file(fname)?;
-    let image: Image =
-        mpq_col.read_file(&m2_obj.model.textures[0].filename.string.to_string_lossy())?;
+    let m2_obj = mpq_resource.get_m2(fname)?;
+    let image =
+        mpq_resource.get_image(&m2_obj.model.textures[0].filename.string.to_string_lossy())?;
     let m2_mat = materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(image)),
+        base_color_texture: Some(images.add(image.as_ref().clone())),
         ..default()
     });
 
-    let fname2 = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
-    let m2_obj2: m2::M2 = mpq_col.read_file(fname2)?;
-    let image: Image =
-        mpq_col.read_file(&m2_obj2.model.textures[0].filename.string.to_string_lossy())?;
-    let m2_mat2 = materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(image)),
-        ..default()
-    });
+    // let fname2 = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
+    // let m2_obj2: m2::M2 = mpq_col.read_file(fname2)?;
+    // let image: Image =
+    //     mpq_col.read_file(&m2_obj2.model.textures[0].filename.string.to_string_lossy())?;
+    // let m2_mat2 = materials.add(StandardMaterial {
+    //     base_color_texture: Some(images.add(image)),
+    //     ..default()
+    // });
 
     let fishingbox = Mesh3d::from(
         asset_server.load(
@@ -131,9 +140,9 @@ fn setup2(
         meshes.add(Capsule3d::default()),
         meshes.add(Torus::default()),
         // meshes.add(Cylinder::default()),
-        meshes.add(Mesh::try_from(m2_obj)?),
+        meshes.add(Mesh::try_from(m2_obj.as_ref())?),
         // meshes.add(Cone::default()),
-        meshes.add(Mesh::try_from(m2_obj2)?),
+        // meshes.add(Mesh::try_from(m2_obj2)?),
         // meshes.add(ConicalFrustum::default()),
         meshes.add(Sphere::default().mesh().ico(5)?),
         // meshes.add(Sphere::default().mesh().uv(32, 18)),
@@ -147,7 +156,7 @@ fn setup2(
         // &debug_material,
         &m2_mat,
         // &debug_material,
-        &m2_mat2,
+        // &m2_mat2,
         &debug_material,
     ];
 

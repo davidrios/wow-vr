@@ -262,6 +262,7 @@ fn test_update(
                 .spawn((
                     Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
                         .with_scale(Vec3::ONE * m2component.scale), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+                    Visibility::default(),
                     Shape,
                 ))
                 .with_children(|parent| {

@@ -1,4 +1,6 @@
-use std::string::FromUtf8Error;
+use std::{io, string::FromUtf8Error};
+
+use bevy_asset::ReadAssetBytesError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -19,6 +21,12 @@ pub enum Error {
 
     #[error("Generic error: {0}")]
     Generic(&'static str),
+
+    #[error("Unsupported asset label: {0}")]
+    UnsupportedAssetLabel(String),
+
+    #[error("Read error: {0}")]
+    ReadAssetBytesError(#[from] ReadAssetBytesError),
     // #[error("Invalid compression type {0}")]
     // InvalidCompressionType(#[from] TryFromPrimitiveError<mpq::CompressionType>),
     //
@@ -37,9 +45,9 @@ pub enum Error {
     // #[error("Invalid M2 chunk type {0}")]
     // InvalidM2ChunkType(#[from] TryFromPrimitiveError<m2::ChunkType>),
     //
-    // #[error("io error")]
-    // Io(#[from] io::Error),
-    //
+    #[error("io error")]
+    Io(#[from] io::Error),
+
     #[error("UTF8 conversion error")]
     FromUtf8Error(#[from] FromUtf8Error),
 }

@@ -10,9 +10,15 @@ use bevy::{
         render_resource::{Extent3d, TextureDimension, TextureFormat},
     },
 };
-use bevy_asset::UnapprovedPathMode;
+use bevy_asset::{
+    UnapprovedPathMode,
+    io::{AssetSource, AssetSourceId},
+};
 use bevy_obj::ObjPlugin;
-use wow_vr_lib::mpq::MpqResource;
+use wow_vr_lib::{
+    m2::{M2Asset, M2Plugin, SkinAsset},
+    mpq::MpqAssetReader,
+};
 
 fn main() {
     let mut plugin = AssetPlugin::default();
@@ -24,6 +30,20 @@ fn main() {
         .join("Data");
 
     App::new()
+        .register_asset_source(
+            AssetSourceId::Name("mpq".into()),
+            AssetSource::build().with_reader(move || {
+                Box::new(MpqAssetReader::new(&[
+                    base_path.join("common.MPQ").as_path(),
+                    base_path.join("common-2.MPQ").as_path(),
+                    base_path.join("expansion.MPQ").as_path(),
+                    base_path.join("lichking.MPQ").as_path(),
+                    base_path.join("patch.MPQ").as_path(),
+                    base_path.join("patch-2.MPQ").as_path(),
+                    base_path.join("patch-3.MPQ").as_path(),
+                ]))
+            }),
+        )
         .add_plugins((
             DefaultPlugins
                 .set(ImagePlugin::default_linear())
@@ -31,19 +51,8 @@ fn main() {
             #[cfg(not(target_arch = "wasm32"))]
             WireframePlugin::default(),
             ObjPlugin::default(),
+            M2Plugin::default(),
         ))
-        .insert_resource(
-            MpqResource::from_paths(&[
-                base_path.join("common.MPQ").as_path(),
-                base_path.join("common-2.MPQ").as_path(),
-                base_path.join("expansion.MPQ").as_path(),
-                base_path.join("lichking.MPQ").as_path(),
-                base_path.join("patch.MPQ").as_path(),
-                base_path.join("patch-2.MPQ").as_path(),
-                base_path.join("patch-3.MPQ").as_path(),
-            ])
-            .unwrap(),
-        )
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -51,6 +60,7 @@ fn main() {
                 rotate,
                 #[cfg(not(target_arch = "wasm32"))]
                 toggle_wireframe,
+                test_update,
             ),
         )
         .run();
@@ -59,6 +69,9 @@ fn main() {
 /// A marker component for our shapes so we can query them separately from the ground plane
 #[derive(Component)]
 struct Shape;
+
+#[derive(Component, Debug)]
+struct FishingBox(Handle<M2Asset>, usize);
 
 const SHAPES_X_EXTENT: f32 = 14.0;
 const EXTRUSION_X_EXTENT: f32 = 16.0;
@@ -70,17 +83,8 @@ fn setup(
     images: ResMut<Assets<Image>>,
     materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
-    mpq_resource: ResMut<MpqResource>,
 ) {
-    setup2(
-        commands,
-        meshes,
-        images,
-        materials,
-        asset_server,
-        mpq_resource,
-    )
-    .unwrap()
+    setup2(commands, meshes, images, materials, asset_server).unwrap()
 }
 
 fn setup2(
@@ -89,30 +93,16 @@ fn setup2(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
-    mut mpq_resource: ResMut<MpqResource>,
 ) -> Result<()> {
     let debug_material = materials.add(StandardMaterial {
         base_color_texture: Some(images.add(uv_debug_texture())),
         ..default()
     });
 
-    let fname = "world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2";
-    let m2_obj = mpq_resource.get_m2(fname)?;
-    let image =
-        mpq_resource.get_image(&m2_obj.model.textures[0].filename.string.to_string_lossy())?;
-    let m2_mat = materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(image.as_ref().clone())),
-        ..default()
-    });
-
-    // let fname2 = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
-    // let m2_obj2: m2::M2 = mpq_col.read_file(fname2)?;
-    // let image: Image =
-    //     mpq_col.read_file(&m2_obj2.model.textures[0].filename.string.to_string_lossy())?;
-    // let m2_mat2 = materials.add(StandardMaterial {
-    //     base_color_texture: Some(images.add(image)),
-    //     ..default()
-    // });
+    let fname = "mpq://world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2";
+    let m2_obj = asset_server.load::<M2Asset>(fname);
+    dbg!(&m2_obj);
+    commands.spawn(FishingBox(m2_obj, 0));
 
     let fishingbox = Mesh3d::from(
         asset_server.load(
@@ -140,7 +130,7 @@ fn setup2(
         meshes.add(Capsule3d::default()),
         meshes.add(Torus::default()),
         // meshes.add(Cylinder::default()),
-        meshes.add(Mesh::try_from(m2_obj.as_ref())?),
+        // meshes.add(Mesh::try_from(m2_obj.as_ref())?),
         // meshes.add(Cone::default()),
         // meshes.add(Mesh::try_from(m2_obj2)?),
         // meshes.add(ConicalFrustum::default()),
@@ -154,7 +144,7 @@ fn setup2(
         &debug_material,
         &debug_material,
         // &debug_material,
-        &m2_mat,
+        // &m2_mat,
         // &debug_material,
         // &m2_mat2,
         &debug_material,
@@ -242,6 +232,34 @@ fn setup2(
 fn rotate(mut query: Query<&mut Transform, With<Shape>>, time: Res<Time>) {
     for mut transform in &mut query {
         transform.rotate_y(time.delta_secs() / 2.);
+    }
+}
+
+fn test_update(
+    mut query: Query<&mut FishingBox>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut m2s: ResMut<Assets<M2Asset>>,
+    skins: ResMut<Assets<SkinAsset>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyA) {
+        for fishingbox in &mut query {
+            dbg!(&fishingbox);
+            if let Some(asset) = m2s.get_mut(&fishingbox.0) {
+                dbg!(&asset);
+                if let Some(skin) = skins.get(&asset.skins[fishingbox.1]) {
+                    dbg!("skin inner");
+                    dbg!(skin);
+
+                    let mesh = asset.load_mesh(skin, &mut meshes).unwrap();
+                    if let Some(mesh) = meshes.get(mesh) {
+                        dbg!(mesh);
+                    } else {
+                        dbg!("no mesh");
+                    }
+                }
+            }
+        }
     }
 }
 

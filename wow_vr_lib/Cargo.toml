@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = { workspace = true, features = ["dds"] }
+bevy_asset = { workspace = true }
 bevy_image = { workspace = true, features = ["dds"] }
 bevy_obj = { workspace = true }
 bitflags = { workspace = true }
@@ -14,6 +15,7 @@ ddsfile = { workspace = true }
 flate2 = { workspace = true }
 num_enum = { workspace = true }
 once_cell = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
 tobj = { workspace = true }
 wow-m2 = { workspace = true }

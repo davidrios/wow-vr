@@ -6054,6 +6054,7 @@ name = "wow_vr_lib"
 version = "0.0.1"
 dependencies = [
  "bevy",
+ "bevy_asset",
  "bevy_image",
  "bevy_obj",
  "bitflags 2.9.1",
@@ -6063,6 +6064,7 @@ dependencies = [
  "flate2",
  "num_enum",
  "once_cell",
+ "serde",
  "thiserror 2.0.12",
  "tobj",
  "wow-m2",

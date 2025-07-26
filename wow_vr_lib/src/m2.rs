@@ -1,4 +1,5 @@
 use bevy::{
+    platform::collections::HashMap,
     prelude::*,
     render::{
         mesh,
@@ -89,7 +90,7 @@ impl M2RelatedAsset {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum M2AssetLabel {
     Skin(u32),
-    Mesh(u32),
+    Mesh(u32, u32),
     Texture(u32),
 }
 
@@ -97,18 +98,25 @@ impl core::fmt::Display for M2AssetLabel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Skin(index) => f.write_str(&format!("skin{}", index)),
-            Self::Mesh(index) => f.write_str(&format!("mesh{}", index)),
+            Self::Mesh(skin_index, mesh_index) => {
+                f.write_str(&format!("skin{}+mesh{}", skin_index, mesh_index))
+            }
             Self::Texture(index) => f.write_str(&format!("texture{}", index)),
         }
     }
 }
 
+#[derive(Debug)]
+pub struct M2Mesh {
+    pub mesh: Handle<Mesh>,
+    pub material: usize,
+}
+
 #[derive(Asset, TypePath, Debug)]
 pub struct M2Asset {
     pub model: wow_m2::M2Model,
-    // pub base_name: String,
     pub skins: Vec<Handle<SkinAsset>>,
-    pub meshes: Vec<Handle<Mesh>>,
+    pub meshes: HashMap<u32, Vec<M2Mesh>>,
     pub textures: Vec<Handle<Image>>,
     pub materials: Vec<Handle<StandardMaterial>>,
 }
@@ -122,7 +130,7 @@ impl M2Asset {
         };
 
         let mut skin_handles = Vec::with_capacity(num_skins as usize);
-        let mut mesh_handles = Vec::with_capacity(num_skins as usize);
+        let mut mesh_handles = HashMap::with_capacity(num_skins as usize);
 
         if num_skins > 0 {
             let vertex_count = model.vertices.len();
@@ -145,35 +153,45 @@ impl M2Asset {
                     skin: wow_m2::OldSkin::parse(&mut reader)?,
                 };
 
-                let mut triangles = Vec::with_capacity(skin_asset.skin.triangles.len());
-                for t in &(&skin_asset.skin).triangles {
-                    triangles.push(*t as u32);
+                let mut submeshes = Vec::with_capacity(skin_asset.skin.submeshes.len());
+
+                for (mi, submesh) in skin_asset.skin.submeshes.iter().enumerate() {
+                    let mut triangles = Vec::with_capacity(skin_asset.skin.triangles.len());
+                    for vi in 0..submesh.triangle_count {
+                        triangles.push(
+                            skin_asset.skin.indices[skin_asset.skin.triangles
+                                [submesh.triangle_start as usize + vi as usize]
+                                as usize] as u32,
+                        )
+                    }
+
+                    let mesh = Mesh::new(
+                        mesh::PrimitiveTopology::TriangleList,
+                        bevy::asset::RenderAssetUsages::default(),
+                    )
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices.clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs.clone())
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals.clone())
+                    .with_inserted_indices(mesh::Indices::U32(triangles));
+
+                    submeshes.push(M2Mesh {
+                        mesh: load_context
+                            .add_labeled_asset(M2AssetLabel::Mesh(i, mi as u32).to_string(), mesh),
+                        material: 0,
+                    });
                 }
 
-                // for sm in &(&skin).submeshes {
-                //     for vi in 0..sm.triangle_count {
-                //         triangles.push(
-                //             skin.indices
-                //                 [skin.triangles[sm.triangle_start as usize + vi as usize] as usize]
-                //                 as u32,
-                //         )
-                //     }
-                // }
-
-                let mesh = Mesh::new(
-                    mesh::PrimitiveTopology::TriangleList,
-                    bevy::asset::RenderAssetUsages::default(),
-                )
-                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices.clone())
-                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs.clone())
-                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals.clone())
-                .with_inserted_indices(mesh::Indices::U32(triangles));
+                for (_, texture_unit) in skin_asset.skin.extra_array.iter().enumerate() {
+                    let submesh = submeshes
+                        .get_mut(texture_unit.skin_section_index as usize)
+                        .unwrap();
+                    submesh.material = texture_unit.texture_combo_index as usize;
+                }
 
                 skin_handles.push(
                     load_context.add_labeled_asset(M2AssetLabel::Skin(i).to_string(), skin_asset),
                 );
-                mesh_handles
-                    .push(load_context.add_labeled_asset(M2AssetLabel::Mesh(i).to_string(), mesh));
+                mesh_handles.insert(i, submeshes);
             }
         }
 
@@ -311,30 +329,44 @@ impl Plugin for M2Plugin {
 
 #[cfg(test)]
 mod tests {
-    // use std::path::PathBuf;
-    //
-    // use crate::mpq::MpqCollection;
-    //
-    // use super::*;
-    //
-    // #[test]
-    // fn load_m2_with_skins() {
-    //     let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    //         .join("..")
-    //         .join("Data");
-    //
-    //     let mpq_col = MpqCollection::load(&vec![
-    //         base_path.join("common.MPQ").as_path(),
-    //         base_path.join("common-2.MPQ").as_path(),
-    //     ])
-    //     .unwrap();
-    //
-    //     let fname = "World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2";
-    //
-    //     // let m2: M2_old = mpq_col.read_file(fname).unwrap();
-    //     // dbg!(&m2.model);
-    //     // dbg!(&m2.skins);
-    //
-    //     assert_eq!(0, 1);
-    // }
+    use std::path::PathBuf;
+
+    use crate::mpq::MpqCollection;
+
+    use super::*;
+
+    fn get_reader(mpq_col: &mut MpqCollection, fname: &str) -> Cursor<Vec<u8>> {
+        let bytes = mpq_col.read_file(fname).unwrap();
+        Cursor::new(bytes)
+    }
+
+    #[test]
+    fn load_m2_with_skins() {
+        let base_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("Data");
+
+        let mut mpq_col = MpqCollection::load(&vec![
+            base_path.join("common.MPQ").as_path(),
+            base_path.join("common-2.MPQ").as_path(),
+            base_path.join("enUS/locale-enUS.MPQ").as_path(),
+        ])
+        .unwrap();
+
+        let fname =
+            "world/lordaeron/tirisfalglade/passivedoodads/trees/tirisfallgladecanopytree07.m2";
+
+        let m2 = wow_m2::M2Model::parse(&mut get_reader(&mut mpq_col, fname)).unwrap();
+        dbg!(&m2);
+        for i in 0..m2.header.num_skin_profiles.unwrap_or(0) {
+            let sfname = M2RelatedAsset::Skin(i).from_asset(fname);
+            let skin =
+                wow_m2::OldSkin::parse(&mut get_reader(&mut mpq_col, &sfname.to_string())).unwrap();
+            dbg!(&skin);
+        }
+        // dbg!(&m2.model);
+        // dbg!(&m2.skins);
+
+        assert_eq!(0, 1);
+    }
 }

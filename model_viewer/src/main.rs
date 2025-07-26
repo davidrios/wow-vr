@@ -257,33 +257,39 @@ fn test_update(
             continue;
         }
         if let Some(m2) = m2s.get_mut(&m2component.m2) {
-            let mesh = &m2.meshes[m2component.skin_id];
-            let material = &m2.materials[0];
-            commands.spawn((
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(material.clone()),
-                Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
-                    .with_scale(Vec3::ONE * m2component.scale), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
-                Shape,
-            ));
+            let meshes = &m2.meshes[&(m2component.skin_id as u32)];
+            commands
+                .spawn((
+                    Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
+                        .with_scale(Vec3::ONE * m2component.scale), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+                    Shape,
+                ))
+                .with_children(|parent| {
+                    for mesh in meshes {
+                        parent.spawn((
+                            Mesh3d(mesh.mesh.clone()),
+                            MeshMaterial3d(m2.materials[mesh.material].clone()),
+                        ));
+                    }
+                });
             m2component.is_loaded = true;
         }
     }
     if keyboard.just_pressed(KeyCode::KeyA) {
-        for m2component in &mut query {
-            // dbg!(&fishingbox);
-            if let Some(m2) = m2s.get_mut(&m2component.m2) {
-                let mesh = &m2.meshes[m2component.skin_id];
-                let material = &m2.materials[0];
-                commands.spawn((
-                    Mesh3d(mesh.clone()),
-                    MeshMaterial3d(material.clone()),
-                    Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
-                        .with_scale(Vec3::ONE * m2component.scale), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
-                    Shape,
-                ));
-            }
-        }
+        // for m2component in &mut query {
+        //     // dbg!(&fishingbox);
+        //     if let Some(m2) = m2s.get_mut(&m2component.m2) {
+        //         let mesh = &m2.meshes[m2component.skin_id];
+        //         let material = &m2.materials[0];
+        //         commands.spawn((
+        //             Mesh3d(mesh.clone()),
+        //             MeshMaterial3d(material.clone()),
+        //             Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
+        //                 .with_scale(Vec3::ONE * m2component.scale), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+        //             Shape,
+        //         ));
+        //     }
+        // }
     }
 }
 

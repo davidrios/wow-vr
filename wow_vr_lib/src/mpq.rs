@@ -33,10 +33,6 @@ fn format_file_name(val: &str) -> String {
     val.to_lowercase().replace("\\", "/")
 }
 
-pub trait ReadFromMpq<T> {
-    fn read_file(&self, name: &str) -> Result<T>;
-}
-
 impl MpqCollection {
     pub fn load(paths: &[&Path]) -> Result<MpqCollection> {
         let mut archives = Vec::with_capacity(paths.len());
@@ -51,10 +47,8 @@ impl MpqCollection {
 
         Ok(MpqCollection { archives, file_map })
     }
-}
 
-impl ReadFromMpq<Vec<u8>> for MpqCollection {
-    fn read_file(&self, name: &str) -> Result<Vec<u8>> {
+    pub fn read_file(&self, name: &str) -> Result<Vec<u8>> {
         let fname = format_file_name(name);
         let index = self
             .file_map

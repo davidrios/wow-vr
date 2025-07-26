@@ -16,7 +16,7 @@ use bevy_asset::{
 };
 use bevy_obj::ObjPlugin;
 use wow_vr_lib::{
-    m2::{M2Asset, M2Plugin, SkinAsset},
+    m2::{M2Asset, M2Plugin},
     mpq::MpqAssetReader,
 };
 
@@ -41,6 +41,10 @@ fn main() {
                     base_path.join("patch.MPQ").as_path(),
                     base_path.join("patch-2.MPQ").as_path(),
                     base_path.join("patch-3.MPQ").as_path(),
+                    base_path.join("enUS/locale-enUS.MPQ").as_path(),
+                    base_path.join("enUS/patch-enUS.MPQ").as_path(),
+                    base_path.join("enUS/patch-enUS-2.MPQ").as_path(),
+                    base_path.join("enUS/patch-enUS-3.MPQ").as_path(),
                 ]))
             }),
         )
@@ -71,7 +75,12 @@ fn main() {
 struct Shape;
 
 #[derive(Component, Debug)]
-struct FishingBox(Handle<M2Asset>, usize);
+struct M2Component {
+    m2: Handle<M2Asset>,
+    skin_id: usize,
+    is_loaded: bool,
+    pos: f32,
+}
 
 const SHAPES_X_EXTENT: f32 = 14.0;
 const EXTRUSION_X_EXTENT: f32 = 16.0;
@@ -98,31 +107,6 @@ fn setup2(
         base_color_texture: Some(images.add(uv_debug_texture())),
         ..default()
     });
-
-    let fname = "mpq://world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2";
-    let m2_obj = asset_server.load::<M2Asset>(fname);
-    dbg!(&m2_obj);
-    commands.spawn(FishingBox(m2_obj, 0));
-
-    let fishingbox = Mesh3d::from(
-        asset_server.load(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("Data")
-                .join("exports/world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.obj"),
-        ),
-    );
-    commands.spawn((
-        fishingbox,
-        MeshMaterial3d(debug_material.clone()),
-        Transform::from_xyz(
-            -SHAPES_X_EXTENT / 2. + 6 as f32 / (7 - 1) as f32 * SHAPES_X_EXTENT,
-            2.0,
-            Z_EXTENT / 2.,
-        )
-        .with_rotation(Quat::from_rotation_x(-PI / 4.)),
-        Shape,
-    ));
 
     let shapes = [
         meshes.add(Cuboid::default()),
@@ -160,7 +144,30 @@ fn setup2(
         meshes.add(Extrusion::new(Triangle2d::default(), 1.)),
     ];
 
-    let num_shapes = shapes.len() + 1;
+    let num_shapes = shapes.len() + 5;
+
+    commands.spawn(M2Component {
+        m2: asset_server
+            .load("mpq://world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2"),
+        skin_id: 0,
+        is_loaded: false,
+        pos: -SHAPES_X_EXTENT / 2. + 5 as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+    });
+
+    commands.spawn(M2Component {
+        m2: asset_server.load("mpq://World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2"),
+        skin_id: 0,
+        is_loaded: false,
+        pos: -SHAPES_X_EXTENT / 2. + 6 as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+    });
+
+    commands.spawn(M2Component {
+        m2: asset_server
+            .load("mpq://world/lordaeron/tirisfalglade/passivedoodads/trees/tirisfallgladecanopytree07.m2"),
+        skin_id: 0,
+        is_loaded: false,
+        pos: -SHAPES_X_EXTENT / 2. + 7 as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+    });
 
     for (i, shape) in shapes.into_iter().enumerate() {
         commands.spawn((
@@ -170,8 +177,8 @@ fn setup2(
                 -SHAPES_X_EXTENT / 2. + i as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
                 2.0,
                 Z_EXTENT / 2.,
-            ),
-            // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+            )
+            .with_rotation(Quat::from_rotation_x(-PI / 4.)),
             Shape,
         ));
     }
@@ -187,8 +194,8 @@ fn setup2(
                     + i as f32 / (num_extrusions - 1) as f32 * EXTRUSION_X_EXTENT,
                 2.0,
                 -Z_EXTENT / 2.,
-            ),
-            // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+            )
+            .with_rotation(Quat::from_rotation_x(-PI / 4.)),
             Shape,
         ));
     }
@@ -236,28 +243,39 @@ fn rotate(mut query: Query<&mut Transform, With<Shape>>, time: Res<Time>) {
 }
 
 fn test_update(
-    mut query: Query<&mut FishingBox>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut query: Query<&mut M2Component>,
     mut m2s: ResMut<Assets<M2Asset>>,
-    skins: ResMut<Assets<SkinAsset>>,
     keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
 ) {
+    for mut m2component in &mut query {
+        if m2component.is_loaded {
+            continue;
+        }
+        if let Some(m2) = m2s.get_mut(&m2component.m2) {
+            let mesh = &m2.meshes[m2component.skin_id];
+            let material = &m2.materials[0];
+            commands.spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+                Shape,
+            ));
+            m2component.is_loaded = true;
+        }
+    }
     if keyboard.just_pressed(KeyCode::KeyA) {
-        for fishingbox in &mut query {
-            dbg!(&fishingbox);
-            if let Some(asset) = m2s.get_mut(&fishingbox.0) {
-                dbg!(&asset);
-                if let Some(skin) = skins.get(&asset.skins[fishingbox.1]) {
-                    dbg!("skin inner");
-                    dbg!(skin);
-
-                    let mesh = asset.load_mesh(skin, &mut meshes).unwrap();
-                    if let Some(mesh) = meshes.get(mesh) {
-                        dbg!(mesh);
-                    } else {
-                        dbg!("no mesh");
-                    }
-                }
+        for m2component in &mut query {
+            // dbg!(&fishingbox);
+            if let Some(m2) = m2s.get_mut(&m2component.m2) {
+                let mesh = &m2.meshes[m2component.skin_id];
+                let material = &m2.materials[0];
+                commands.spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+                    Shape,
+                ));
             }
         }
     }

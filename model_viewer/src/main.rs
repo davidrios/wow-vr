@@ -80,6 +80,7 @@ struct M2Component {
     skin_id: usize,
     is_loaded: bool,
     pos: f32,
+    scale: f32,
 }
 
 const SHAPES_X_EXTENT: f32 = 14.0;
@@ -152,6 +153,7 @@ fn setup2(
         skin_id: 0,
         is_loaded: false,
         pos: -SHAPES_X_EXTENT / 2. + 5 as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+        scale: 1.0,
     });
 
     commands.spawn(M2Component {
@@ -159,6 +161,7 @@ fn setup2(
         skin_id: 0,
         is_loaded: false,
         pos: -SHAPES_X_EXTENT / 2. + 6 as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+        scale: 1.0,
     });
 
     commands.spawn(M2Component {
@@ -167,6 +170,7 @@ fn setup2(
         skin_id: 0,
         is_loaded: false,
         pos: -SHAPES_X_EXTENT / 2. + 7 as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+        scale: 0.1
     });
 
     for (i, shape) in shapes.into_iter().enumerate() {
@@ -258,7 +262,8 @@ fn test_update(
             commands.spawn((
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material.clone()),
-                Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+                Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
+                    .with_scale(Vec3::ONE * m2component.scale), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
                 Shape,
             ));
             m2component.is_loaded = true;
@@ -273,7 +278,8 @@ fn test_update(
                 commands.spawn((
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(material.clone()),
-                    Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+                    Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
+                        .with_scale(Vec3::ONE * m2component.scale), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
                     Shape,
                 ));
             }

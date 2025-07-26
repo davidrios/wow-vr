@@ -36,6 +36,7 @@ fn blp_to_image(blp: &mut wow_m2::BlpTexture) -> Result<Image> {
     let texture_format = match blp.header.compression_type {
         BlpCompressionType::Dxt => match blp.header.pixel_format {
             BlpPixelFormat::Dxt1 => TextureFormat::Bc1RgbaUnorm,
+            BlpPixelFormat::Dxt3 => TextureFormat::Bc2RgbaUnorm,
             _ => return Err(Error::Generic("unsupported texture format")),
         },
         _ => return Err(Error::Generic("unsupported texture format")),

@@ -81,6 +81,7 @@ struct M2Component {
     is_loaded: bool,
     pos: f32,
     scale: f32,
+    rotation: f32,
 }
 
 const SHAPES_X_EXTENT: f32 = 14.0;
@@ -109,32 +110,6 @@ fn setup2(
         ..default()
     });
 
-    let shapes = [
-        meshes.add(Cuboid::default()),
-        meshes.add(Tetrahedron::default()),
-        meshes.add(Capsule3d::default()),
-        meshes.add(Torus::default()),
-        // meshes.add(Cylinder::default()),
-        // meshes.add(Mesh::try_from(m2_obj.as_ref())?),
-        // meshes.add(Cone::default()),
-        // meshes.add(Mesh::try_from(m2_obj2)?),
-        // meshes.add(ConicalFrustum::default()),
-        meshes.add(Sphere::default().mesh().ico(5)?),
-        // meshes.add(Sphere::default().mesh().uv(32, 18)),
-    ];
-
-    let shape_textures = [
-        &debug_material,
-        &debug_material,
-        &debug_material,
-        &debug_material,
-        // &debug_material,
-        // &m2_mat,
-        // &debug_material,
-        // &m2_mat2,
-        &debug_material,
-    ];
-
     let extrusions = [
         meshes.add(Extrusion::new(Rectangle::default(), 1.)),
         meshes.add(Extrusion::new(Capsule2d::default(), 1.)),
@@ -145,23 +120,31 @@ fn setup2(
         meshes.add(Extrusion::new(Triangle2d::default(), 1.)),
     ];
 
-    let num_shapes = shapes.len() + 5;
+    let num_shapes = 10;
+
+    let mut cur_pos = -1;
+    let mut next = || {
+        cur_pos += 1;
+        cur_pos
+    };
 
     commands.spawn(M2Component {
         m2: asset_server
             .load("mpq://world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2"),
         skin_id: 0,
         is_loaded: false,
-        pos: -SHAPES_X_EXTENT / 2. + 5 as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
         scale: 1.0,
+        rotation: 0.0,
     });
 
     commands.spawn(M2Component {
         m2: asset_server.load("mpq://World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2"),
         skin_id: 0,
         is_loaded: false,
-        pos: -SHAPES_X_EXTENT / 2. + 6 as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
         scale: 1.0,
+        rotation: 0.0,
     });
 
     commands.spawn(M2Component {
@@ -169,23 +152,42 @@ fn setup2(
             .load("mpq://world/lordaeron/tirisfalglade/passivedoodads/trees/tirisfallgladecanopytree07.m2"),
         skin_id: 0,
         is_loaded: false,
-        pos: -SHAPES_X_EXTENT / 2. + 7 as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
-        scale: 0.1
+        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+        scale: 0.1,
+        rotation: 0.0,
     });
 
-    for (i, shape) in shapes.into_iter().enumerate() {
-        commands.spawn((
-            Mesh3d(shape),
-            MeshMaterial3d(shape_textures[i].clone()),
-            Transform::from_xyz(
-                -SHAPES_X_EXTENT / 2. + i as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
-                2.0,
-                Z_EXTENT / 2.,
-            )
-            .with_rotation(Quat::from_rotation_x(-PI / 4.)),
-            Shape,
-        ));
-    }
+    commands.spawn(M2Component {
+        m2: asset_server.load(
+            "mpq://world/azeroth/karazahn/passivedoodads/bookshelves/karazahnbookshelfsmall.m2",
+        ),
+        skin_id: 0,
+        is_loaded: false,
+        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+        scale: 0.5,
+        rotation: 0.0,
+    });
+
+    commands.spawn(M2Component {
+        m2: asset_server
+            .load("mpq://world/exteriordesigners/vehicletest/forsakencatapult_doodad.m2"),
+        skin_id: 0,
+        is_loaded: false,
+        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+        scale: 0.3,
+        rotation: -45.0,
+    });
+
+    commands.spawn(M2Component {
+        m2: asset_server.load(
+            "mpq://world/lordaeron/plagueland/passivedoodads/forsakenbanner/forsakenbanner01.m2",
+        ),
+        skin_id: 0,
+        is_loaded: false,
+        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
+        scale: 0.5,
+        rotation: -90.0,
+    });
 
     let num_extrusions = extrusions.len();
 
@@ -212,7 +214,7 @@ fn setup2(
             shadow_depth_bias: 0.2,
             ..default()
         },
-        Transform::from_xyz(8.0, 16.0, 8.0),
+        Transform::from_xyz(8.0, 32.0, 8.0),
     ));
 
     // ground plane
@@ -261,15 +263,18 @@ fn test_update(
             commands
                 .spawn((
                     Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
-                        .with_scale(Vec3::ONE * m2component.scale), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+                        .with_scale(Vec3::ONE * m2component.scale)
+                        .with_rotation(Quat::from_rotation_y(m2component.rotation * (PI / 180.0))), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
                     Visibility::default(),
-                    Shape,
+                    // Shape,
                 ))
                 .with_children(|parent| {
                     for mesh in meshes {
                         parent.spawn((
                             Mesh3d(mesh.mesh.clone()),
-                            MeshMaterial3d(m2.materials[mesh.material].clone()),
+                            MeshMaterial3d(
+                                m2.materials[m2component.skin_id][&mesh.material].clone(),
+                            ),
                         ));
                     }
                 });

@@ -88,7 +88,6 @@ impl AssetReader for MpqAssetReader {
                 _ => io::Error::new(io::ErrorKind::Other, err),
             })?;
 
-        dbg!(path);
         Ok(VecReader::new(bytes))
     }
 

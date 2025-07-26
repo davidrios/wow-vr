@@ -12,6 +12,7 @@ use std::io::Cursor;
 use std::result::Result as StdResult;
 use wow_m2::{
     blp::{BlpCompressionType, BlpPixelFormat},
+    chunks::material::{M2BlendMode, M2RenderFlags},
     common::{C2Vector, C3Vector},
 };
 
@@ -38,9 +39,16 @@ fn blp_to_image(blp: &mut wow_m2::BlpTexture) -> Result<Image> {
         BlpCompressionType::Dxt => match blp.header.pixel_format {
             BlpPixelFormat::Dxt1 => TextureFormat::Bc1RgbaUnorm,
             BlpPixelFormat::Dxt3 => TextureFormat::Bc2RgbaUnorm,
-            _ => return Err(Error::Generic("unsupported texture format")),
+            BlpPixelFormat::Rgb565 => TextureFormat::Bc3RgbaUnorm,
+            _ => {
+                dbg!(&blp.header);
+                return Err(Error::Generic("unsupported texture format"));
+            }
         },
-        _ => return Err(Error::Generic("unsupported texture format")),
+        _ => {
+            dbg!(&blp.header);
+            return Err(Error::Generic("unsupported texture format"));
+        }
     };
 
     let mut image = Image::default();
@@ -92,6 +100,7 @@ pub enum M2AssetLabel {
     Skin(u32),
     Mesh(u32, u32),
     Texture(u32),
+    Material(u32, (u16, u16)),
 }
 
 impl core::fmt::Display for M2AssetLabel {
@@ -102,6 +111,10 @@ impl core::fmt::Display for M2AssetLabel {
                 f.write_str(&format!("skin{}+mesh{}", skin_index, mesh_index))
             }
             Self::Texture(index) => f.write_str(&format!("texture{}", index)),
+            Self::Material(skin_index, (material_index, texture_index)) => f.write_str(&format!(
+                "skin{}+material{:x}_{:x}",
+                skin_index, material_index, texture_index
+            )),
         }
     }
 }
@@ -109,7 +122,7 @@ impl core::fmt::Display for M2AssetLabel {
 #[derive(Debug)]
 pub struct M2Mesh {
     pub mesh: Handle<Mesh>,
-    pub material: usize,
+    pub material: (u16, u16),
 }
 
 #[derive(Asset, TypePath, Debug)]
@@ -118,7 +131,7 @@ pub struct M2Asset {
     pub skins: Vec<Handle<SkinAsset>>,
     pub meshes: HashMap<u32, Vec<M2Mesh>>,
     pub textures: Vec<Handle<Image>>,
-    pub materials: Vec<Handle<StandardMaterial>>,
+    pub materials: Vec<HashMap<(u16, u16), Handle<StandardMaterial>>>,
 }
 
 impl M2Asset {
@@ -131,6 +144,25 @@ impl M2Asset {
 
         let mut skin_handles = Vec::with_capacity(num_skins as usize);
         let mut mesh_handles = HashMap::with_capacity(num_skins as usize);
+
+        let mut texture_handles = Vec::with_capacity(model.textures.len());
+        for (i, texture) in model.textures.iter().enumerate() {
+            let blp_path = AssetPath::parse(&texture.filename.string.to_string_lossy())
+                .with_source(load_context.asset_path().source())
+                .clone_owned();
+            let bytes = load_context.read_asset_bytes(blp_path).await?;
+            let mut reader = Cursor::new(&bytes);
+            let mut blp = wow_m2::BlpTexture::parse(&mut reader)?;
+
+            let texture_handle = load_context.add_labeled_asset(
+                M2AssetLabel::Texture(i as u32).to_string(),
+                blp_to_image(&mut blp)?,
+            );
+
+            texture_handles.push(texture_handle);
+        }
+
+        let mut material_handles = Vec::new();
 
         if num_skins > 0 {
             let vertex_count = model.vertices.len();
@@ -145,6 +177,8 @@ impl M2Asset {
             }
 
             for i in 0..num_skins {
+                let mut material_map = HashMap::new();
+
                 let skin_path = M2RelatedAsset::Skin(i).from_asset(load_context.asset_path());
                 let bytes = load_context.read_asset_bytes(skin_path).await?;
                 let mut reader = Cursor::new(&bytes);
@@ -177,7 +211,7 @@ impl M2Asset {
                     submeshes.push(M2Mesh {
                         mesh: load_context
                             .add_labeled_asset(M2AssetLabel::Mesh(i, mi as u32).to_string(), mesh),
-                        material: 0,
+                        material: (0, 0),
                     });
                 }
 
@@ -185,40 +219,59 @@ impl M2Asset {
                     let submesh = submeshes
                         .get_mut(texture_unit.skin_section_index as usize)
                         .unwrap();
-                    submesh.material = texture_unit.texture_combo_index as usize;
+
+                    if !material_map.contains_key(&(
+                        texture_unit.material_index,
+                        texture_unit.texture_combo_index,
+                    )) {
+                        let material_opts = &model.materials[texture_unit.material_index as usize];
+
+                        let material = StandardMaterial {
+                            base_color_texture: Some(
+                                texture_handles[texture_unit.texture_combo_index as usize].clone(),
+                            ),
+                            double_sided: material_opts
+                                .flags
+                                .contains(M2RenderFlags::NO_BACKFACE_CULLING),
+                            cull_mode: if material_opts
+                                .flags
+                                .contains(M2RenderFlags::NO_BACKFACE_CULLING)
+                            {
+                                None
+                            } else {
+                                Some(bevy::render::render_resource::Face::Back)
+                            },
+                            alpha_mode: match material_opts.blend_mode {
+                                M2BlendMode::ALPHA_KEY => AlphaMode::Mask(0.5),
+                                _ => AlphaMode::Opaque,
+                            },
+                            ..default()
+                        };
+                        let key = (
+                            texture_unit.material_index,
+                            texture_unit.texture_combo_index,
+                        );
+                        material_map.insert(
+                            key,
+                            load_context.add_labeled_asset(
+                                M2AssetLabel::Material(i, key).to_string(),
+                                material,
+                            ),
+                        );
+                    }
+
+                    submesh.material = (
+                        texture_unit.material_index,
+                        texture_unit.texture_combo_index,
+                    );
                 }
 
                 skin_handles.push(
                     load_context.add_labeled_asset(M2AssetLabel::Skin(i).to_string(), skin_asset),
                 );
                 mesh_handles.insert(i, submeshes);
+                material_handles.push(material_map);
             }
-        }
-
-        let mut texture_handles = Vec::with_capacity(model.textures.len());
-        let mut material_handles = Vec::with_capacity(model.textures.len());
-        for (i, texture) in model.textures.iter().enumerate() {
-            let blp_path = AssetPath::parse(&texture.filename.string.to_string_lossy())
-                .with_source(load_context.asset_path().source())
-                .clone_owned();
-            dbg!(&blp_path, &texture.filename.string.to_string_lossy());
-            let bytes = load_context.read_asset_bytes(blp_path).await?;
-            let mut reader = Cursor::new(&bytes);
-            let mut blp = wow_m2::BlpTexture::parse(&mut reader)?;
-
-            let texture_handle = load_context.add_labeled_asset(
-                M2AssetLabel::Texture(i as u32).to_string(),
-                blp_to_image(&mut blp)?,
-            );
-
-            let material = StandardMaterial {
-                base_color_texture: Some(texture_handle.clone()),
-                ..default()
-            };
-
-            texture_handles.push(texture_handle);
-            material_handles
-                .push(load_context.add_labeled_asset(format!("material{}", i), material));
         }
 
         Ok(Self {
@@ -251,11 +304,6 @@ impl AssetLoader for M2Loader {
         _settings: &Self::Settings,
         load_context: &mut LoadContext<'_>,
     ) -> StdResult<Self::Asset, Self::Error> {
-        dbg!("load m2", load_context.asset_path());
-        dbg!(
-            "load m2 label",
-            load_context.asset_path().label().unwrap_or(&"no label")
-        );
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
         let mut reader = Cursor::new(&bytes);
@@ -299,7 +347,6 @@ impl AssetLoader for SkinLoader {
         _settings: &Self::Settings,
         _load_context: &mut LoadContext<'_>,
     ) -> StdResult<Self::Asset, Self::Error> {
-        dbg!("load skin", _load_context.asset_path());
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
         let mut reader = Cursor::new(&bytes);

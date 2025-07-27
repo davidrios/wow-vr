@@ -169,12 +169,11 @@ fn setup2(
     });
 
     commands.spawn(M2Component {
-        m2: asset_server
-            .load("mpq://world/exteriordesigners/vehicletest/forsakencatapult_doodad.m2"),
+        m2: asset_server.load("mpq://creature/ghoul/ghoul.m2"),
         skin_id: 0,
         is_loaded: false,
         pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
-        scale: 0.3,
+        scale: 1.0,
         rotation: -45.0,
     });
 

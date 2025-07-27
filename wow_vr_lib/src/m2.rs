@@ -41,12 +41,12 @@ fn blp_to_image(blp: &mut wow_m2::BlpTexture) -> Result<Image> {
             BlpPixelFormat::Dxt3 => TextureFormat::Bc2RgbaUnorm,
             BlpPixelFormat::Rgb565 => TextureFormat::Bc3RgbaUnorm,
             _ => {
-                dbg!(&blp.header);
+                dbg!(&blp);
                 return Err(Error::Generic("unsupported texture format"));
             }
         },
         _ => {
-            dbg!(&blp.header);
+            dbg!(&blp);
             return Err(Error::Generic("unsupported texture format"));
         }
     };
@@ -147,7 +147,11 @@ impl M2Asset {
 
         let mut texture_handles = Vec::with_capacity(model.textures.len());
         for (i, texture) in model.textures.iter().enumerate() {
-            let blp_path = AssetPath::parse(&texture.filename.string.to_string_lossy())
+            let orig_path = texture.filename.string.to_string_lossy();
+            if orig_path.len() == 0 {
+                continue;
+            }
+            let blp_path = AssetPath::parse(&orig_path)
                 .with_source(load_context.asset_path().source())
                 .clone_owned();
             let bytes = load_context.read_asset_bytes(blp_path).await?;
@@ -225,11 +229,15 @@ impl M2Asset {
                         texture_unit.texture_combo_index,
                     )) {
                         let material_opts = &model.materials[texture_unit.material_index as usize];
+                        let texture_handle =
+                            texture_handles.get(texture_unit.texture_combo_index as usize);
 
                         let material = StandardMaterial {
-                            base_color_texture: Some(
-                                texture_handles[texture_unit.texture_combo_index as usize].clone(),
-                            ),
+                            base_color_texture: if let Some(texture_handle) = texture_handle {
+                                Some(texture_handle.clone())
+                            } else {
+                                None
+                            },
                             double_sided: material_opts
                                 .flags
                                 .contains(M2RenderFlags::NO_BACKFACE_CULLING),
@@ -396,12 +404,19 @@ mod tests {
         let mut mpq_col = MpqCollection::load(&vec![
             base_path.join("common.MPQ").as_path(),
             base_path.join("common-2.MPQ").as_path(),
+            base_path.join("expansion.MPQ").as_path(),
+            base_path.join("lichking.MPQ").as_path(),
+            base_path.join("patch.MPQ").as_path(),
+            base_path.join("patch-2.MPQ").as_path(),
+            base_path.join("patch-3.MPQ").as_path(),
             base_path.join("enUS/locale-enUS.MPQ").as_path(),
+            base_path.join("enUS/patch-enUS.MPQ").as_path(),
+            base_path.join("enUS/patch-enUS-2.MPQ").as_path(),
+            base_path.join("enUS/patch-enUS-3.MPQ").as_path(),
         ])
         .unwrap();
 
-        let fname =
-            "world/lordaeron/tirisfalglade/passivedoodads/trees/tirisfallgladecanopytree07.m2";
+        let fname = "creature/ghoul/ghoul.m2";
 
         let m2 = wow_m2::M2Model::parse(&mut get_reader(&mut mpq_col, fname)).unwrap();
         dbg!(&m2);
@@ -411,8 +426,16 @@ mod tests {
                 wow_m2::OldSkin::parse(&mut get_reader(&mut mpq_col, &sfname.to_string())).unwrap();
             dbg!(&skin);
         }
-        // dbg!(&m2.model);
-        // dbg!(&m2.skins);
+        for i in m2.textures {
+            let sfname = i.filename.string.to_string_lossy();
+            if sfname.len() == 0 {
+                continue;
+            }
+            let texture =
+                wow_m2::BlpTexture::parse(&mut get_reader(&mut mpq_col, &sfname.to_string()))
+                    .unwrap();
+            dbg!(&texture);
+        }
 
         assert_eq!(0, 1);
     }

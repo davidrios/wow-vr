@@ -27,24 +27,7 @@ pub enum Error {
 
     #[error("Read error: {0}")]
     ReadAssetBytesError(#[from] ReadAssetBytesError),
-    // #[error("Invalid compression type {0}")]
-    // InvalidCompressionType(#[from] TryFromPrimitiveError<mpq::CompressionType>),
-    //
-    // #[error("Unsupported compression {0:?}")]
-    // UnsupportedCompression(mpq::CompressionType),
-    //
-    // #[error("Unknown compression {0}")]
-    // UnknownCompression(u8),
-    //
-    // #[error("Type conversion error {0}")]
-    // TypeConversionError(#[from] common_types::Error),
-    //
-    // #[error("Invalid M2 magic {0}")]
-    // InvalidM2Magic(#[from] TryFromPrimitiveError<m2::Magic>),
-    //
-    // #[error("Invalid M2 chunk type {0}")]
-    // InvalidM2ChunkType(#[from] TryFromPrimitiveError<m2::ChunkType>),
-    //
+
     #[error("io error")]
     Io(#[from] io::Error),
 

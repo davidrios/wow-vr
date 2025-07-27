@@ -10,8 +10,8 @@ use bevy_asset::{AssetLoader, AssetPath, LoadContext, RenderAssetUsages, io::Rea
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use std::result::Result as StdResult;
+use wow_blp::{BlpContent, BlpContentTag, BlpImage, CompressionType, parser::load_blp_from_buf};
 use wow_m2::{
-    blp::{BlpCompressionType, BlpPixelFormat},
     chunks::material::{M2BlendMode, M2RenderFlags},
     common::{C2Vector, C3Vector},
 };
@@ -32,14 +32,12 @@ fn c2_to_vec2(vec: C2Vector) -> Vec2 {
     Vec2 { x: vec.x, y: vec.y }
 }
 
-fn blp_to_image(blp: &mut wow_m2::BlpTexture) -> Result<Image> {
-    let mip = &mut blp.mipmaps[0];
-
-    let texture_format = match blp.header.compression_type {
-        BlpCompressionType::Dxt => match blp.header.pixel_format {
-            BlpPixelFormat::Dxt1 => TextureFormat::Bc1RgbaUnorm,
-            BlpPixelFormat::Dxt3 => TextureFormat::Bc2RgbaUnorm,
-            BlpPixelFormat::Rgb565 => TextureFormat::Bc3RgbaUnorm,
+fn blp_to_image(blp: &mut BlpImage) -> Result<Image> {
+    let texture_format = match blp.header.content {
+        BlpContentTag::Direct => match blp.compression_type() {
+            CompressionType::Dxt1 => TextureFormat::Bc1RgbaUnorm,
+            CompressionType::Dxt3 => TextureFormat::Bc2RgbaUnorm,
+            CompressionType::Dxt5 => TextureFormat::Bc3RgbaUnorm,
             _ => {
                 dbg!(&blp);
                 return Err(Error::Generic("unsupported texture format"));
@@ -52,20 +50,35 @@ fn blp_to_image(blp: &mut wow_m2::BlpTexture) -> Result<Image> {
     };
 
     let mut image = Image::default();
-    image.texture_descriptor.size = Extent3d {
-        width: mip.width,
-        height: mip.height,
-        depth_or_array_layers: 1,
-    }
-    .physical_size(texture_format);
 
-    let mut data = Vec::with_capacity(mip.data.len());
-    data.append(&mut mip.data);
+    match blp.content {
+        BlpContent::Dxt1(_) | BlpContent::Dxt3(_) | BlpContent::Dxt5(_) => {
+            let content = match blp.content {
+                BlpContent::Dxt1(_) => blp.content.dxt1(),
+                BlpContent::Dxt3(_) => blp.content_dxt3(),
+                BlpContent::Dxt5(_) => blp.content_dxt5(),
+                _ => unreachable!(),
+            }
+            .unwrap();
+
+            let mip = &blp.mipmap_info()[0];
+            let contentimg = &content.images[0];
+
+            image.texture_descriptor.size = Extent3d {
+                width: mip.width,
+                height: mip.height,
+                depth_or_array_layers: 1,
+            }
+            .physical_size(texture_format);
+
+            image.data = Some(contentimg.content.clone());
+        }
+        _ => return Err(Error::Generic("unsupported texture format")),
+    };
 
     image.texture_descriptor.mip_level_count = 1;
     image.texture_descriptor.format = texture_format;
     image.texture_descriptor.dimension = TextureDimension::D2;
-    image.data = Some(data);
 
     Ok(image)
 }
@@ -155,8 +168,10 @@ impl M2Asset {
                 .with_source(load_context.asset_path().source())
                 .clone_owned();
             let bytes = load_context.read_asset_bytes(blp_path).await?;
-            let mut reader = Cursor::new(&bytes);
-            let mut blp = wow_m2::BlpTexture::parse(&mut reader)?;
+            let mut blp = load_blp_from_buf(&bytes).map_err(|e| {
+                dbg!(e);
+                Error::Generic("blp error")
+            })?;
 
             let texture_handle = load_context.add_labeled_asset(
                 M2AssetLabel::Texture(i as u32).to_string(),
@@ -432,8 +447,7 @@ mod tests {
                 continue;
             }
             let texture =
-                wow_m2::BlpTexture::parse(&mut get_reader(&mut mpq_col, &sfname.to_string()))
-                    .unwrap();
+                load_blp_from_buf(&mpq_col.read_file(&sfname.to_string()).unwrap()).unwrap();
             dbg!(&texture);
         }
 

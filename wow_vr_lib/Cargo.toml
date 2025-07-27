@@ -18,6 +18,7 @@ once_cell = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tobj = { workspace = true }
+wow-blp = { workspace = true }
 wow-m2 = { workspace = true }
 wow-mpq = { workspace = true }
 

@@ -1,15 +1,16 @@
+pub mod camera_controller;
+pub mod camera_views;
+pub mod grid;
+
 use std::{f32::consts::PI, path::PathBuf};
 
+use crate::camera_controller::{CameraController, CameraControllerPlugin};
+use crate::camera_views::{CameraViewsController, CameraViewsPlugin};
+use crate::grid::GridPlugin;
+
 #[cfg(not(target_arch = "wasm32"))]
-use bevy::pbr::wireframe::{WireframeConfig, WireframePlugin};
-use bevy::{
-    color::palettes::basic::SILVER,
-    prelude::*,
-    render::{
-        render_asset::RenderAssetUsages,
-        render_resource::{Extent3d, TextureDimension, TextureFormat},
-    },
-};
+use bevy::pbr::wireframe::WireframePlugin;
+use bevy::prelude::*;
 use bevy_asset::{
     UnapprovedPathMode,
     io::{AssetSource, AssetSourceId},
@@ -56,21 +57,15 @@ fn main() {
             WireframePlugin::default(),
             ObjPlugin::default(),
             M2Plugin::default(),
+            CameraControllerPlugin,
+            CameraViewsPlugin,
+            GridPlugin,
         ))
         .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            (
-                rotate,
-                #[cfg(not(target_arch = "wasm32"))]
-                toggle_wireframe,
-                test_update,
-            ),
-        )
+        .add_systems(Update, (rotate, test_update))
         .run();
 }
 
-/// A marker component for our shapes so we can query them separately from the ground plane
 #[derive(Component)]
 struct Shape;
 
@@ -79,131 +74,23 @@ struct M2Component {
     m2: Handle<M2Asset>,
     skin_id: usize,
     is_loaded: bool,
-    pos: f32,
     scale: f32,
     rotation: f32,
 }
 
-const SHAPES_X_EXTENT: f32 = 14.0;
-const EXTRUSION_X_EXTENT: f32 = 16.0;
-const Z_EXTENT: f32 = 5.0;
-
-fn setup(
-    commands: Commands,
-    meshes: ResMut<Assets<Mesh>>,
-    images: ResMut<Assets<Image>>,
-    materials: ResMut<Assets<StandardMaterial>>,
-    asset_server: Res<AssetServer>,
-) {
-    setup2(commands, meshes, images, materials, asset_server).unwrap()
+fn setup(commands: Commands, asset_server: Res<AssetServer>) {
+    setup2(commands, asset_server).unwrap()
 }
 
-fn setup2(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    asset_server: Res<AssetServer>,
-) -> Result<()> {
-    let debug_material = materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(uv_debug_texture())),
-        ..default()
-    });
-
-    let extrusions = [
-        meshes.add(Extrusion::new(Rectangle::default(), 1.)),
-        meshes.add(Extrusion::new(Capsule2d::default(), 1.)),
-        meshes.add(Extrusion::new(Annulus::default(), 1.)),
-        meshes.add(Extrusion::new(Circle::default(), 1.)),
-        meshes.add(Extrusion::new(Ellipse::default(), 1.)),
-        meshes.add(Extrusion::new(RegularPolygon::default(), 1.)),
-        meshes.add(Extrusion::new(Triangle2d::default(), 1.)),
-    ];
-
-    let num_shapes = 10;
-
-    let mut cur_pos = -1;
-    let mut next = || {
-        cur_pos += 1;
-        cur_pos
-    };
-
-    commands.spawn(M2Component {
-        m2: asset_server
-            .load("mpq://world/azeroth/bootybay/passivedoodad/fishingbox/fishingbox.m2"),
-        skin_id: 0,
-        is_loaded: false,
-        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
-        scale: 1.0,
-        rotation: 0.0,
-    });
-
-    commands.spawn(M2Component {
-        m2: asset_server.load("mpq://World\\GENERIC\\HUMAN\\PASSIVE DOODADS\\Bottles\\Bottle01.m2"),
-        skin_id: 0,
-        is_loaded: false,
-        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
-        scale: 1.0,
-        rotation: 0.0,
-    });
-
+fn setup2(mut commands: Commands, asset_server: Res<AssetServer>) -> Result<()> {
     commands.spawn(M2Component {
         m2: asset_server
             .load("mpq://world/lordaeron/tirisfalglade/passivedoodads/trees/tirisfallgladecanopytree07.m2"),
         skin_id: 0,
         is_loaded: false,
-        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
-        scale: 0.1,
+        scale: 0.15,
         rotation: 0.0,
     });
-
-    commands.spawn(M2Component {
-        m2: asset_server.load(
-            "mpq://world/azeroth/karazahn/passivedoodads/bookshelves/karazahnbookshelfsmall.m2",
-        ),
-        skin_id: 0,
-        is_loaded: false,
-        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
-        scale: 0.5,
-        rotation: 0.0,
-    });
-
-    commands.spawn(M2Component {
-        m2: asset_server.load("mpq://creature/ghoul/ghoul.m2"),
-        skin_id: 0,
-        is_loaded: false,
-        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
-        scale: 1.0,
-        rotation: -45.0,
-    });
-
-    commands.spawn(M2Component {
-        m2: asset_server.load(
-            "mpq://world/lordaeron/plagueland/passivedoodads/forsakenbanner/forsakenbanner01.m2",
-        ),
-        skin_id: 0,
-        is_loaded: false,
-        pos: -SHAPES_X_EXTENT / 2. + next() as f32 / (num_shapes - 1) as f32 * SHAPES_X_EXTENT,
-        scale: 0.5,
-        rotation: -90.0,
-    });
-
-    let num_extrusions = extrusions.len();
-
-    for (i, shape) in extrusions.into_iter().enumerate() {
-        commands.spawn((
-            Mesh3d(shape),
-            MeshMaterial3d(debug_material.clone()),
-            Transform::from_xyz(
-                -EXTRUSION_X_EXTENT / 2.
-                    + i as f32 / (num_extrusions - 1) as f32 * EXTRUSION_X_EXTENT,
-                2.0,
-                -Z_EXTENT / 2.,
-            )
-            .with_rotation(Quat::from_rotation_x(-PI / 4.)),
-            Shape,
-        ));
-    }
 
     commands.spawn((
         PointLight {
@@ -216,41 +103,40 @@ fn setup2(
         Transform::from_xyz(8.0, 32.0, 8.0),
     ));
 
-    // ground plane
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(50.0, 50.0).subdivisions(10))),
-        MeshMaterial3d(materials.add(Color::from(SILVER))),
-    ));
-
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(0.0, 7., 14.0).looking_at(Vec3::new(0., 1., 0.), Vec3::Y),
-    ));
-
-    #[cfg(not(target_arch = "wasm32"))]
-    commands.spawn((
-        Text::new("Press space to toggle wireframes"),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(12.0),
-            left: Val::Px(12.0),
+        Projection::default(),
+        Transform::from_xyz(0.0, 2., 10.0).looking_at(Vec3::new(0., 1., 0.), Vec3::Y),
+        CameraController {
+            mouse_key_cursor_grab: MouseButton::Right,
             ..default()
         },
+        CameraViewsController,
     ));
 
     Ok(())
 }
 
-fn rotate(mut query: Query<&mut Transform, With<Shape>>, time: Res<Time>) {
-    for mut transform in &mut query {
-        transform.rotate_y(time.delta_secs() / 2.);
+fn rotate(
+    key_input: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut Transform, With<Shape>>,
+    time: Res<Time>,
+) {
+    if key_input.pressed(KeyCode::KeyR) {
+        let mut rotation = time.delta_secs() * 2.;
+        if key_input.pressed(KeyCode::ShiftLeft) || key_input.pressed(KeyCode::ShiftRight) {
+            rotation = rotation * -1.;
+        }
+
+        for mut transform in &mut query {
+            transform.rotate_y(rotation);
+        }
     }
 }
 
 fn test_update(
     mut query: Query<&mut M2Component>,
     mut m2s: ResMut<Assets<M2Asset>>,
-    keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
 ) {
     for mut m2component in &mut query {
@@ -261,11 +147,11 @@ fn test_update(
             let meshes = &m2.meshes[&(m2component.skin_id as u32)];
             commands
                 .spawn((
-                    Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
+                    Transform::from_xyz(0., 0., 0.)
                         .with_scale(Vec3::ONE * m2component.scale)
-                        .with_rotation(Quat::from_rotation_y(m2component.rotation * (PI / 180.0))), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
+                        .with_rotation(Quat::from_rotation_y(m2component.rotation * (PI / 180.0))),
                     Visibility::default(),
-                    // Shape,
+                    Shape,
                 ))
                 .with_children(|parent| {
                     for mesh in meshes {
@@ -279,60 +165,5 @@ fn test_update(
                 });
             m2component.is_loaded = true;
         }
-    }
-    if keyboard.just_pressed(KeyCode::KeyA) {
-        // for m2component in &mut query {
-        //     // dbg!(&fishingbox);
-        //     if let Some(m2) = m2s.get_mut(&m2component.m2) {
-        //         let mesh = &m2.meshes[m2component.skin_id];
-        //         let material = &m2.materials[0];
-        //         commands.spawn((
-        //             Mesh3d(mesh.clone()),
-        //             MeshMaterial3d(material.clone()),
-        //             Transform::from_xyz(m2component.pos, 2.0, Z_EXTENT / 2.)
-        //                 .with_scale(Vec3::ONE * m2component.scale), // .with_rotation(Quat::from_rotation_x(-PI / 4.)),
-        //             Shape,
-        //         ));
-        //     }
-        // }
-    }
-}
-
-/// Creates a colorful test pattern
-fn uv_debug_texture() -> Image {
-    const TEXTURE_SIZE: usize = 8;
-
-    let mut palette: [u8; 32] = [
-        255, 102, 159, 255, 255, 159, 102, 255, 236, 255, 102, 255, 121, 255, 102, 255, 102, 255,
-        198, 255, 102, 198, 255, 255, 121, 102, 255, 255, 236, 102, 255, 255,
-    ];
-
-    let mut texture_data = [0; TEXTURE_SIZE * TEXTURE_SIZE * 4];
-    for y in 0..TEXTURE_SIZE {
-        let offset = TEXTURE_SIZE * y * 4;
-        texture_data[offset..(offset + TEXTURE_SIZE * 4)].copy_from_slice(&palette);
-        palette.rotate_right(4);
-    }
-
-    Image::new_fill(
-        Extent3d {
-            width: TEXTURE_SIZE as u32,
-            height: TEXTURE_SIZE as u32,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &texture_data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn toggle_wireframe(
-    mut wireframe_config: ResMut<WireframeConfig>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-) {
-    if keyboard.just_pressed(KeyCode::Space) {
-        wireframe_config.global = !wireframe_config.global;
     }
 }

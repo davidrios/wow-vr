@@ -143,7 +143,7 @@ pub struct M2Asset {
     pub model: wow_m2::M2Model,
     pub skins: Vec<Handle<SkinAsset>>,
     pub meshes: HashMap<u32, Vec<M2Mesh>>,
-    pub textures: Vec<Handle<Image>>,
+    pub textures: Vec<(String, Handle<Image>)>,
     pub materials: Vec<HashMap<(u16, u16), Handle<StandardMaterial>>>,
 }
 
@@ -178,7 +178,7 @@ impl M2Asset {
                 blp_to_image(&mut blp)?,
             );
 
-            texture_handles.push(texture_handle);
+            texture_handles.push((orig_path, texture_handle));
         }
 
         let mut material_handles = Vec::new();
@@ -238,18 +238,24 @@ impl M2Asset {
                     let submesh = submeshes
                         .get_mut(texture_unit.skin_section_index as usize)
                         .unwrap();
+                    if texture_unit.material_layer > 0 {
+                        continue;
+                    }
 
                     if !material_map.contains_key(&(
                         texture_unit.material_index,
                         texture_unit.texture_combo_index,
                     )) {
                         let material_opts = &model.materials[texture_unit.material_index as usize];
-                        let texture_handle =
-                            texture_handles.get(texture_unit.texture_combo_index as usize);
+                        let texture_handle = texture_handles.get(
+                            model.raw_data.texture_lookup_table
+                                [texture_unit.texture_combo_index as usize]
+                                as usize,
+                        );
 
                         let material = StandardMaterial {
                             base_color_texture: if let Some(texture_handle) = texture_handle {
-                                Some(texture_handle.clone())
+                                Some(texture_handle.1.clone())
                             } else {
                                 None
                             },
@@ -416,40 +422,56 @@ mod tests {
             .join("..")
             .join("Data");
 
-        let mut mpq_col = MpqCollection::load(&vec![
-            base_path.join("common.MPQ").as_path(),
-            base_path.join("common-2.MPQ").as_path(),
-            base_path.join("expansion.MPQ").as_path(),
-            base_path.join("lichking.MPQ").as_path(),
-            base_path.join("patch.MPQ").as_path(),
-            base_path.join("patch-2.MPQ").as_path(),
-            base_path.join("patch-3.MPQ").as_path(),
-            base_path.join("enUS/locale-enUS.MPQ").as_path(),
-            base_path.join("enUS/patch-enUS.MPQ").as_path(),
-            base_path.join("enUS/patch-enUS-2.MPQ").as_path(),
-            base_path.join("enUS/patch-enUS-3.MPQ").as_path(),
+        let mut mpq_col = MpqCollection::load(vec![
+            base_path.join("common.MPQ"),
+            base_path.join("common-2.MPQ"),
+            base_path.join("expansion.MPQ"),
+            base_path.join("lichking.MPQ"),
+            base_path.join("patch.MPQ"),
+            base_path.join("patch-2.MPQ"),
+            base_path.join("patch-3.MPQ"),
+            base_path.join("enUS/locale-enUS.MPQ"),
+            base_path.join("enUS/patch-enUS.MPQ"),
+            base_path.join("enUS/patch-enUS-2.MPQ"),
+            base_path.join("enUS/patch-enUS-3.MPQ"),
         ])
         .unwrap();
 
-        let fname = "creature/ghoul/ghoul.m2";
+        // let fname = "world/khazmodan/uldaman/passivedoodads/statues/uldamanmountaingiantstatue.m2";
+        let fname = "world/lordaeron/plagueland/passivedoodads/forsakenbanner/forsakenbanner01.m2";
 
         let m2 = wow_m2::M2Model::parse(&mut get_reader(&mut mpq_col, fname)).unwrap();
-        dbg!(&m2);
-        for i in 0..m2.header.num_skin_profiles.unwrap_or(0) {
-            let sfname = M2RelatedAsset::Skin(i).from_asset(fname);
-            let skin =
-                wow_m2::OldSkin::parse(&mut get_reader(&mut mpq_col, &sfname.to_string())).unwrap();
-            dbg!(&skin);
+        for bone in &m2.bones {
+            dbg!(&bone);
+            // let M2BoneRotation::Others(rotation) = &bone.rotation else {
+            //     continue;
+            // };
+            // let TrackVec::Multiple(values) = &rotation.values else {
+            //     continue;
+            // };
+            // if values.is_empty() {
+            //     continue;
+            // }
+            //
+            // let quats: Vec<Quaternion> = values[0].iter().map(|q| (*q).into()).collect();
+            // dbg!(quats);
         }
-        for i in m2.textures {
-            let sfname = i.filename.string.to_string_lossy();
-            if sfname.len() == 0 {
-                continue;
-            }
-            let texture =
-                load_blp_from_buf(&mpq_col.read_file(&sfname.to_string()).unwrap()).unwrap();
-            dbg!(&texture);
-        }
+        // dbg!(&m2);
+        // for i in 0..m2.header.num_skin_profiles.unwrap_or(0) {
+        //     let sfname = M2RelatedAsset::Skin(i).from_asset(fname);
+        //     let skin =
+        //         wow_m2::OldSkin::parse(&mut get_reader(&mut mpq_col, &sfname.to_string())).unwrap();
+        //     dbg!(&skin);
+        // }
+        // for i in m2.textures {
+        //     let sfname = i.filename.string.to_string_lossy();
+        //     if sfname.len() == 0 {
+        //         continue;
+        //     }
+        //     let texture =
+        //         load_blp_from_buf(&mpq_col.read_file(&sfname.to_string()).unwrap()).unwrap();
+        //     dbg!(&texture);
+        // }
 
         assert_eq!(0, 1);
     }

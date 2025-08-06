@@ -6,6 +6,7 @@ resolver = "3"
 
 [workspace.dependencies]
 bevy = { version = "0.16.1", features = ["dynamic_linking", "wayland"] }
+bevy_animation = { version = "0.16.1" }
 bevy_asset = { version = "0.16.1" }
 bevy_image = { version = "0.16.1" }
 bevy_obj = { version = "0.16.1" }

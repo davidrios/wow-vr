@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = { workspace = true, features = ["dds"] }
+bevy_animation = { workspace = true }
 bevy_asset = { workspace = true }
 bevy_image = { workspace = true, features = ["dds"] }
 bevy_obj = { workspace = true }

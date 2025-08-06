@@ -1,10 +1,17 @@
 use bevy::{prelude::*, render::camera::ScalingMode};
+use bevy_egui::input::egui_wants_any_keyboard_input;
 
 pub struct CameraViewsPlugin;
 
 impl Plugin for CameraViewsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (update_camera, update_projection));
+        app.add_systems(
+            Update,
+            (
+                update_camera.run_if(not(egui_wants_any_keyboard_input)),
+                update_projection.run_if(not(egui_wants_any_keyboard_input)),
+            ),
+        );
     }
 }
 

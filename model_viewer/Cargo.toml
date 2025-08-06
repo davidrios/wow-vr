@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 bevy = { workspace = true }
 bevy_asset = { workspace = true }
+bevy_egui = "0.35.1"
 bevy_obj = { workspace = true }
+egui_extras = "0.31"
 log = { workspace = true }
 tobj = { workspace = true }
 wow-mpq = { workspace = true }

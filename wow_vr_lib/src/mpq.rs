@@ -1,4 +1,10 @@
-use std::{collections::HashMap, fmt, io, path::Path, result::Result as StdResult, sync::Mutex};
+use std::{
+    collections::HashMap,
+    fmt, io,
+    path::{Path, PathBuf},
+    result::Result as StdResult,
+    sync::Mutex,
+};
 
 use bevy::prelude::*;
 use bevy_asset::io::{AssetReader, AssetReaderError, PathStream, VecReader};
@@ -34,7 +40,7 @@ fn format_file_name(val: &str) -> String {
 }
 
 impl MpqCollection {
-    pub fn load(paths: &[&Path]) -> Result<MpqCollection> {
+    pub fn load(paths: Vec<PathBuf>) -> Result<MpqCollection> {
         let mut archives = Vec::with_capacity(paths.len());
         let mut file_map = HashMap::new();
         for idx in 0..paths.len() {
@@ -61,6 +67,10 @@ impl MpqCollection {
             Err(Error::Generic("self.archives is invalid"))
         }
     }
+
+    pub fn file_list(&self) -> Vec<&String> {
+        self.file_map.iter().map(|val| val.0).collect()
+    }
 }
 
 pub struct MpqAssetReader {
@@ -68,7 +78,7 @@ pub struct MpqAssetReader {
 }
 
 impl MpqAssetReader {
-    pub fn new(mpq_paths: &[&Path]) -> Self {
+    pub fn new(mpq_paths: Vec<PathBuf>) -> Self {
         Self {
             mpq_collection: MpqCollection::load(mpq_paths).unwrap(),
         }
@@ -123,9 +133,9 @@ mod tests {
             .join("..")
             .join("Data");
 
-        let mpq_col = MpqCollection::load(&vec![
-            base_path.join("common.MPQ").as_path(),
-            base_path.join("common-2.MPQ").as_path(),
+        let mpq_col = MpqCollection::load(vec![
+            base_path.join("common.MPQ"),
+            base_path.join("common-2.MPQ"),
         ])
         .unwrap();
 

@@ -1,7 +1,7 @@
-using AzerothVR.Formats.Textures;
+using WowVR.Formats.Textures;
 using Godot;
 
-namespace AzerothVR.Converters;
+namespace WowVR.Converters;
 
 public static class TextureConverter
 {

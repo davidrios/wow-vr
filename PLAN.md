@@ -1,4 +1,4 @@
-# Azeroth VR — Project Plan
+# wow VR — Project Plan
 
 A multiplayer exploration experience of the Wrath of the Lich King (3.3.5a) World of Warcraft world, playable in **VR or on desktop**, built in **Godot 4 (.NET / C#)**. Players walk, teleport or fly through the zones, see creatures and NPCs going about their routines, and explore together with friends.
 
@@ -28,7 +28,7 @@ Not a game client: no combat, quests, or emulator protocol. It's a **world viewe
 2. **Asset caches stay on the player's machine** (`user://cache`), and are never uploaded or shared between players.
 3. **Spawn data**: the AzerothCore world database is community-made and open-source licensed. Ship the **exporter script**, not exported data, unless the license is confirmed compatible.
 4. Non-commercial. No use of Blizzard trademarks in the project name or branding.
-5. Tests that need game files are skipped when `AZVR_CLIENT_PATH` is unset, so CI never needs them.
+5. Tests that need game files are skipped when `WOWVR_CLIENT_PATH` is unset, so CI never needs them.
 
 ---
 
@@ -62,7 +62,7 @@ Not a game client: no combat, quests, or emulator protocol. It's a **world viewe
 │    → ArrayMesh, Skeleton3D, Animation, ImageTexture              │
 │    → cached as Godot resources in user://cache                   │
 │                                                                  │
-│  AzerothVR.Formats (C#, no Godot dependency, unit-tested)        │
+│  WowVR.Formats (C#, no Godot dependency, unit-tested)        │
 │    IAssetSource · safe wrappers over the native library          │
 │                                                                  │
 │  wow-alchemy FFI (native Rust library, C ABI)                    │
@@ -78,7 +78,7 @@ Offline tool: tools/spawn-exporter (Python)
 
 **Principles**
 - **Parsing lives in [wow-alchemy](https://github.com/davidrios/wow-alchemy)**, a public Rust project developed alongside this one so others can use it. See `docs/decisions/0002-rust-parsers.md`.
-- **`AzerothVR.Formats` wraps it in safe C#**, with no `Godot.*` references, so it stays fast to unit test.
+- **`WowVR.Formats` wraps it in safe C#**, with no `Godot.*` references, so it stays fast to unit test.
 - **Converters** are the only layer that touches both parsed data and Godot types.
 - **Everything heavy runs off the main thread** (parsing, mesh building), and hands finished resources to the scene tree.
 - **Cache aggressively.** First visit to a tile converts it; later visits load the cached resource.
@@ -101,7 +101,7 @@ godot = Vector3(-wowY, wowZ, -wowX)   // east = +X, up = +Y, north = −Z
 ## 5. Repository layout
 
 ```
-azeroth-vr/
+wow-vr/
 ├── CLAUDE.md
 ├── PLAN.md
 ├── README.md
@@ -120,8 +120,8 @@ azeroth-vr/
 │   │   └── Net/
 │   └── shaders/               # terrain splat, water, sky
 ├── src/
-│   ├── AzerothVR.Formats/     # C# wrappers over the wow-alchemy FFI (class library)
-│   └── AzerothVR.Formats.Tests/
+│   ├── WowVR.Formats/     # C# wrappers over the wow-alchemy FFI (class library)
+│   └── WowVR.Formats.Tests/
 ├── tools/
 │   ├── spawn-exporter/        # Python: AzerothCore DB → spawn JSON
 │   └── inspect/               # CLI: dump a file's chunks, export a BLP to PNG, etc.
@@ -139,14 +139,14 @@ Each milestone ends with something visible and a short acceptance check, run in 
 ### M0 — Project skeleton
 - Godot 4 .NET project, OpenXR enabled, Godot XR Tools installed.
 - Grey test floor with two player scenes: `DesktopPlayer` (default) and `XRPlayer` with hands (`--xr-mode on`, PC VR through SteamVR or Quest via Link/Air Link).
-- Settings: client path (`AZVR_CLIENT_PATH` env var or in-app setting), stored in `user://settings.cfg`.
-- Solution with `AzerothVR.Formats` + tests wired up; `dotnet test` passes.
+- Settings: client path (`WOWVR_CLIENT_PATH` env var or in-app setting), stored in `user://settings.cfg`.
+- Solution with `WowVR.Formats` + tests wired up; `dotnet test` passes.
 - Record the client target (section 3) in `docs/decisions/0001-client-target.md`.
 
 **Done when:** you can move around the grey floor in desktop mode (passed 2026-11-01), and the test suite runs. Headset check: stand on the floor with tracked hands (passed 2026-11-01 on SteamVR; locomotion comes in M3).
 
 ### M1 — File access
-- Add an FFI crate to wow-alchemy exposing a C ABI, and P/Invoke wrappers in `AzerothVR.Formats`.
+- Add an FFI crate to wow-alchemy exposing a C ABI, and P/Invoke wrappers in `WowVR.Formats`.
 - `IAssetSource` + `MpqAssetSource` over `wow-mpq`, honouring 3.3.5a patch order.
 - BLP decoding through wow-alchemy (DXT1/3/5 + palettized) → Godot `Image`.
 - DBC access through wow-alchemy with typed record definitions for `Map`, `AreaTable`.
@@ -254,4 +254,4 @@ Each milestone ends with something visible and a short acceptance check, run in 
 
 Suggested opening prompt:
 
-> Read PLAN.md and CLAUDE.md. Start Milestone 0: create the Godot 4 .NET project with OpenXR enabled, add Godot XR Tools, build an XRPlayer scene on a grey floor, and set up the AzerothVR.Formats class library with a test project and a passing placeholder test. Create the .gitignore described in the plan. Stop when M0's "done when" check can be performed and tell me how to run it.
+> Read PLAN.md and CLAUDE.md. Start Milestone 0: create the Godot 4 .NET project with OpenXR enabled, add Godot XR Tools, build an XRPlayer scene on a grey floor, and set up the WowVR.Formats class library with a test project and a passing placeholder test. Create the .gitignore described in the plan. Stop when M0's "done when" check can be performed and tell me how to run it.

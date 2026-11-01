@@ -1,7 +1,7 @@
-using AzerothVR.Formats;
+using WowVR.Formats;
 using Xunit;
 
-namespace AzerothVR.Formats.Tests;
+namespace WowVR.Formats.Tests;
 
 public class ProjectRulesTests
 {

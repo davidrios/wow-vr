@@ -1,10 +1,10 @@
 using System.Text;
-using AzerothVR.Formats.Assets;
-using AzerothVR.Formats.Database;
-using AzerothVR.Formats.Textures;
+using WowVR.Formats.Assets;
+using WowVR.Formats.Database;
+using WowVR.Formats.Textures;
 using Xunit;
 
-namespace AzerothVR.Formats.Tests;
+namespace WowVR.Formats.Tests;
 
 public class NativeWrapperTests
 {
@@ -49,7 +49,7 @@ public class NativeWrapperTests
     [Fact]
     public void ClientArchivesLoadInPatchOrder()
     {
-        var client = Directory.CreateTempSubdirectory("azvr-test");
+        var client = Directory.CreateTempSubdirectory("wowvr-test");
         try
         {
             var data = client.CreateSubdirectory("Data");
@@ -80,6 +80,6 @@ public class NativeWrapperTests
     [Fact]
     public void MissingDataFolderIsReported()
     {
-        Assert.Throws<DirectoryNotFoundException>(() => ClientArchives.Find(Path.Combine(Path.GetTempPath(), "azvr-no-such-client")));
+        Assert.Throws<DirectoryNotFoundException>(() => ClientArchives.Find(Path.Combine(Path.GetTempPath(), "wowvr-no-such-client")));
     }
 }

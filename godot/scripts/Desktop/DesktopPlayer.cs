@@ -1,6 +1,6 @@
 using Godot;
 
-namespace AzerothVR.Desktop;
+namespace WowVR.Desktop;
 
 /// <summary>
 /// Free-flying desktop camera. Click to capture the mouse, Esc to release it.

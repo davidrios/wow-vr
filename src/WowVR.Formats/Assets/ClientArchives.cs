@@ -1,4 +1,4 @@
-namespace AzerothVR.Formats.Assets;
+namespace WowVR.Formats.Assets;
 
 /// <summary>The MPQ archives of a 3.3.5a client, in load order. Later archives override earlier ones.</summary>
 public sealed record ClientArchives(string Locale, IReadOnlyList<string> Paths)

@@ -1,4 +1,4 @@
-# Azeroth VR
+# wow VR
 
 A multiplayer world viewer for the 3.3.5a World of Warcraft client, playable in VR or on desktop, built with Godot 4 (.NET). It contains no game assets: it reads them at runtime from your own client. See [PLAN.md](PLAN.md).
 
@@ -12,7 +12,7 @@ A multiplayer world viewer for the 3.3.5a World of Warcraft client, playable in 
 
 ## Setup
 
-Point the app at your client with the `AZVR_CLIENT_PATH` environment variable, or save the path once:
+Point the app at your client with the `WOWVR_CLIENT_PATH` environment variable, or save the path once:
 
 ```
 godot --path godot -- --client-path=<path to client>
@@ -21,7 +21,7 @@ godot --path godot -- --client-path=<path to client>
 ## Run
 
 ```
-dotnet build AzerothVR.sln
+dotnet build WowVR.sln
 godot --path godot
 ```
 
@@ -33,7 +33,7 @@ For VR, turn on your headset and OpenXR runtime, then add `--xr-mode on`. The le
 
 ## Inspect client files
 
-Set `AZVR_CLIENT_PATH`, then:
+Set `WOWVR_CLIENT_PATH`, then:
 
 ```
 dotnet run --project tools/inspect -- list elwynn
@@ -45,8 +45,8 @@ Exported files come from your client, so don't commit or share them.
 
 ## Test
 
-Tests that need game files are skipped when `AZVR_CLIENT_PATH` is unset.
+Tests that need game files are skipped when `WOWVR_CLIENT_PATH` is unset.
 
 ```
-dotnet test --project src/AzerothVR.Formats.Tests
+dotnet test --project src/WowVR.Formats.Tests
 ```

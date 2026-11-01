@@ -1,6 +1,6 @@
 using Godot;
 
-namespace AzerothVR.Xr;
+namespace WowVR.Xr;
 
 /// <summary>The VR player. Main only creates it once OpenXR is running.</summary>
 public partial class XrPlayer : XROrigin3D

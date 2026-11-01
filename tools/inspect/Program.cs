@@ -1,11 +1,11 @@
-using AzerothVR.Formats.Assets;
-using AzerothVR.Formats.Database;
-using AzerothVR.Formats.Textures;
+using WowVR.Formats.Assets;
+using WowVR.Formats.Database;
+using WowVR.Formats.Textures;
 
 const string Usage = """
     Usage: inspect <command> [arguments]
 
-    Reads from the client at AZVR_CLIENT_PATH.
+    Reads from the client at WOWVR_CLIENT_PATH.
 
       list [text]                 List files, optionally only those containing text.
       blp <file> <out.png> [mip]  Export a BLP texture to PNG. Don't commit the output.
@@ -18,10 +18,10 @@ if (args.Length == 0)
     return 1;
 }
 
-var clientPath = Environment.GetEnvironmentVariable("AZVR_CLIENT_PATH");
+var clientPath = Environment.GetEnvironmentVariable("WOWVR_CLIENT_PATH");
 if (string.IsNullOrWhiteSpace(clientPath))
 {
-    Console.Error.WriteLine("AZVR_CLIENT_PATH is not set.");
+    Console.Error.WriteLine("WOWVR_CLIENT_PATH is not set.");
     return 1;
 }
 
@@ -50,7 +50,7 @@ try
             return 1;
     }
 }
-catch (Exception e) when (e is IOException or AzerothVR.Formats.WowAlchemyException or FormatException)
+catch (Exception e) when (e is IOException or WowVR.Formats.WowAlchemyException or FormatException)
 {
     Console.Error.WriteLine(e.Message);
     return 1;

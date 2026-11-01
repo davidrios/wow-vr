@@ -1,7 +1,7 @@
 using System.Text;
-using AzerothVR.Formats.Native;
+using WowVR.Formats.Native;
 
-namespace AzerothVR.Formats.Database;
+namespace WowVR.Formats.Database;
 
 /// <summary>A DBC table with untyped access to its 32-bit fields.</summary>
 public sealed class DbcFile : IDisposable

@@ -1,18 +1,18 @@
-using AzerothVR.Formats.Assets;
-using AzerothVR.Formats.Database;
-using AzerothVR.Formats.Textures;
+using WowVR.Formats.Assets;
+using WowVR.Formats.Database;
+using WowVR.Formats.Textures;
 using Xunit;
 
-namespace AzerothVR.Formats.Tests;
+namespace WowVR.Formats.Tests;
 
-/// <summary>Opens the client once for all tests. Null when AZVR_CLIENT_PATH is unset.</summary>
+/// <summary>Opens the client once for all tests. Null when WOWVR_CLIENT_PATH is unset.</summary>
 public sealed class ClientFixture : IDisposable
 {
     public MpqAssetSource? Source { get; }
 
     public ClientFixture()
     {
-        var path = Environment.GetEnvironmentVariable("AZVR_CLIENT_PATH");
+        var path = Environment.GetEnvironmentVariable("WOWVR_CLIENT_PATH");
         if (!string.IsNullOrWhiteSpace(path))
         {
             Source = MpqAssetSource.Open(path);
@@ -30,7 +30,7 @@ public class ClientDataTests(ClientFixture client) : IClassFixture<ClientFixture
         {
             if (client.Source is null)
             {
-                Assert.Skip("AZVR_CLIENT_PATH is not set.");
+                Assert.Skip("WOWVR_CLIENT_PATH is not set.");
             }
 
             return client.Source;

@@ -13,7 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AzerothVR.Formats\AzerothVR.Formats.csproj" />
+    <ProjectReference Include="..\WowVR.Formats\WowVR.Formats.csproj" />
   </ItemGroup>
 
 </Project>

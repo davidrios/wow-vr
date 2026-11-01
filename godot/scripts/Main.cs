@@ -1,14 +1,14 @@
 using System;
 using System.Globalization;
 using System.Threading.Tasks;
-using AzerothVR.Debug;
-using AzerothVR.Formats;
-using AzerothVR.Formats.Assets;
-using AzerothVR.Formats.Terrain;
-using AzerothVR.World;
+using WowVR.Debug;
+using WowVR.Formats;
+using WowVR.Formats.Assets;
+using WowVR.Formats.Terrain;
+using WowVR.World;
 using Godot;
 
-namespace AzerothVR;
+namespace WowVR;
 
 public partial class Main : Node3D
 {

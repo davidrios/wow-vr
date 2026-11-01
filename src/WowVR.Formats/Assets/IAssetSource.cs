@@ -1,4 +1,4 @@
-namespace AzerothVR.Formats.Assets;
+namespace WowVR.Formats.Assets;
 
 /// <summary>
 /// Read access to game files by their in-game path, such as

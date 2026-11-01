@@ -1,6 +1,6 @@
-using AzerothVR.Formats.Assets;
+using WowVR.Formats.Assets;
 
-namespace AzerothVR.Formats.Database;
+namespace WowVR.Formats.Database;
 
 /// <summary>
 /// The slot of a client locale in 3.3.5a localized strings. A client only fills in

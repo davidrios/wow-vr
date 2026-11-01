@@ -1,6 +1,6 @@
-using AzerothVR.Formats.Native;
+using WowVR.Formats.Native;
 
-namespace AzerothVR.Formats.Textures;
+namespace WowVR.Formats.Textures;
 
 /// <summary>A decoded texture: 4 bytes per pixel, RGBA, top row first.</summary>
 public sealed record DecodedTexture(byte[] Rgba8, int Width, int Height, int MipCount);

@@ -1,6 +1,6 @@
 using Godot;
 
-namespace AzerothVR.Debug;
+namespace WowVR.Debug;
 
 /// <summary>
 /// Frame rate readout and frame time graph, attached to the active camera. It's in

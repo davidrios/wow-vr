@@ -1,7 +1,7 @@
 using System.Text;
-using AzerothVR.Formats.Native;
+using WowVR.Formats.Native;
 
-namespace AzerothVR.Formats.Terrain;
+namespace WowVR.Formats.Terrain;
 
 /// <summary>Terrain data of one map chunk.</summary>
 public sealed class TerrainChunk

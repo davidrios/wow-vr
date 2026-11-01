@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using AzerothVR.Formats;
-using AzerothVR.World;
+using WowVR.Formats;
+using WowVR.World;
 using Godot;
 
-namespace AzerothVR.Debug;
+namespace WowVR.Debug;
 
 /// <summary>
 /// Flies the player from Goldshire to Northshire at running speed, then reports

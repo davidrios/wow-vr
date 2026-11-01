@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace AzerothVR.Formats.Terrain;
+namespace WowVR.Formats.Terrain;
 
 /// <summary>
 /// One tile as a single mesh in Godot axes, relative to the tile's north-west

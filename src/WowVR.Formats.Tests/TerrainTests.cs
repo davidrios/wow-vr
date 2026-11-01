@@ -1,9 +1,9 @@
 using System.Numerics;
-using AzerothVR.Formats.Terrain;
-using AzerothVR.Formats.Textures;
+using WowVR.Formats.Terrain;
+using WowVR.Formats.Textures;
 using Xunit;
 
-namespace AzerothVR.Formats.Tests;
+namespace WowVR.Formats.Tests;
 
 public class WowCoordsTests
 {
@@ -60,7 +60,7 @@ public class ClientTerrainTests(ClientFixture client) : IClassFixture<ClientFixt
     {
         if (client.Source is null)
         {
-            Assert.Skip("AZVR_CLIENT_PATH is not set.");
+            Assert.Skip("WOWVR_CLIENT_PATH is not set.");
         }
 
         var map = WdtMap.Read(client.Source, "Northrend");
@@ -87,7 +87,7 @@ public class ClientTerrainTests(ClientFixture client) : IClassFixture<ClientFixt
     {
         if (client.Source is null)
         {
-            Assert.Skip("AZVR_CLIENT_PATH is not set.");
+            Assert.Skip("WOWVR_CLIENT_PATH is not set.");
         }
 
         var map = WdtMap.Read(client.Source, "Northrend");
@@ -133,7 +133,7 @@ public class ClientTerrainTests(ClientFixture client) : IClassFixture<ClientFixt
     {
         if (client.Source is null)
         {
-            Assert.Skip("AZVR_CLIENT_PATH is not set.");
+            Assert.Skip("WOWVR_CLIENT_PATH is not set.");
         }
 
         var map = WdtMap.Read(client.Source, "Northrend");
@@ -165,7 +165,7 @@ public class ClientTerrainTests(ClientFixture client) : IClassFixture<ClientFixt
     {
         if (client.Source is null)
         {
-            Assert.Skip("AZVR_CLIENT_PATH is not set.");
+            Assert.Skip("WOWVR_CLIENT_PATH is not set.");
         }
 
         var map = WdtMap.Read(client.Source, directory);
@@ -192,7 +192,7 @@ public class ClientTerrainTests(ClientFixture client) : IClassFixture<ClientFixt
     {
         if (client.Source is null)
         {
-            Assert.Skip("AZVR_CLIENT_PATH is not set.");
+            Assert.Skip("WOWVR_CLIENT_PATH is not set.");
         }
 
         var map = WdtMap.Read(client.Source, "Azeroth");

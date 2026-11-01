@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace AzerothVR.Formats;
+namespace WowVR.Formats;
 
 /// <summary>
 /// The only place that converts between WoW and Godot coordinates. WoW: X north,

@@ -1,7 +1,7 @@
 using System.Text;
-using AzerothVR.Formats.Native;
+using WowVR.Formats.Native;
 
-namespace AzerothVR.Formats.Assets;
+namespace WowVR.Formats.Assets;
 
 /// <summary>Reads game files from a 3.3.5a client's MPQ archives, applying its patches.</summary>
 public sealed class MpqAssetSource : IAssetSource

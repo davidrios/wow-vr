@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AzerothVR.Formats\AzerothVR.Formats.csproj" />
+    <ProjectReference Include="..\..\src\WowVR.Formats\WowVR.Formats.csproj" />
   </ItemGroup>
 
 </Project>

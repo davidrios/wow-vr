@@ -1,17 +1,17 @@
 using Godot;
 
-namespace AzerothVR;
+namespace WowVR;
 
 /// <summary>
 /// Player settings, stored in user://settings.cfg. For the client path, the
-/// AZVR_CLIENT_PATH environment variable overrides the stored value.
+/// WOWVR_CLIENT_PATH environment variable overrides the stored value.
 /// </summary>
 public static class AppSettings
 {
     private const string FilePath = "user://settings.cfg";
     private const string Section = "client";
     private const string PathKey = "path";
-    private const string EnvironmentVariable = "AZVR_CLIENT_PATH";
+    private const string EnvironmentVariable = "WOWVR_CLIENT_PATH";
 
     public static string ClientPath
     {

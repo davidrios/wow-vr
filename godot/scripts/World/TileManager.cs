@@ -4,13 +4,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
-using AzerothVR.Converters;
-using AzerothVR.Formats;
-using AzerothVR.Formats.Assets;
-using AzerothVR.Formats.Terrain;
+using WowVR.Converters;
+using WowVR.Formats;
+using WowVR.Formats.Assets;
+using WowVR.Formats.Terrain;
 using Godot;
 
-namespace AzerothVR.World;
+namespace WowVR.World;
 
 /// <summary>
 /// Streams terrain tiles around the camera and keeps the world near Godot's origin.

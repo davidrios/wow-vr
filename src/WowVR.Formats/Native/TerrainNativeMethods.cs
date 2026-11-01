@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace AzerothVR.Formats.Native;
+namespace WowVR.Formats.Native;
 
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct WaTerrainChunk

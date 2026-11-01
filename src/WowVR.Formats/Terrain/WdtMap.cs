@@ -1,7 +1,7 @@
-using AzerothVR.Formats.Assets;
-using AzerothVR.Formats.Native;
+using WowVR.Formats.Assets;
+using WowVR.Formats.Native;
 
-namespace AzerothVR.Formats.Terrain;
+namespace WowVR.Formats.Terrain;
 
 /// <summary>Which tiles of a map exist, and how its ADT files store alpha maps.</summary>
 public sealed class WdtMap

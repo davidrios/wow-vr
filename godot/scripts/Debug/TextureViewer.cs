@@ -1,12 +1,12 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using AzerothVR.Converters;
-using AzerothVR.Formats.Assets;
-using AzerothVR.Formats.Textures;
+using WowVR.Converters;
+using WowVR.Formats.Assets;
+using WowVR.Formats.Textures;
 using Godot;
 
-namespace AzerothVR.Debug;
+namespace WowVR.Debug;
 
 /// <summary>
 /// Shows a client texture on desktop:

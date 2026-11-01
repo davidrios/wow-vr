@@ -1,4 +1,4 @@
-namespace AzerothVR.Formats;
+namespace WowVR.Formats;
 
 /// <summary>The client these parsers target. See docs/decisions/0001-client-target.md.</summary>
 public static class ClientTarget

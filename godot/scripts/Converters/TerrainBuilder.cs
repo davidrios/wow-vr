@@ -1,13 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
-using AzerothVR.Formats;
-using AzerothVR.Formats.Assets;
-using AzerothVR.Formats.Terrain;
-using AzerothVR.Formats.Textures;
+using WowVR.Formats;
+using WowVR.Formats.Assets;
+using WowVR.Formats.Terrain;
+using WowVR.Formats.Textures;
 using Godot;
 
-namespace AzerothVR.Converters;
+namespace WowVR.Converters;
 
 /// <summary>Turns a tile into a mesh and material. Runs off the main thread.</summary>
 public sealed class TerrainBuilder(IAssetSource source, WdtMap map)

@@ -1,0 +1,34 @@
+# Godot
+.godot/
+*.translation
+godot/export_presets.cfg
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+
+# Blizzard game data: never commit (see PLAN.md section 2)
+*.mpq
+*.adt
+*.wdt
+*.wdl
+*.wmo
+*.m2
+*.mdx
+*.skin
+*.anim
+*.blp
+*.dbc
+*.db2
+*.bls
+*.mp3
+*.wav
+
+# Exported spawn data: ship the exporter, not its output
+spawns/
+
+# Local converted caches
+cache/

@@ -6,6 +6,7 @@ A multiplayer world viewer for the 3.3.5a World of Warcraft client, playable in 
 
 - [Godot 4.7.2 .NET](https://godotengine.org/download/archive/4.7.2-stable/)
 - .NET SDK 10.0.402 or a later 10.0.4xx patch
+- Rust 1.92 or later, with [wow-alchemy](https://github.com/davidrios/wow-alchemy) checked out next to this repo
 - For VR: an OpenXR runtime, such as SteamVR, and a headset
 - A 3.3.5a client (not provided)
 
@@ -28,7 +29,21 @@ Click the window to capture the mouse and Esc to release it. WASD moves, Q/E go 
 
 For VR, turn on your headset and OpenXR runtime, then add `--xr-mode on`.
 
+## Inspect client files
+
+Set `AZVR_CLIENT_PATH`, then:
+
+```
+dotnet run --project tools/inspect -- list elwynn
+dotnet run --project tools/inspect -- dbc DBFilesClient\Map.dbc
+dotnet run --project tools/inspect -- blp Tileset\Elwynn\ElwynnGrassBase.blp grass.png
+```
+
+Exported files come from your client, so don't commit or share them.
+
 ## Test
+
+Tests that need game files are skipped when `AZVR_CLIENT_PATH` is unset.
 
 ```
 dotnet test --project src/AzerothVR.Formats.Tests

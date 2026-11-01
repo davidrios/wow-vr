@@ -4,6 +4,27 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- See docs/decisions/0002-rust-parsers.md. Override to use another checkout. -->
+    <WowAlchemyDir Condition="'$(WowAlchemyDir)' == ''">$(MSBuildThisFileDirectory)..\..\..\wow-alchemy\</WowAlchemyDir>
+    <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('Windows'))">wow_alchemy_ffi.dll</NativeLibraryName>
+    <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('Linux'))">libwow_alchemy_ffi.so</NativeLibraryName>
+    <NativeLibraryName Condition="$([MSBuild]::IsOSPlatform('OSX'))">libwow_alchemy_ffi.dylib</NativeLibraryName>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(WowAlchemyDir)target\release\$(NativeLibraryName)"
+          Link="$(NativeLibraryName)"
+          Visible="false"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="BuildNativeLibrary" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(WowAlchemyDir)Cargo.toml')"
+           Text="wow-alchemy wasn't found at $(WowAlchemyDir). Clone it there or set WowAlchemyDir." />
+    <!-- Always release: debug parsers are too slow for real game files. -->
+    <Exec Command="cargo build --release --locked -p wow-alchemy-ffi" WorkingDirectory="$(WowAlchemyDir)" />
+  </Target>
 
 </Project>

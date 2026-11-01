@@ -13,6 +13,6 @@ Use the Rust project [wow-alchemy](https://github.com/davidrios/wow-alchemy) for
 - The FFI should stay coarse: opaque handles, plus flat buffers ready for mesh and texture upload. Calls run off the main thread, so per-call cost is small, and the C# side never mirrors Rust structs field by field.
 - Builds now need a Rust toolchain, and each platform needs its native library shipped next to the game.
 
-## Open until M1
+## Pinning
 
-- How this repo pins wow-alchemy (submodule, or a released version).
+While the two projects change together, builds use a sibling checkout at `../wow-alchemy` (override with the `WowAlchemyDir` MSBuild property), built with `--locked` so its `Cargo.lock` fixes all Rust dependencies. This doesn't pin wow-alchemy itself, so **before the first distributed build, pin an exact tagged wow-alchemy version**.

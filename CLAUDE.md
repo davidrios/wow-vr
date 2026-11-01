@@ -18,7 +18,9 @@ VR exploration of the WotLK WoW world in Godot 4 (.NET / C#), reading the player
 - Record significant decisions as short ADRs in `docs/decisions/`.
 
 ## Commands
+- Build: `dotnet build AzerothVR.sln` (also builds the native library, which needs `cargo` and `../wow-alchemy`)
 - Tests: `dotnet test --project src/AzerothVR.Formats.Tests`
+- Texture viewer: `godot --path godot res://scenes/debug/TextureViewer.tscn -- --texture=<file>`
 - Inspect tool: `dotnet run --project tools/inspect -- <command> <args>`
 - Run the game (desktop): open `godot/project.godot` in Godot 4 (.NET), or `godot --path godot`
 - Run the game (VR): `godot --path godot --xr-mode on`

@@ -152,7 +152,7 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - DBC access through wow-alchemy with typed record definitions for `Map`, `AreaTable`.
 - `tools/inspect`: list files, dump a BLP to PNG, print DBC rows.
 
-**Done when:** `inspect` exports a recognizable texture and lists Azeroth's map entry.
+**Done when:** `inspect` exports a recognizable texture and lists Azeroth's map entry (passed 2026-11-01).
 
 ### M2 — Terrain, one tile then streaming
 - Parse WDT (which tiles exist) and ADT (MCNK heights, normals, holes, texture layers, alpha maps).

@@ -172,7 +172,7 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - Scale setting: "player-sized" vs "true scale". WoW proportions often feel off at 1:1, so playtest.
 - Wrist menu: teleport to landmarks, toggle fly, settings.
 
-**Done when:** a 15-minute session in Elwynn feels comfortable and holds framerate. Built on 2026-11-01. Desktop passes `--movement-check` and `--tour=walk` (worst frame 7.7 ms uncapped). Controls, teleport, the wrist menu and the vignette work in the headset. The "player-sized" scale is still a first guess. `docs/decisions/0004-terrain-collision.md` covers collision.
+**Done when:** a 15-minute session in Elwynn feels comfortable and holds framerate. Passed on 2026-11-01 after a long headset session. Desktop also passes `--movement-check` and `--tour=walk` (worst frame 7.7 ms uncapped). `docs/decisions/0004-terrain-collision.md` covers collision.
 
 ### M4 — Doodads and buildings
 - M2 static rendering: geometry, `.skin` submeshes, textures, basic render flags (alpha test, blend, two-sided).

@@ -43,6 +43,9 @@ public sealed class TerrainMeshData
     /// <summary>RGB bytes: the alpha of layers 1, 2 and 3 for every chunk.</summary>
     public required byte[] AlphaAtlas { get; init; }
 
+    /// <summary>The surface for physics, which outlives the rest of this data.</summary>
+    public required TerrainCollisionData Collision { get; init; }
+
     public static TerrainMeshData Build(AdtTerrain terrain)
     {
         var chunkCount = terrain.Chunks.Count;
@@ -58,6 +61,7 @@ public sealed class TerrainMeshData
         var atlas = new byte[AtlasSize * AtlasSize * 3];
         var textures = new List<string>();
         var textureSlots = new Dictionary<int, byte>();
+        var chunkIndexStarts = new int[chunkCount + 1];
 
         foreach (var chunk in terrain.Chunks)
         {
@@ -109,8 +113,11 @@ public sealed class TerrainMeshData
             }
 
             AddCells(indices, firstVertex, chunk.Holes);
+            chunkIndexStarts[chunk.Iy * AdtTerrain.ChunksPerSide + chunk.Ix + 1] = indices.Count;
             CopyAlpha(chunk, atlas);
         }
+
+        var indexArray = indices.ToArray();
 
         return new TerrainMeshData
         {
@@ -121,8 +128,9 @@ public sealed class TerrainMeshData
             Textures = textures,
             TextureIndexes = textureIndexes,
             VertexColors = vertexColors,
-            Indices = indices.ToArray(),
+            Indices = indexArray,
             AlphaAtlas = atlas,
+            Collision = new TerrainCollisionData(positions, indexArray, chunkIndexStarts),
         };
     }
 

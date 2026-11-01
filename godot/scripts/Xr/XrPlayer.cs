@@ -1,40 +1,123 @@
+using WowVR.Ui;
 using Godot;
 
 namespace WowVR.Xr;
 
-/// <summary>The VR player. Main only creates it once OpenXR is running.</summary>
-public partial class XrPlayer : XROrigin3D
+/// <summary>
+/// The VR player. Left stick moves and left Y toggles flying; clicking the stick boosts flight.
+/// Left trigger aims a teleport, right stick turns, left X opens the wrist menu, and right
+/// trigger clicks in it. Movement itself is XR Tools' providers under the controllers.
+/// </summary>
+public partial class XrPlayer : XROrigin3D, IPlayer
 {
-    private const float Speed = 10f;
-    private const float FastSpeed = 50f;
-    private const float SnapTurnAngle = Mathf.Pi / 4;
-    private const float SnapTurnPress = 0.7f;
+    private const float SnapTurnDegrees = 45f;
+    private const float BoostFactor = 5f;
 
-    /// <summary>Below this the stick counts as released, so holding it only turns once.</summary>
-    private const float SnapTurnRelease = 0.3f;
+    /// <summary>
+    /// Length of each of the teleport arc's 25 steps. XR Tools' 0.5 stops at 12.5 yards,
+    /// which is short for this world and misses the ground when aiming level.
+    /// </summary>
+    private const float TeleportStepSize = 2f;
 
-    /// <summary>Sticks rarely rest at exactly zero, which would cause slow drifting.</summary>
-    private const float StickDeadzone = 0.2f;
+    private const int SnapTurnMode = 1;
+    private const int SmoothTurnMode = 2;
 
-    private static readonly StringName Stick = "primary";
-    private const string StickClick = "primary_click";
+    /// <summary>
+    /// The radius at the smallest size setting. The shader scales radius by the square root
+    /// of 2 in screen space, and headset lenses don't show the screen's edges, so much above
+    /// this can't be seen.
+    /// </summary>
+    private const float VignetteWidestRadius = 0.7f;
 
-    private OpenXRInterface _openXr = null!;
-    private XRCamera3D _camera = null!;
+    /// <summary>The radius at the largest size setting.</summary>
+    private const float VignetteNarrowestRadius = 0.25f;
+
+    /// <summary>How long the vignette shows after changing its size, since moving is what normally shows it.</summary>
+    private const double VignettePreviewSeconds = 1.5;
+    private const float VignetteResponse = 6f;
+
+    /// <summary>Below this the vignette stays open, so slow head movement doesn't trigger it.</summary>
+    private const float VignetteMinSpeed = 1f;
+
+    private OpenXRInterface? _openXr;
     private XRController3D _leftController = null!;
-    private XRController3D _rightController = null!;
-    private bool _fast;
-    private bool _snapTurnReady = true;
+    private CharacterBody3D _body = null!;
+    private Node3D _walk = null!;
+    private Node3D _turn = null!;
+    private Node3D _fly = null!;
+    private Node3D _teleport = null!;
+    private Node3D _pointer = null!;
+    private Node3D _vignette = null!;
+    private Node3D _wristMenu = null!;
+    private bool _boost;
+    private float _vignetteRadius = 1f;
+    private Basis _lastBasis = Basis.Identity;
+    private float _lastVignetteSize = -1f;
+    private double _vignettePreview;
+
+    /// <summary>1 when the vignette is open.</summary>
+    public float CurrentVignetteRadius => _vignetteRadius;
+
+    public WorldMenu Menu { get; private set; } = null!;
+
+    public Vector3 Feet => _body.GlobalPosition;
+
+    public bool Flying
+    {
+        get => _fly.Get("is_active").AsBool();
+        set
+        {
+            _fly.Set("is_active", value);
+            _body.Velocity = Vector3.Zero;
+        }
+    }
+
+    public bool OnGround => _body.Get("on_ground").AsBool();
+
+    public bool Frozen
+    {
+        set
+        {
+            var enabled = !value || Flying;
+            if (_body.Get("enabled").AsBool() != enabled)
+            {
+                _body.Set("enabled", enabled);
+            }
+        }
+    }
 
     public override void _Ready()
     {
-        _openXr = (OpenXRInterface)XRServer.FindInterface("OpenXR");
-        _openXr.SessionBegun += OnSessionBegun;
-
-        _camera = GetNode<XRCamera3D>("XRCamera3D");
         _leftController = GetNode<XRController3D>("LeftController");
-        _rightController = GetNode<XRController3D>("RightController");
+        _body = GetNode<CharacterBody3D>("PlayerBody");
+        _walk = GetNode<Node3D>("LeftController/MovementDirect");
+        _teleport = GetNode<Node3D>("LeftController/FunctionTeleport");
+        _wristMenu = GetNode<Node3D>("LeftController/WristMenu");
+        _turn = GetNode<Node3D>("RightController/MovementTurn");
+        _pointer = GetNode<Node3D>("RightController/FunctionPointer");
+        _fly = GetNode<Node3D>("MovementFly");
+        _vignette = GetNode<Node3D>("XRCamera3D/Vignette");
+        _fly.Set("controller", _leftController);
+        _teleport.Set("step_size", TeleportStepSize);
+
+        Menu = _wristMenu.Call("get_scene_instance").As<WorldMenu>();
+        Menu.Player = this;
+        Menu.CloseRequested += () => SetMenuOpen(false);
+        SetMenuOpen(false);
+
         _leftController.ButtonPressed += OnLeftButtonPressed;
+        AppSettings.Changed += ApplySettings;
+        ApplySettings();
+
+        _openXr = XRServer.FindInterface("OpenXR") as OpenXRInterface;
+        if (_openXr?.IsInitialized() != true)
+        {
+            // Only the --xr-player check gets here, to exercise this scene without a headset.
+            _openXr = null;
+            return;
+        }
+
+        _openXr.SessionBegun += OnSessionBegun;
 
         // The headset paces rendering, so the desktop window must not.
         DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
@@ -45,67 +128,88 @@ public partial class XrPlayer : XROrigin3D
         viewport.PhysicsObjectPicking = false;
     }
 
+    public void PlaceAt(Vector3 feet, bool keepVelocity = false)
+    {
+        _body.Velocity = keepVelocity ? _body.Velocity : Vector3.Zero;
+        _body.Call("teleport", new Transform3D(_body.GlobalBasis, feet));
+    }
+
+    public void SetMenuOpen(bool open)
+    {
+        _wristMenu.Visible = open;
+        _wristMenu.Set("enabled", open);
+        _pointer.Set("enabled", open);
+        _teleport.Set("enabled", !open);
+    }
+
+    private void ApplySettings()
+    {
+        var scale = AppSettings.WorldScale;
+        XRServer.WorldScale = scale;
+
+        // XR Tools multiplies walking input by the world scale, so this is in real meters.
+        _walk.Set("max_speed", AppSettings.WalkSpeed / scale);
+
+        _turn.Set("turn_mode", AppSettings.SmoothTurn ? SmoothTurnMode : SnapTurnMode);
+        _turn.Set("step_turn_angle", SnapTurnDegrees);
+
+        // The menu is a child of the controller, whose position is scaled but whose size isn't.
+        _wristMenu.Scale = Vector3.One * scale;
+        ApplyFlySpeed();
+
+        var size = AppSettings.VignetteSize;
+        _vignettePreview = _lastVignetteSize >= 0f && size != _lastVignetteSize ? VignettePreviewSeconds : _vignettePreview;
+        _lastVignetteSize = size;
+    }
+
+    private void ApplyFlySpeed() => _fly.Set("speed", AppSettings.FlySpeed * (_boost ? BoostFactor : 1f));
+
     public override void _Process(double delta)
     {
-        Fly(ReadStick(_leftController), (float)delta);
-        SnapTurn(_rightController.GetVector2(Stick).X);
-    }
-
-    /// <summary>Flies where the head is looking, including up and down.</summary>
-    private void Fly(Vector2 stick, float delta)
-    {
-        var direction = _camera.GlobalBasis * new Vector3(stick.X, 0, -stick.Y);
-        GlobalPosition += direction * (_fast ? FastSpeed : Speed) * delta;
-    }
-
-    private void SnapTurn(float stick)
-    {
-        if (Mathf.Abs(stick) < SnapTurnRelease)
-        {
-            _snapTurnReady = true;
-        }
-        else if (_snapTurnReady && Mathf.Abs(stick) > SnapTurnPress)
-        {
-            _snapTurnReady = false;
-            TurnAroundHead(-Mathf.Sign(stick) * SnapTurnAngle);
-        }
-    }
-
-    /// <summary>Turns around the head rather than the play space's center, which would also move the player.</summary>
-    private void TurnAroundHead(float angle)
-    {
-        var pivot = _camera.GlobalPosition;
-        var transform = GlobalTransform;
-        transform.Origin -= pivot;
-        transform = transform.Rotated(Vector3.Up, angle);
-        transform.Origin += pivot;
-        GlobalTransform = transform;
-    }
-
-    private static Vector2 ReadStick(XRController3D controller)
-    {
-        var stick = controller.GetVector2(Stick);
-        return stick.Length() < StickDeadzone ? Vector2.Zero : stick;
+        // Not XR Tools' automatic mode: it watches the origin, so re-centering would trigger it.
+        // Snap turns are instant, so there's no motion to soften.
+        var turning = AppSettings.SmoothTurn && !GlobalBasis.IsEqualApprox(_lastBasis);
+        _lastBasis = GlobalBasis;
+        _vignettePreview = Mathf.Max(_vignettePreview - delta, 0);
+        var moving = _lastVignetteSize > 0f
+            && (turning || _vignettePreview > 0 || _body.Velocity.Length() > VignetteMinSpeed);
+        var weight = Mathf.Clamp(VignetteResponse * (float)delta, 0f, 1f);
+        var target = moving ? Mathf.Lerp(VignetteWidestRadius, VignetteNarrowestRadius, _lastVignetteSize) : 1f;
+        _vignetteRadius = !moving && _vignetteRadius > 0.99f ? 1f : Mathf.Lerp(_vignetteRadius, target, weight);
+        _vignette.Set("radius", _vignetteRadius);
     }
 
     private void OnLeftButtonPressed(string name)
     {
-        if (name == StickClick)
+        switch (name)
         {
-            _fast = !_fast;
-            GD.Print($"Fast flying: {(_fast ? "on" : "off")}");
+            case "by_button":
+                Flying = !Flying;
+                break;
+            case "ax_button":
+                SetMenuOpen(!_wristMenu.Visible);
+                break;
+            case "primary_click":
+                _boost = !_boost;
+                ApplyFlySpeed();
+                break;
         }
     }
 
     public override void _ExitTree()
     {
-        _openXr.SessionBegun -= OnSessionBegun;
+        if (_openXr is not null)
+        {
+            _openXr.SessionBegun -= OnSessionBegun;
+        }
+
         _leftController.ButtonPressed -= OnLeftButtonPressed;
+        AppSettings.Changed -= ApplySettings;
     }
 
     private void OnSessionBegun()
     {
-        var refreshRate = _openXr.DisplayRefreshRate;
+        var refreshRate = _openXr!.DisplayRefreshRate;
         if (refreshRate > 0)
         {
             Engine.PhysicsTicksPerSecond = Mathf.RoundToInt(refreshRate);

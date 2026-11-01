@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Ui/WorldMenu.cs" id="1_menu"]
+
+[node name="WorldMenu" type="PanelContainer"]
+custom_minimum_size = Vector2(480, 640)
+offset_right = 480.0
+offset_bottom = 640.0
+script = ExtResource("1_menu")

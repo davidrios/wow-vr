@@ -27,9 +27,9 @@ godot --path godot
 
 With a client set, you start in Goldshire. Otherwise you get a grey test floor.
 
-Click the window to capture the mouse and Esc to release it. WASD moves, Q/E go down/up, Shift moves faster.
+Click the window to capture the mouse and Esc to release it. WASD walks, Shift goes faster, F toggles flying, Q/E go down/up while flying, and Tab opens the menu, with landmarks to teleport to and movement settings.
 
-For VR, turn on your headset and OpenXR runtime, then add `--xr-mode on`. The left stick flies where you're looking, pressing it toggles fast flying, and flicking the right stick turns 45° at a time.
+For VR, turn on your headset and OpenXR runtime, then add `--xr-mode on`. The left stick walks, left Y toggles flying where you're looking, and pressing the stick toggles fast flying. Hold the left trigger to aim a teleport. The right stick turns. Left X opens the wrist menu, and the right trigger clicks in it.
 
 ## Inspect client files
 

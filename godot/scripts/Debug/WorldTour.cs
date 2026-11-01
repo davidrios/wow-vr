@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using WowVR.Desktop;
 using WowVR.Formats;
 using WowVR.World;
 using Godot;
@@ -8,23 +9,28 @@ using Godot;
 namespace WowVR.Debug;
 
 /// <summary>
-/// Flies the player from Goldshire to Northshire at running speed, then reports
-/// frame times and quits. Run with: godot --path godot -- --tour
+/// Takes the player from Goldshire to Northshire at running speed, then reports frame
+/// times and quits. <c>--tour</c> flies over the terrain; <c>--tour=walk</c> walks on it,
+/// through physics, on desktop.
 /// </summary>
 public partial class WorldTour : Node
 {
     private const float Speed = 7f;
     private const float FlightHeight = 110f;
     private const int TilesBeforeStart = 9;
+    private const double StuckSeconds = 10;
 
     private static readonly System.Numerics.Vector3 Northshire = new(-8914f, -133f, FlightHeight);
 
     private readonly List<double> _frames = [];
 
     public required TileManager Tiles { get; init; }
-    public required Node3D Player { get; init; }
+    public required IPlayer Player { get; init; }
+    public bool Walk { get; init; }
 
     private bool _started;
+    private double _sinceProgress;
+    private float _closest = float.MaxValue;
 
     public override void _Process(double delta)
     {
@@ -43,7 +49,8 @@ public partial class WorldTour : Node
 
         var wow = WowCoords.ToGodot(Northshire);
         var target = Tiles.WorldToLocal(wow.X, wow.Y, wow.Z);
-        var offset = new Vector3(target.X - Player.GlobalPosition.X, 0, target.Z - Player.GlobalPosition.Z);
+        var feet = Player.Feet;
+        var offset = new Vector3(target.X - feet.X, 0, target.Z - feet.Z);
         if (offset.Length() < 5f)
         {
             Report();
@@ -51,9 +58,34 @@ public partial class WorldTour : Node
             return;
         }
 
-        var position = Player.GlobalPosition + offset.Normalized() * Speed * (float)delta;
+        if (Walk)
+        {
+            WalkTowards(offset, delta);
+            return;
+        }
+
+        var position = feet + offset.Normalized() * Speed * (float)delta;
         position.Y = FlightHeight;
-        Player.GlobalPosition = position;
+        Player.PlaceAt(position);
+    }
+
+    private void WalkTowards(Vector3 offset, double delta)
+    {
+        ((DesktopPlayer)Player).ScriptedWalk = offset.Normalized();
+
+        _sinceProgress += delta;
+        if (offset.Length() < _closest - 1f)
+        {
+            _closest = offset.Length();
+            _sinceProgress = 0;
+        }
+
+        if (_sinceProgress > StuckSeconds)
+        {
+            GD.PrintErr($"Tour stuck {_closest:F0} yards from the end, at {Player.Feet}.");
+            Report();
+            GetTree().Quit(1);
+        }
     }
 
     private void Report()

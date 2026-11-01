@@ -1,5 +1,7 @@
+using WowVR.Formats;
 using WowVR.Formats.Assets;
 using WowVR.Formats.Database;
+using WowVR.Formats.Terrain;
 using WowVR.Formats.Textures;
 
 const string Usage = """
@@ -10,6 +12,7 @@ const string Usage = """
       list [text]                 List files, optionally only those containing text.
       blp <file> <out.png> [mip]  Export a BLP texture to PNG. Don't commit the output.
       dbc <file> [max rows]       Print rows of a DBC file. Map and AreaTable are typed.
+      area <map> <name>           Print the center of an area's terrain, for picking landmarks.
     """;
 
 if (args.Length == 0)
@@ -45,6 +48,8 @@ try
             return PrintDbc(source, file, 50);
         case ["dbc", var file, var maxRows]:
             return PrintDbc(source, file, int.Parse(maxRows));
+        case ["area", var map, var name]:
+            return PrintArea(source, map, name);
         default:
             Console.WriteLine(Usage);
             return 1;
@@ -54,6 +59,46 @@ catch (Exception e) when (e is IOException or WowVR.Formats.WowAlchemyException 
 {
     Console.Error.WriteLine(e.Message);
     return 1;
+}
+
+static int PrintArea(MpqAssetSource source, string mapName, string areaName)
+{
+    var areas = AreaTableRecord.ReadAll(source)
+        .Where(a => a.Name.Equals(areaName, StringComparison.OrdinalIgnoreCase))
+        .Select(a => a.Id)
+        .ToHashSet();
+    var map = WdtMap.Read(source, mapName);
+
+    var (north, west, count) = (0.0, 0.0, 0);
+    for (var y = 0; y < WowCoords.TilesPerSide; y++)
+    {
+        for (var x = 0; x < WowCoords.TilesPerSide; x++)
+        {
+            if (!map.HasTile(x, y))
+            {
+                continue;
+            }
+
+            foreach (var chunk in AdtTerrain.Parse(source.Read(map.TilePath(x, y))!, map.BigAlpha).Chunks)
+            {
+                if (areas.Contains(chunk.AreaId))
+                {
+                    north += chunk.WorldPosition.X - WowCoords.ChunkSize / 2;
+                    west += chunk.WorldPosition.Y - WowCoords.ChunkSize / 2;
+                    count++;
+                }
+            }
+        }
+    }
+
+    if (count == 0)
+    {
+        Console.Error.WriteLine($"No terrain in {mapName} belongs to {areaName}.");
+        return 1;
+    }
+
+    Console.WriteLine($"{areaName}: {north / count:F0}, {west / count:F0} ({count} chunks)");
+    return 0;
 }
 
 static void List(MpqAssetSource source, string text)

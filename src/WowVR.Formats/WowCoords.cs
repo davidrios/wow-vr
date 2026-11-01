@@ -10,7 +10,8 @@ public static class WowCoords
 {
     public const int TilesPerSide = 64;
     public const double TileSize = 1600.0 / 3.0;
-    public const double ChunkSize = TileSize / 16.0;
+    public const int ChunksPerTile = 16;
+    public const double ChunkSize = TileSize / ChunksPerTile;
 
     /// <summary>World X and Y at the map's north-west corner, the origin of tile (0, 0).</summary>
     public const double MapOrigin = TilesPerSide / 2 * TileSize;
@@ -26,6 +27,13 @@ public static class WowCoords
     /// <summary>The Godot X and Z of a tile's north-west corner, the origin of its mesh.</summary>
     public static (double X, double Z) TileOriginGodot(int tileX, int tileY) =>
         (tileX * TileSize - MapOrigin, tileY * TileSize - MapOrigin);
+
+    /// <summary>
+    /// The chunk at a Godot position, counted across the whole map: divide by
+    /// <see cref="ChunksPerTile"/> for the tile. Positions off the map give indexes off the map.
+    /// </summary>
+    public static (int X, int Z) ChunkAtGodot(double x, double z) =>
+        ((int)Math.Floor((x + MapOrigin) / ChunkSize), (int)Math.Floor((z + MapOrigin) / ChunkSize));
 
     private static int TileIndex(double wow) =>
         Math.Clamp((int)Math.Floor((MapOrigin - wow) / TileSize), 0, TilesPerSide - 1);

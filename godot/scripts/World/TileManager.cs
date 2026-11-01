@@ -12,6 +12,18 @@ using Godot;
 
 namespace WowVR.World;
 
+public enum GroundState
+{
+    /// <summary>There will be ground here shortly.</summary>
+    Loading,
+
+    /// <summary>The ground here has collision.</summary>
+    Ready,
+
+    /// <summary>There's no tile here, or it couldn't be read.</summary>
+    NoTerrain,
+}
+
 /// <summary>
 /// Streams terrain tiles around the camera and keeps the world near Godot's origin.
 /// Tiles build on a background thread; only adding and removing nodes happens here.
@@ -27,13 +39,19 @@ public partial class TileManager : Node3D
     /// <summary>How far the camera may go before the world re-centers, in yards.</summary>
     private const float RecenterDistance = 512f;
 
+    /// <summary>The physics layer terrain is on.</summary>
+    public const uint TerrainLayer = 1;
+
     private readonly Dictionary<(int X, int Y), MeshInstance3D?> _tiles = [];
-    private readonly ConcurrentQueue<((int X, int Y) Tile, ArrayMesh? Mesh)> _built = new();
+    private readonly HashSet<(int X, int Y)> _failedTiles = [];
+    private readonly ConcurrentQueue<((int X, int Y) Tile, ArrayMesh? Mesh, TerrainCollisionData? Collision)> _built = new();
 
     private IAssetSource _source = null!;
     private WdtMap _map = null!;
     private TerrainBuilder _builder = null!;
-    private Node3D _player = null!;
+    private IPlayer _player = null!;
+    private TerrainCollision _collision = null!;
+    private GroundGuard _guard = null!;
     private double _originX;
     private double _originZ;
     private bool _building;
@@ -45,8 +63,13 @@ public partial class TileManager : Node3D
     public bool IsBuilding => _building;
 
     /// <summary>Starts streaming with the given Godot world position at the local origin.</summary>
-    public void Start(IAssetSource source, WdtMap map, Node3D player, double originX, double originZ)
+    public void Start(IAssetSource source, WdtMap map, IPlayer player, double originX, double originZ)
     {
+        _collision = new TerrainCollision { Name = "Collision" };
+        AddChild(_collision);
+        _guard = new GroundGuard { Name = "GroundGuard", Tiles = this, Player = player };
+        AddChild(_guard);
+
         _source = source;
         _map = map;
         _player = player;
@@ -59,6 +82,41 @@ public partial class TileManager : Node3D
     /// <summary>A Godot world position in this scene's local space.</summary>
     public Vector3 WorldToLocal(double x, double y, double z) =>
         new((float)(x - _originX), (float)y, (float)(z - _originZ));
+
+    /// <summary>Whether the player can stand at a position in this scene's local space.</summary>
+    public GroundState GroundAt(Vector3 local)
+    {
+        var chunk = ChunkAt(local);
+        var tile = (X: chunk.X / WowCoords.ChunksPerTile, Y: chunk.Z / WowCoords.ChunksPerTile);
+
+        var onMap = chunk.X >= 0 && chunk.Z >= 0 && tile.X < WowCoords.TilesPerSide && tile.Y < WowCoords.TilesPerSide;
+        if (!onMap || !_map.HasTile(tile.X, tile.Y) || _failedTiles.Contains(tile))
+        {
+            return GroundState.NoTerrain;
+        }
+
+        return _collision.HasChunk(chunk) ? GroundState.Ready : GroundState.Loading;
+    }
+
+    /// <summary>Jumps to a landmark, moving the origin there so nothing is ever far from zero.</summary>
+    public void TeleportTo(float wowX, float wowY)
+    {
+        var target = WowCoords.ToGodot(new System.Numerics.Vector3(wowX, wowY, 0));
+        _originX = target.X;
+        _originZ = target.Z;
+        RepositionTiles();
+
+        _player.PlaceAt(new Vector3(0, _player.Feet.Y, 0));
+        _guard.PlaceOnSurfaceWhenLoaded();
+    }
+
+    public bool PlacingPlayer => _guard.Placing;
+
+    /// <summary>Waits for the ground, then stands on it.</summary>
+    public void PlacePlayerOnSurface() => _guard.PlaceOnSurfaceWhenLoaded();
+
+    private (int X, int Z) ChunkAt(Vector3 local) =>
+        WowCoords.ChunkAtGodot(local.X + _originX, local.Z + _originZ);
 
     public override void _Process(double delta)
     {
@@ -83,6 +141,7 @@ public partial class TileManager : Node3D
         CommitOneBuiltTile();
         UnloadFarTiles(center);
         StartNextBuild(center);
+        _collision.Update(ChunkAt(_player.Feet));
     }
 
     private void ApplyDebugView(MeshInstance3D tile)
@@ -169,8 +228,13 @@ public partial class TileManager : Node3D
         var shift = new Vector3(Mathf.Round(camera.X), 0, Mathf.Round(camera.Z));
         _originX += shift.X;
         _originZ += shift.Z;
-        _player.GlobalPosition -= shift;
+        _player.PlaceAt(_player.Feet - shift, keepVelocity: true);
+        _guard.OnRecentered(shift);
+        RepositionTiles();
+    }
 
+    private void RepositionTiles()
+    {
         foreach (var (tile, node) in _tiles)
         {
             if (node is not null)
@@ -197,7 +261,12 @@ public partial class TileManager : Node3D
         _building = false;
 
         // A failed tile stays in the dictionary so it isn't retried every frame.
-        if (built.Mesh is null || !_tiles.ContainsKey(built.Tile))
+        if (built.Mesh is null)
+        {
+            _failedTiles.Add(built.Tile);
+        }
+
+        if (built.Mesh is null || built.Collision is null || !_tiles.ContainsKey(built.Tile))
         {
             return;
         }
@@ -211,14 +280,17 @@ public partial class TileManager : Node3D
         ApplyDebugView(node);
         AddChild(node);
         _tiles[built.Tile] = node;
+        _collision.AddTile(built.Tile, node, built.Collision);
     }
 
     private void UnloadFarTiles((int X, int Y) center)
     {
         foreach (var tile in _tiles.Keys.Where(t => Distance(t, center) > UnloadRadius).ToList())
         {
+            _collision.RemoveTile(tile);
             _tiles[tile]?.QueueFree();
             _tiles.Remove(tile);
+            _failedTiles.Remove(tile);
         }
     }
 
@@ -258,10 +330,11 @@ public partial class TileManager : Node3D
     private void Build((int X, int Y) tile)
     {
         ArrayMesh? mesh = null;
+        TerrainCollisionData? collision = null;
         try
         {
             var stopwatch = Stopwatch.StartNew();
-            mesh = _builder.Build(tile.X, tile.Y);
+            (mesh, collision) = _builder.Build(tile.X, tile.Y);
             GD.Print($"Tile {tile.X}_{tile.Y} built in {stopwatch.ElapsedMilliseconds} ms");
         }
         catch (Exception e)
@@ -269,7 +342,7 @@ public partial class TileManager : Node3D
             GD.PushError($"Could not build tile {tile.X}_{tile.Y}: {e.Message}");
         }
 
-        _built.Enqueue((tile, mesh));
+        _built.Enqueue((tile, mesh, collision));
     }
 
     private static int Distance((int X, int Y) a, (int X, int Y) b) =>

@@ -20,9 +20,12 @@ VR exploration of the WotLK WoW world in Godot 4 (.NET / C#), reading the player
 ## Commands
 - Build: `dotnet build WowVR.sln` (also builds the native library, which needs `cargo` and `../wow-alchemy`)
 - Tests: `dotnet test --project src/WowVR.Formats.Tests`
-- Terrain flight test: `godot --path godot -- --tour` (flies Goldshire to Northshire, prints frame times, quits)
+- Terrain flight test: `godot --path godot -- --tour` (flies Goldshire to Northshire, prints frame times, quits); `--tour=walk` walks it through physics
+- Movement check: `godot --path godot -- --movement-check` (prints PASS or FAIL for standing, flying, teleports and recovery, then quits); add `--xr-player` to run the VR player's scene, physics and controllers without a headset, using simulated trackers (not menu clicks)
+- Desktop keys: WASD walks, Shift goes faster, F toggles flying, Q/E go down/up while flying, Tab opens the menu (or start with `-- --open-menu`)
+- VR controls: left stick moves, left Y toggles flying, left stick click boosts flight, left trigger teleports, left X opens the wrist menu, right stick turns, right trigger clicks in the menu
 - Debug keys: F2 prints the location and textures under the camera; F3 toggles a checkerboard of vertex-color-only chunks (or start with `-- --checkerboard`); F4 swaps vertex colors between BGRA and RGBA (or `-- --swap-vertex-colors`)
-- Start elsewhere: `godot --path godot -- --start=Northrend,5800,650,650` (map, then WoW X, Y, Z)
+- Start elsewhere: `godot --path godot -- --start=Northrend,5800,650,650` (map, then WoW X, Y, Z; starts flying)
 - Texture viewer: `godot --path godot res://scenes/debug/TextureViewer.tscn -- --texture=<file>`
 - Inspect tool: `dotnet run --project tools/inspect -- <command> <args>`
 - Run the game (desktop): open `godot/project.godot` in Godot 4 (.NET), or `godot --path godot`

@@ -9,7 +9,7 @@ using Godot;
 
 namespace WowVR.Converters;
 
-/// <summary>Turns a tile into a mesh and material. Runs off the main thread.</summary>
+/// <summary>Turns a tile into a mesh, material and collision data. Runs off the main thread.</summary>
 public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
 {
     /// <summary>A 1024 chain takes about 0.7 MB of video memory per layer.</summary>
@@ -24,7 +24,7 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
 
     public static void LoadShared() => _ = TerrainShader;
 
-    public ArrayMesh Build(int tileX, int tileY)
+    public (ArrayMesh Mesh, TerrainCollisionData Collision) Build(int tileX, int tileY)
     {
         var path = map.TilePath(tileX, tileY);
         var data = source.Read(path) ?? throw new System.IO.FileNotFoundException("Not in the client.", path);
@@ -33,7 +33,7 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
 
         var result = BuildMesh(mesh);
         result.SurfaceSetMaterial(0, BuildMaterial(mesh));
-        return result;
+        return (result, mesh.Collision);
     }
 
     private static ArrayMesh BuildMesh(TerrainMeshData data)

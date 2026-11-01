@@ -6,7 +6,7 @@ A multiplayer world viewer for the 3.3.5a World of Warcraft client, playable in 
 
 - [Godot 4.7.2 .NET](https://godotengine.org/download/archive/4.7.2-stable/)
 - .NET SDK 10.0.402 or a later 10.0.4xx patch
-- Rust 1.92 or later, with [wow-alchemy](https://github.com/davidrios/wow-alchemy) checked out next to this repo
+- Rust 1.92 or later, with [wow-alchemy](https://github.com/davidrios/wow-alchemy) checked out next to this repo, on its `ffi-crate` branch
 - For VR: an OpenXR runtime, such as SteamVR, and a headset
 - A 3.3.5a client (not provided)
 

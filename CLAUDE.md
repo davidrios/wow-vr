@@ -20,6 +20,9 @@ VR exploration of the WotLK WoW world in Godot 4 (.NET / C#), reading the player
 ## Commands
 - Build: `dotnet build AzerothVR.sln` (also builds the native library, which needs `cargo` and `../wow-alchemy`)
 - Tests: `dotnet test --project src/AzerothVR.Formats.Tests`
+- Terrain flight test: `godot --path godot -- --tour` (flies Goldshire to Northshire, prints frame times, quits)
+- Debug keys: F2 prints the location and textures under the camera; F3 toggles a checkerboard of vertex-color-only chunks (or start with `-- --checkerboard`); F4 swaps vertex colors between BGRA and RGBA (or `-- --swap-vertex-colors`)
+- Start elsewhere: `godot --path godot -- --start=Northrend,5800,650,650` (map, then WoW X, Y, Z)
 - Texture viewer: `godot --path godot res://scenes/debug/TextureViewer.tscn -- --texture=<file>`
 - Inspect tool: `dotnet run --project tools/inspect -- <command> <args>`
 - Run the game (desktop): open `godot/project.godot` in Godot 4 (.NET), or `godot --path godot`
@@ -27,6 +30,6 @@ VR exploration of the WotLK WoW world in Godot 4 (.NET / C#), reading the player
 - Headless server (from M7): `godot --path godot --headless -- --server`
 
 ## When unsure
-- Check format details against the wowdev wiki and compare output with reference tools (wow.export, Noggit) rather than guessing.
+- Check format details against the wowdev wiki and compare output with reference tools rather than guessing. Prefer WoWModelViewer (tag `0.7.0.6` for 3.3.5a), then wow.export and Noggit.
 - If a format behaves differently than expected, write a failing test with the real file (skipped without client data) before fixing.
 - Ask before adding new dependencies or changing the architecture in PLAN.md.

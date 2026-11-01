@@ -4,7 +4,7 @@
 
 ## Decision
 
-Use the Rust project [wow-alchemy](https://github.com/davidrios/wow-alchemy) for all file parsing instead of writing C# parsers, and keep developing it as a public library others can use. The `wow-mpq` crate from crates.io (MIT OR Apache-2.0) provides MPQ access, since wow-alchemy removed its own. C# calls it through a C ABI from a new FFI crate in wow-alchemy.
+Use the Rust project [wow-alchemy](https://github.com/davidrios/wow-alchemy) for all file parsing instead of writing C# parsers, and keep developing it as a public library others can use. MPQ access comes from `wow-alchemy-mpq`, forked into wow-alchemy from warcraft-rs's `wow-mpq` 0.7.0 (MIT OR Apache-2.0) after it turned out to misread archives over 4 GiB. It's developed there from now on. C# calls it through a C ABI from a new FFI crate in wow-alchemy.
 
 ## Consequences
 

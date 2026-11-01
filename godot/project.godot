@@ -20,6 +20,10 @@ project/solution_directory="../"
 
 enabled=PackedStringArray("res://addons/godot-xr-tools/plugin.cfg")
 
+[rendering]
+
+textures/default_filters/anisotropic_filtering_level=4
+
 [xr]
 
 openxr/enabled=false

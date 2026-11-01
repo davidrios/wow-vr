@@ -25,9 +25,11 @@ dotnet build AzerothVR.sln
 godot --path godot
 ```
 
+With a client set, you start in Goldshire. Otherwise you get a grey test floor.
+
 Click the window to capture the mouse and Esc to release it. WASD moves, Q/E go down/up, Shift moves faster.
 
-For VR, turn on your headset and OpenXR runtime, then add `--xr-mode on`.
+For VR, turn on your headset and OpenXR runtime, then add `--xr-mode on`. The left stick flies where you're looking, pressing it toggles fast flying, and flicking the right stick turns 45° at a time.
 
 ## Inspect client files
 

@@ -162,7 +162,7 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - `TileManager`: stream a 3×3 tile window around the player, then 5×5; background loading; unload behind.
 - Floating origin.
 
-**Done when:** you can walk (flat-screen debug camera is fine) from Goldshire to Northshire without hitches.
+**Done when:** you can walk (flat-screen debug camera is fine) from Goldshire to Northshire without hitches. Passed on 2026-11-01: the scripted flight (`--tour`) had no hitches at a 60 Hz cap, and hands-on flying holds 90 FPS in the headset with 1024 textures and 16x anisotropic filtering.
 
 ### M3 — Movement and comfort
 - Terrain collision (`HeightMapShape3D` per chunk, or a trimesh).

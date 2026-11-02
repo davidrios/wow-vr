@@ -462,7 +462,7 @@ public sealed class WmoGroup
         }
 
         var colors = new ReadOnlySpan<byte>(mesh.Colors, checked((int)mesh.VertexCount * 4)).ToArray();
-        WmoVertexLight.Fix(colors, transitionEnd, root.Ambient, root.Flags, ModelNativeMethods.WmoGroupFlags(group));
+        WmoVertexLight.Fix(colors, transitionEnd, root.Flags, ModelNativeMethods.WmoGroupFlags(group));
         fixed (byte* fixedColors = colors)
         {
             var copy = mesh;

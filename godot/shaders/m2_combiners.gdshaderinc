@@ -151,12 +151,12 @@ void fragment() {
 #ifdef INSTANCE_LIGHT
 	// Inside a building, each copy has its own baked light instead of the sky's. The client's
 	// MapObj shaders double it, and only the final color is clamped. A WMO's vertex alpha is how
-	// far the outside reaches it, as in acazuc's client, so near a door it follows the time of
-	// day. Doodads have alpha 0.
+	// far the outside reaches it. The client draws such a batch twice, baked and then lit by the
+	// world, and blends them by that alpha, so this is the same mix. Doodads have alpha 0.
 	// It adds up in linear space, as Godot's light on the ground outside does, or this comes out
 	// brighter than the sunlit world. "lit" is in gamma space, so it goes back there to be mixed.
 	vec3 outside = world_ambient + world_sun * clamp(dot(NORMAL, normalize(mat3(VIEW_MATRIX) * world_to_sun)), 0.0, 1.0);
-	lit *= mix(COLOR.rgb * 2.0, pow(min(outside, vec3(1.0)), vec3(1.0 / 2.2)), COLOR.a);
+	lit *= COLOR.rgb * 2.0 * mix(vec3(1.0), pow(min(outside, vec3(1.0)), vec3(1.0 / 2.2)), COLOR.a);
 #endif
 #ifdef SHAPED_LIGHT
 	if (dot(light_going, light_going) > 0.25) {

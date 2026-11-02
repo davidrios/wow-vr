@@ -323,8 +323,6 @@ public class WmoPortalTests
         Assert.Equal([true, true, false], visible);
     }
 
-    private static readonly Vector3 NoAmbient = Vector3.Zero;
-
     [Theory]
     [InlineData(100, 0, 0x2000u, 50, 0)]
     [InlineData(100, 64, 0x2000u, 100, 0)]
@@ -334,20 +332,20 @@ public class WmoPortalTests
     {
         byte[] colors = [(byte)color, (byte)color, (byte)color, (byte)alpha];
 
-        WmoVertexLight.Fix(colors, 0, NoAmbient, 0, groupFlags);
+        WmoVertexLight.Fix(colors, 0, 0, groupFlags);
 
         Assert.Equal(resultColor, colors[0]);
         Assert.Equal(resultAlpha, colors[3]);
     }
 
     [Fact]
-    public void ATransitionBatchsColorFallsWithAlphaWhichItKeeps()
+    public void ATransitionBatchsColorHalvesAndKeepsItsAlpha()
     {
         byte[] colors = [200, 200, 200, 255, 200, 200, 200, 0];
 
-        WmoVertexLight.Fix(colors, 2, NoAmbient, 0, 0x2000);
+        WmoVertexLight.Fix(colors, 2, 0, 0x2000);
 
-        Assert.Equal([0, 0, 0, 255, 100, 100, 100, 0], colors);
+        Assert.Equal([100, 100, 100, 255, 100, 100, 100, 0], colors);
     }
 
     [Fact]
@@ -355,7 +353,7 @@ public class WmoPortalTests
     {
         byte[] colors = [200, 100, 50, 77];
 
-        WmoVertexLight.Fix(colors, 0, NoAmbient, 0x8, 0x2000);
+        WmoVertexLight.Fix(colors, 0, 0x8, 0x2000);
 
         Assert.Equal([200, 100, 50, 0], colors);
     }
@@ -369,15 +367,15 @@ public class WmoPortalTests
 
     [Theory]
     [InlineData(0f, 1f)]
-    [InlineData(3f, 0.5f)]
-    [InlineData(6f, 0f)]
+    [InlineData(3f, 0.55f)]
+    [InlineData(6f, 0.1f)]
     [InlineData(20f, 0f)]
     public void OutsideLightFadesInFrontOfADoor(float distance, float opacity) =>
         Assert.Equal(opacity, WmoVertexLight.Opacity(new Vector3(10f + distance, 0f, 1f), [Door(true)]), 3);
 
     [Fact]
     public void BesideADoorItsDistanceIsFromItsEdges() =>
-        Assert.Equal(0.5f, WmoVertexLight.Opacity(new Vector3(10f, 4f, 1f), [Door(true)]), 3);
+        Assert.Equal(0.55f, WmoVertexLight.Opacity(new Vector3(10f, 4f, 1f), [Door(true)]), 3);
 
     [Fact]
     public void WithNoDoorOutsideNoOutsideLightComes() =>

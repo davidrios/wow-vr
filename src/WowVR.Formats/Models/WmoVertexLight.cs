@@ -3,15 +3,14 @@ using System.Numerics;
 namespace WowVR.Formats.Models;
 
 /// <summary>
-/// What the client does to a group's MOCV as it loads: <c>CMapObjGroup::FixColorVertexAlpha</c> and
-/// <c>CMapObj::AttenTransVerts</c>, from the decompiled code on wowdev.wiki's WMO page. The client's
-/// MapObj shaders then draw an interior as <c>2 * texture * color</c>, clamped only at the end, so
-/// a color here is half of what it does.
+/// What 3.3.5a's client does to a group's MOCV as it loads.
+/// Its MapObj shaders then draw an interior as <c>2 * texture * color</c>, clamped only at the end, so
+/// a color here is half of what it does. See formats.md.
 /// </summary>
 public static class WmoVertexLight
 {
     private const uint RootFlagNoAttenuation = 0x1;
-    private const uint RootFlagNoBaseColor = 0x2;
+    private const uint RootFlagUnified = 0x2;
     private const uint RootFlagNoFix = 0x8;
 
     private const uint GroupFlagExterior = 0x8;
@@ -19,16 +18,16 @@ public static class WmoVertexLight
     /// <summary>A portal to a group with either of these leads outside.</summary>
     private const uint GroupFlagsOutside = 0x48;
 
-    /// <summary>How far a portal to the outside reaches, in yards.</summary>
-    private const float PortalReach = 6f;
+    /// <summary>How much of a portal's light to the outside goes per yard.</summary>
+    private const float PortalFalloff = 0.15f;
 
     /// <summary>What attenuation moves a color towards, where the fix leaves colors halved.</summary>
     private const float AttenuatedColor = 127f;
 
     /// <summary>The first step, on a group's colors as RGBA. Vertices below the end are in its transition batches.</summary>
-    public static void Fix(byte[] colors, int transitionEnd, Vector3 rootAmbient, uint rootFlags, uint groupFlags)
+    public static void Fix(byte[] colors, int transitionEnd, uint rootFlags, uint groupFlags)
     {
-        var ambient = BaseColor(rootAmbient, rootFlags);
+        // The client sets other batches' alpha to 255 and picks their light by which batches they're in. Here alpha says it.
         var outsideAlpha = (groupFlags & GroupFlagExterior) != 0 ? byte.MaxValue : (byte)0;
         if ((rootFlags & RootFlagNoFix) != 0)
         {
@@ -48,9 +47,9 @@ public static class WmoVertexLight
             {
                 int color = colors[at + channel];
                 var result = vertex < transitionEnd
-                    ? (color - ambient[channel]) * (255 - alpha) / 255 / 2
-                    : (color * alpha / 64 + color - ambient[channel]) / 2;
-                colors[at + channel] = (byte)Math.Clamp(result, 0, byte.MaxValue);
+                    ? color >> 1
+                    : ((color * alpha >> 6) + color) >> 1;
+                colors[at + channel] = (byte)Math.Min(result, byte.MaxValue);
             }
 
             if (vertex >= transitionEnd)
@@ -68,9 +67,12 @@ public static class WmoVertexLight
             return;
         }
 
-        var attenuates = (root.Flags & (RootFlagNoAttenuation | RootFlagNoFix)) == 0;
+        var attenuates = (root.Flags & RootFlagNoAttenuation) == 0;
         var portals = attenuates ? PortalsOf(root, groups, group) : [];
-        var ambient = root.Ambient * 255f / 2f;
+
+        // The unified path's shaders are mocv + c28 * c10 + c29, with c28 at 0.5 and c10 MOHD's color. The other path's have no such term.
+        var unifiedInterior = (root.Flags & RootFlagUnified) != 0 && (group.Flags & GroupFlagsOutside) == 0;
+        var ambient = unifiedInterior ? root.Ambient * 255f / 2f : Vector3.Zero;
         foreach (var surface in group.Surfaces)
         {
             if (surface.Colors is not { } colors)
@@ -86,7 +88,6 @@ public static class WmoVertexLight
                     Attenuate(colors, vertex * 4, Opacity(new Vector3(p.X, -p.Z, p.Y), portals));
                 }
 
-                // Half, because the shaders double this: 2 * color + base color matches the real client by eye.
                 colors[vertex * 4] = (byte)Math.Min(colors[vertex * 4] + ambient.X, byte.MaxValue);
                 colors[vertex * 4 + 1] = (byte)Math.Min(colors[vertex * 4 + 1] + ambient.Y, byte.MaxValue);
                 colors[vertex * 4 + 2] = (byte)Math.Min(colors[vertex * 4 + 2] + ambient.Z, byte.MaxValue);
@@ -106,19 +107,16 @@ public static class WmoVertexLight
             var distance = Distance(position, portal);
             if (portal.LeadsOutside)
             {
-                var near = 1f - (distance >= 0f ? distance / PortalReach : 0f);
+                var near = 1f - MathF.Max(distance, 0f) * PortalFalloff;
                 if (near > 0.001f)
                 {
                     opacity += near;
                 }
             }
-            else if (distance > -1f)
+            else if (distance > -1f && distance < 1f)
             {
-                opacity = 0f;
-                if (distance < 1f)
-                {
-                    break;
-                }
+                // Right at a portal to another room, the outside doesn't reach.
+                return 0f;
             }
         }
 
@@ -134,10 +132,6 @@ public static class WmoVertexLight
 
         colors[at + 3] = (byte)(opacity * byte.MaxValue);
     }
-
-    private static int[] BaseColor(Vector3 ambient, uint rootFlags) => (rootFlags & RootFlagNoBaseColor) != 0
-        ? [0, 0, 0]
-        : [(int)MathF.Round(ambient.X * 255f), (int)MathF.Round(ambient.Y * 255f), (int)MathF.Round(ambient.Z * 255f)];
 
     private static List<Portal> PortalsOf(WmoRoot root, IReadOnlyList<WmoGroup?> groups, WmoGroup group)
     {

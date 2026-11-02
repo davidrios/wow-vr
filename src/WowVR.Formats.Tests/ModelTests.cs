@@ -212,7 +212,7 @@ public class WmoFloorLightTests
         var doodad = WmoFloorLight.ForDoodad(blue);
         var creature = WmoFloorLight.ForCreature(blue);
 
-        Assert.True(doodad.Z / doodad.X < blue.Z / blue.X);
+        Assert.Equal(blue.Z / blue.X, doodad.Z / doodad.X, 3);
         Assert.True(doodad.Z / doodad.X > creature.Z / creature.X);
     }
 
@@ -323,6 +323,29 @@ public class WmoPortalTests
         Assert.Equal([true, true, false], visible);
     }
 
+    [Theory]
+    [InlineData(0f, 255)]
+    [InlineData(3f, 128)]
+    [InlineData(6f, 0)]
+    [InlineData(20f, 0)]
+    public void OutsideLightFadesAwayFromADoorsPlane(float distance, int alpha)
+    {
+        (Vector3, float)[] door = [(Vector3.UnitX, -10f)];
+
+        Assert.Equal(alpha, WmoVertexLight.PortalAlpha(new Vector3(10f + distance, 5f, 5f), door));
+    }
+
+    [Fact]
+    public void WithNoDoorOutsideAVertexTakesNoOutsideLight() =>
+        Assert.Equal(0, WmoVertexLight.PortalAlpha(Vector3.Zero, []));
+
+    [Theory]
+    [InlineData(100, 0, 50)]
+    [InlineData(100, 64, 100)]
+    [InlineData(200, 255, 255)]
+    public void LighteningHalvesAColorUnlessAlphaRaisesIt(int channel, int alpha, int result) =>
+        Assert.Equal(result, WmoVertexLight.Lightened((byte)channel, (byte)alpha));
+
     [Fact]
     public void AWmoWithNoOutsideShowsEverythingFromOutside()
     {
@@ -348,7 +371,9 @@ public class WmoPortalTests
             [],
             [room, null]);
 
-        Assert.Equal([false, true], Compute(portals, new Vector3(9, 9, 5), p => (p.X, p.Y, 1)));
+        // Near the box the room starts too, which shows too much rather than leaving holes. What matters is the outside.
+        Assert.Equal([true, true], Compute(portals, new Vector3(9, 9, 5), p => (p.X, p.Y, 1)));
+        Assert.Equal([false, true], Compute(portals, new Vector3(14, 14, 5), p => (p.X, p.Y, 1)));
         Assert.Equal([true, false], Compute(portals, new Vector3(1, 1, 5), p => (p.X, p.Y, 1)));
     }
 }

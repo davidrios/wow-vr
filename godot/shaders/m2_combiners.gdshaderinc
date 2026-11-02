@@ -15,6 +15,13 @@ uniform float alpha_key = 0.878;
 
 #include "res://shaders/wow_fog.gdshaderinc"
 
+#ifdef INSTANCE_LIGHT
+// The sky's light in gamma space, for the parts of a building that the outside reaches.
+global uniform vec3 world_ambient;
+global uniform vec3 world_sun;
+global uniform vec3 world_to_sun;
+#endif
+
 #ifdef INDOOR_OCCLUSION
 // Baked light already says how an interior looks, but only lit surfaces take ambient occlusion,
 // which only dims their ambient light. So this ignores every other light, and divides by the
@@ -142,8 +149,11 @@ void fragment() {
 	vec4 t1 = texture(tex1, coords(uv_source1, UV, UV2, sphere, uv_matrix1));
 	vec3 lit = tint;
 #ifdef INSTANCE_LIGHT
-	// Inside a building, each copy has its own baked light instead of the sky's.
-	lit *= COLOR.rgb;
+	// Inside a building, each copy has its own baked light instead of the sky's. A WMO's vertex
+	// alpha is how far the outside reaches it, as in acazuc's client, so near a door it follows
+	// the time of day. Doodads have alpha 0.
+	vec3 outside = world_ambient + world_sun * clamp(dot(NORMAL, normalize(mat3(VIEW_MATRIX) * world_to_sun)), 0.0, 1.0);
+	lit *= mix(COLOR.rgb, min(outside, vec3(1.0)), COLOR.a);
 #endif
 #ifdef SHAPED_LIGHT
 	if (dot(light_going, light_going) > 0.25) {

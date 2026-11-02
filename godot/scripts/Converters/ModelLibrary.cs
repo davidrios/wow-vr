@@ -456,10 +456,27 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             }
 
             var root = WmoRoot.Parse(data);
+
+            // A group's vertex colors depend on what its neighbors are, so all are read first.
+            var parsed = new WmoGroup?[root.GroupCount];
+            for (var i = 0; i < parsed.Length; i++)
+            {
+                var groupData = source.Read(WmoRoot.GroupPath(path, i));
+                if (groupData is { Length: > 0 })
+                {
+                    parsed[i] = WmoGroup.Parse(groupData, root);
+                }
+                else
+                {
+                    GD.PushWarning($"WMO group missing: {WmoRoot.GroupPath(path, i)}");
+                }
+            }
+
             var groups = new WmoGroupAsset[root.GroupCount];
             for (var i = 0; i < groups.Length; i++)
             {
-                groups[i] = LoadGroup(path, i, root);
+                WmoVertexLight.Apply(root, parsed, i);
+                groups[i] = parsed[i] is { } group ? LoadGroup(group) : new WmoGroupAsset();
             }
 
             return new WmoAsset(root, groups);
@@ -471,16 +488,8 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         }
     }
 
-    private WmoGroupAsset LoadGroup(string wmoPath, int index, WmoRoot root)
+    private WmoGroupAsset LoadGroup(WmoGroup group)
     {
-        var data = source.Read(WmoRoot.GroupPath(wmoPath, index));
-        if (data is not { Length: > 0 })
-        {
-            GD.PushWarning($"WMO group missing: {WmoRoot.GroupPath(wmoPath, index)}");
-            return new WmoGroupAsset();
-        }
-
-        var group = WmoGroup.Parse(data, root);
         var faces = group.CollisionFaces.Select(ToGodot).ToArray();
         var mesh = BuildMesh(group.Surfaces, group.Indoor, null);
 
@@ -570,7 +579,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
                 var vertexColors = new Color[colors.Length / 4];
                 for (var i = 0; i < vertexColors.Length; i++)
                 {
-                    vertexColors[i] = Color.Color8(colors[i * 4], colors[i * 4 + 1], colors[i * 4 + 2]);
+                    vertexColors[i] = Color.Color8(colors[i * 4], colors[i * 4 + 1], colors[i * 4 + 2], colors[i * 4 + 3]);
                 }
 
                 arrays[(int)Mesh.ArrayType.Color] = vertexColors;

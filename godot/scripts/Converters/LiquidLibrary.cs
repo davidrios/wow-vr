@@ -24,6 +24,7 @@ public sealed class LiquidLibrary
     private static readonly Vector2 SlimeFlow = new(0.01f, 0.005f);
 
     private static readonly Shader LiquidShader = GD.Load<Shader>("res://shaders/liquid.gdshader");
+    private static readonly Shader OpaqueLiquidShader = GD.Load<Shader>("res://shaders/liquid_opaque.gdshader");
 
     /// <summary>
     /// The soft shapes the water paints with. It repeats seamlessly, and its mipmaps fade to flat
@@ -103,11 +104,11 @@ public sealed class LiquidLibrary
             return null;
         }
 
-        var material = new ShaderMaterial { Shader = LiquidShader };
+        var textured = type.Kind is LiquidKind.Magma or LiquidKind.Slime;
+        var material = new ShaderMaterial { Shader = textured ? OpaqueLiquidShader : LiquidShader };
         material.SetShaderParameter("frames", loaded.Frames);
         material.SetShaderParameter("frame_count", loaded.Count);
 
-        var textured = type.Kind is LiquidKind.Magma or LiquidKind.Slime;
         material.SetShaderParameter("textured", textured);
         material.SetShaderParameter("paint_noise", PaintNoise);
 

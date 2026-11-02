@@ -34,6 +34,18 @@ indoor_ambient={
 "type": "vec3",
 "value": Vector3(1, 1, 1)
 }
+world_ambient={
+"type": "vec3",
+"value": Vector3(1, 1, 1)
+}
+world_sun={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+world_to_sun={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}
 fog_range={
 "type": "vec2",
 "value": Vector2(100000, 100001)

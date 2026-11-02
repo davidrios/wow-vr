@@ -20,6 +20,9 @@ public sealed record CreatureParticle(string BoneName, Vector3 Offset, ParticleA
 /// <summary>A moment in a clip that makes a sound.</summary>
 public readonly record struct ClipSoundEvent(float Time, CreatureSoundKind Kind, int Index);
 
+/// <summary>Where a finger bone goes when its hand is closed.</summary>
+public readonly record struct FingerPose(int Bone, Vector3 Position, Quaternion Rotation, Vector3 Scale);
+
 /// <summary>A clip the idle state can choose, by its weight.</summary>
 public readonly record struct IdleClip(string Name, int Weight);
 
@@ -39,19 +42,34 @@ public sealed class CreatureSkeletonAsset
 
     /// <summary>Bones that turn to the viewer, in an order safe to apply.</summary>
     public required (int Bone, M2BillboardKind Kind)[] Billboards { get; init; }
+
+    /// <summary>Empty for a model with no closed-hands sequence.</summary>
+    public FingerPose[] RightFist { get; init; } = [];
+    public FingerPose[] LeftFist { get; init; } = [];
 }
 
 /// <summary>A display ready to place. Each placed creature gets its own skeleton.</summary>
-public sealed record CreatureAsset(CreatureSkeletonAsset Skeleton, ArrayMesh Mesh, float Scale, IReadOnlyList<CreatureItemAsset> Items, CreatureSoundSet? Sounds, IReadOnlyList<CreatureParticle> Particles);
+public sealed record CreatureAsset(CreatureSkeletonAsset Skeleton, ArrayMesh Mesh, float Scale, IReadOnlyList<CreatureItemAsset> Items, CreatureSoundSet? Sounds, IReadOnlyList<CreatureParticle> Particles)
+{
+    /// <summary>Fingers of hands with something in them.</summary>
+    public FingerPose[] ClosedFingers { get; init; } = [];
+}
 
 /// <summary>Builds creatures off the main thread, once per display and skeleton per model.</summary>
 public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable displays, ModelLibrary models)
 {
     private const float MinBoundsSize = 0.5f;
     private const int ShieldAttachment = 0;
+    private const int RightPalmAttachment = 1;
+    private const int LeftPalmAttachment = 2;
+
+    /// <summary>Key bones of each hand's five fingers, as in WoWModelViewer's enums.h.</summary>
+    private const int FirstRightFinger = 8;
+    private const int FirstLeftFinger = 13;
+    private const int FingersPerHand = 5;
 
     /// <summary>The right hand, then the left.</summary>
-    private static readonly int[] HandAttachments = [1, 2];
+    private static readonly int[] HandAttachments = [RightPalmAttachment, LeftPalmAttachment];
 
     /// <summary>Stand's variations play at random, so this avoids building rare ones many times over.</summary>
     private const int MaxIdleClips = 4;
@@ -83,6 +101,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             }
 
             var items = new List<CreatureItemAsset>();
+            var held = new HashSet<int>();
             foreach (var item in look.Items.Concat(WeaponsOf(weapons)))
             {
                 if (model.Data.Attachments.FirstOrDefault(a => a.Id == item.Attachment) is { Bone: >= 0 } attachment
@@ -90,6 +109,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                     && model.Data.Attachments.Any(a => a.Id == item.Attachment)
                     && _items.GetOrAdd((item.Model, item.Texture), LoadItem) is { } itemMesh)
                 {
+                    held.Add(item.Attachment);
                     var offset = attachment.Position - model.Data.Bones[attachment.Bone].Pivot;
                     items.Add(new CreatureItemAsset(BoneName(attachment.Bone), new Vector3(offset.X, offset.Y, offset.Z), itemMesh.Mesh, itemMesh.Particles));
                 }
@@ -99,7 +119,10 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                 .Where(p => p.Bone >= 0 && p.Bone < model.Data.Bones.Length)
                 .Select(p => new CreatureParticle(BoneName(p.Bone), p.Position - ToGodot(model.Data.Bones[p.Bone].Pivot), p))
                 .ToList();
-            return new CreatureAsset(model.Skeleton, mesh, look.Scale, items, look.Sounds, particles);
+            return new CreatureAsset(model.Skeleton, mesh, look.Scale, items, look.Sounds, particles)
+            {
+                ClosedFingers = [.. held.Contains(RightPalmAttachment) ? model.Skeleton.RightFist : [], .. held.Contains(LeftPalmAttachment) ? model.Skeleton.LeftFist : []],
+            };
         }
         catch (WowAlchemyException e)
         {
@@ -157,7 +180,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
 
     private static bool IsPlayed(M2Sequence sequence) =>
         (sequence.Id == M2SequenceIds.Stand && sequence.Variation < MaxIdleClips)
-        || (sequence.Id is M2SequenceIds.Walk or M2SequenceIds.Run && sequence.Variation == 0);
+        || (sequence.Id is M2SequenceIds.Walk or M2SequenceIds.Run or M2SequenceIds.HandsClosed && sequence.Variation == 0);
 
     private static CreatureSkeletonAsset BuildSkeleton(M2SkinnedModel data)
     {
@@ -172,6 +195,8 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             skin.AddNamedBind(BoneName(i), new Transform3D(Basis.Identity, -ToGodot(bone.Pivot)));
         }
 
+        FingerPose[] rightFist = [];
+        FingerPose[] leftFist = [];
         var clipSounds = new Dictionary<string, ClipSoundEvent[]>();
         var library = new AnimationLibrary();
         var idle = new List<IdleClip>();
@@ -182,6 +207,12 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         foreach (var clip in data.Clips)
         {
             var sequence = clip.Sequence;
+            if (sequence.Id == M2SequenceIds.HandsClosed)
+            {
+                (rightFist, leftFist) = (FistOf(data, clip, FirstRightFinger), FistOf(data, clip, FirstLeftFinger));
+                continue;
+            }
+
             var name = $"{sequence.Id}_{sequence.Variation}";
             library.AddAnimation(name, BuildAnimation(clip, data));
 
@@ -225,6 +256,8 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             Skin = skin,
             Animations = library,
             IdleClips = idle.ToArray(),
+            RightFist = rightFist,
+            LeftFist = leftFist,
             WalkClip = walk,
             WalkSpeed = walkSpeed,
             Bounds = bounds,
@@ -270,6 +303,29 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
     /// A bone turns and scales around its pivot, moved by its translation keys, so in its
     /// parent's space it sits at its rest offset plus those keys. Bones with no keys stay at rest.
     /// </summary>
+    /// <summary>The clip's first pose of a hand's fingers, as WoWModelViewer takes it.</summary>
+    private static FingerPose[] FistOf(M2SkinnedModel data, M2Clip clip, int firstKeyBone)
+    {
+        var poses = new List<FingerPose>();
+        for (var bone = 0; bone < data.Bones.Length; bone++)
+        {
+            if (data.Bones[bone].KeyBone < firstKeyBone || data.Bones[bone].KeyBone >= firstKeyBone + FingersPerHand)
+            {
+                continue;
+            }
+
+            var (translation, rotation, scale) = (clip.Translations[bone], clip.Rotations[bone], clip.Scales[bone]);
+            var turn = rotation.IsEmpty || rotation.Values[0].Length() <= 0f ? System.Numerics.Quaternion.Identity : System.Numerics.Quaternion.Normalize(rotation.Values[0]);
+            poses.Add(new FingerPose(
+                bone,
+                RestOf(data.Bones, bone) + (translation.IsEmpty ? Vector3.Zero : ToGodot(translation.Values[0])),
+                new Quaternion(turn.X, turn.Y, turn.Z, turn.W),
+                scale.IsEmpty ? Vector3.One : ToGodot(scale.Values[0])));
+        }
+
+        return poses.ToArray();
+    }
+
     private static Animation BuildAnimation(M2Clip clip, M2SkinnedModel data)
     {
         var bones = data.Bones;

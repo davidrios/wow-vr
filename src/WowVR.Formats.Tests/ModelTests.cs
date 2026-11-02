@@ -389,6 +389,40 @@ public class ClientModelTests(ClientFixture client) : IClassFixture<ClientFixtur
     }
 
     [Fact]
+    public void TheWorldTreePortalsMotesFollowTheirBones()
+    {
+        SkipWithoutClient();
+        const string Path = @"WORLD\GENERIC\ACTIVEDOODADS\WORLDTREEPORTALS\WORLDTREEPORTAL01.m2";
+        var data = M2SkinnedModel.Parse(
+            client.Source!.Read(Path)!,
+            client.Source.Read(M2Model.SkinPath(Path))!,
+            s => s.Id == M2SequenceIds.Stand && s.Variation == 0,
+            s => client.Source.Read(s.AnimPath(Path)));
+
+        var paths = data.Emitters.Where(e => e.Speed == 0f).Select(e => M2BoneBake.EmitterPath(data, data.Clips[0], e)).ToList();
+
+        Assert.NotEmpty(paths);
+        Assert.All(paths, Assert.NotNull);
+        Assert.All(paths, p => Assert.True(p!.Points.Max(a => Vector3.Distance(a, p.Points[0])) > 1f));
+    }
+
+    [Fact]
+    public void HumansCanCloseBothHands()
+    {
+        SkipWithoutClient();
+        const string Path = @"Character\Human\Male\HumanMale.m2";
+        var data = M2SkinnedModel.Parse(
+            client.Source!.Read(Path)!,
+            client.Source.Read(M2Model.SkinPath(Path))!,
+            s => s.Id == M2SequenceIds.HandsClosed,
+            s => client.Source.Read(s.AnimPath(Path)));
+
+        Assert.NotEmpty(data.Clips);
+        Assert.Contains(data.Bones, b => b.KeyBone is >= 8 and < 13);
+        Assert.Contains(data.Bones, b => b.KeyBone is >= 13 and < 18);
+    }
+
+    [Fact]
     public void StormwindHasMaterialsWithAHighlight()
     {
         SkipWithoutClient();

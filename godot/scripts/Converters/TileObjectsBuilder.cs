@@ -34,11 +34,13 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
 
     private static readonly double CellSize = WowCoords.TileSize / CellsPerSide;
 
+    private const float MinLightOffset = 0.01f;
+
     public TileObjects Build(AdtTerrain terrain, int tileX, int tileY)
     {
         library.TrimCaches();
 
-        var cells = new Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light)>>();
+        var cells = new Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light, System.Numerics.Vector3 Direction)>>();
         var wmos = new List<WmoInstance>();
         var tile = (tileX, tileY);
 
@@ -59,7 +61,7 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
             }
 
             var transform = WowCoords.TilePlacement(placement.Position, placement.Rotation, 1f, tileX, tileY);
-            var groupCopies = new Dictionary<(int Group, string Model), List<(PlacementTransform Transform, System.Numerics.Vector3 Light)>>();
+            var groupCopies = new Dictionary<(int Group, string Model), List<(PlacementTransform Transform, System.Numerics.Vector3 Light, System.Numerics.Vector3 Direction)>>();
             foreach (var doodad in wmo.Root.DoodadsInSet(placement.DoodadSet))
             {
                 var interior = wmo.IsInterior(doodad);
@@ -72,7 +74,7 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
                         groupCopies[key] = copies = [];
                     }
 
-                    copies.Add((transform.Compose(doodad.Transform), wmo.LightOf(doodad)));
+                    copies.Add((transform.Compose(doodad.Transform), wmo.LightOf(doodad), LightDirection(transform, wmo.Groups[group], doodad)));
                     continue;
                 }
 
@@ -111,7 +113,7 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
     }
 
     /// <summary>Spawned objects join the tile's doodads, which gives them streaming and collision.</summary>
-    private void AddGameObjects(Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light)>> cells, List<WmoInstance> wmos, AdtTerrain terrain, int tileX, int tileY)
+    private void AddGameObjects(Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light, System.Numerics.Vector3 Direction)>> cells, List<WmoInstance> wmos, AdtTerrain terrain, int tileX, int tileY)
     {
         var spawns = gameObjects.Read(tileX, tileY);
         if (spawns.Count == 0)
@@ -177,7 +179,16 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
         return origin == tile || !map.HasTile(origin.X, origin.Y);
     }
 
-    private static void AddDoodad(Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light)>> cells, string model, in PlacementTransform transform, bool interior, System.Numerics.Vector3 light)
+    /// <summary>A doodad's light comes outward from the middle of its group, as in acazuc's client. Straight down if it's at the middle.</summary>
+    private static System.Numerics.Vector3 LightDirection(in PlacementTransform wmo, WmoGroupAsset group, in WmoDoodad doodad)
+    {
+        var center = new System.Numerics.Vector3(group.Center.X, group.Center.Y, group.Center.Z);
+        var away = doodad.Transform.Origin - center;
+        var world = wmo.AxisX * away.X + wmo.AxisY * away.Y + wmo.AxisZ * away.Z;
+        return world.LengthSquared() > MinLightOffset ? System.Numerics.Vector3.Normalize(world) : -System.Numerics.Vector3.UnitY;
+    }
+
+    private static void AddDoodad(Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light, System.Numerics.Vector3 Direction)>> cells, string model, in PlacementTransform transform, bool interior, System.Numerics.Vector3 light)
     {
         var key = (
             System.Math.Clamp((int)(transform.Origin.X / CellSize), 0, CellsPerSide - 1),
@@ -190,13 +201,13 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
             cells[key] = transforms = [];
         }
 
-        transforms.Add((transform, light));
+        transforms.Add((transform, light, default));
     }
 
-    private DoodadBatch BuildBatch(M2Asset model, List<(PlacementTransform Transform, System.Numerics.Vector3 Light)> copies, bool interior)
+    private DoodadBatch BuildBatch(M2Asset model, List<(PlacementTransform Transform, System.Numerics.Vector3 Light, System.Numerics.Vector3 Direction)> copies, bool interior)
     {
-        // Twelve floats per copy for the transform's three rows, and four for an interior copy's light.
-        var stride = interior ? 16 : 12;
+        // Twelve floats per copy for the transform's three rows, and for an interior copy, four for its light and four for where that comes from.
+        var stride = interior ? 20 : 12;
         var transforms = copies.Select(c => c.Transform).ToList();
         var buffer = new float[transforms.Count * stride];
         var scale = 0f;
@@ -224,6 +235,9 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
                 buffer[row + 13] = Mathf.Min(light.Y, 1f);
                 buffer[row + 14] = Mathf.Min(light.Z, 1f);
                 buffer[row + 15] = 1f;
+                buffer[row + 16] = copies[i].Direction.X;
+                buffer[row + 17] = copies[i].Direction.Y;
+                buffer[row + 18] = copies[i].Direction.Z;
             }
 
             scale = Mathf.Max(scale, t.AxisX.Length());
@@ -234,6 +248,7 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
         {
             TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,
             UseColors = interior,
+            UseCustomData = interior,
             Mesh = interior ? library.InteriorMeshOf(model) : model.Mesh,
             InstanceCount = transforms.Count,
             Buffer = buffer,
@@ -245,7 +260,7 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
             range,
             center / transforms.Count,
             model,
-            model.CollisionFaces.Length > 0 ? transforms.Select(t => ToTransform3D(t)).ToArray() : []);
+            model.CollisionFaces.Length > 0 || model.Particles.Length > 0 ? transforms.Select(t => ToTransform3D(t)).ToArray() : []);
     }
 
     private static Transform3D ToTransform3D(in PlacementTransform t) => new(

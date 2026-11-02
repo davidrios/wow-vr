@@ -19,7 +19,21 @@ public sealed record ParticleAsset(Vector3 Position, int Bone, int Amount, float
     /// </summary>
     private const double PeriodFuzz = 0.1;
 
-    public GpuParticles3D NewNode(Vector3 position) => new()
+    /// <summary>Where a doodad's animation takes it. A creature's emitters ride on its skeleton instead.</summary>
+    public M2EmitterPath? Path { get; init; }
+
+    public GpuParticles3D NewNode(Vector3 position)
+    {
+        var node = NewParticles(position);
+        if (Path is not null)
+        {
+            node.AddChild(new EmitterFollower { Path = Path });
+        }
+
+        return node;
+    }
+
+    private GpuParticles3D NewParticles(Vector3 position) => new()
     {
         Position = position,
         Amount = Amount,
@@ -50,11 +64,11 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
     private readonly ConcurrentDictionary<bool, Shader> _shaders = new();
     private readonly ConcurrentDictionary<(string Texture, bool Keyed, int Rows, int Columns, string Cells, float Share), ShaderMaterial?> _materials = new();
 
-    public ParticleAsset[] Build(System.Collections.Generic.IEnumerable<M2Emitter> emitters) =>
-        emitters.Select(Build).OfType<ParticleAsset>().ToArray();
+    public ParticleAsset[] Build(System.Collections.Generic.IEnumerable<M2Emitter> emitters, Func<M2Emitter, M2EmitterPath?>? pathOf = null) =>
+        emitters.Select(e => Build(e, pathOf?.Invoke(e))).OfType<ParticleAsset>().ToArray();
 
     /// <summary>Null when its texture can't be read.</summary>
-    private ParticleAsset? Build(M2Emitter emitter)
+    private ParticleAsset? Build(M2Emitter emitter, M2EmitterPath? path)
     {
         var peak = emitter.Sizes.Max();
         var speed = emitter.Speed * (1f + emitter.SpeedVariation);
@@ -66,6 +80,7 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
         var amount = Math.Clamp(Mathf.CeilToInt(emitter.Rate), 1, MaxAmount);
         var share = Mathf.Min(emitter.Rate / amount, 1f);
         var reach = Mathf.Abs(speed) * longest + Mathf.Abs(emitter.Gravity) * longest * longest / 2f + peak * QuadSize + Mathf.Max(emitter.AreaLength, emitter.AreaWidth);
+        reach += path?.Points.Max(p => System.Numerics.Vector3.Distance(p, path.Points[0])) ?? 0f;
         if (MaterialFor(emitter, share) is not { } material)
         {
             return null;
@@ -78,7 +93,10 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
             emitter.Lifespan / share,
             ProcessOf(emitter, peak, share),
             new QuadMesh { Size = Vector2.One * QuadSize, Material = material },
-            new Aabb(-Vector3.One * reach, Vector3.One * reach * 2f));
+            new Aabb(-Vector3.One * reach, Vector3.One * reach * 2f))
+        {
+            Path = path,
+        };
     }
 
     private static ParticleProcessMaterial ProcessOf(M2Emitter emitter, float peak, float share)

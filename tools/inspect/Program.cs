@@ -18,6 +18,7 @@ const string Usage = """
       extract <file> <out>        Copy a file out of the client. Don't commit the output.
       check-models [text]         Parse every M2 and WMO, optionally only those containing text.
       emitters <m2 or display id>  Print a model's particle emitters.
+      anims <m2 or object display id> Print a model's sequences and what moves in its stand.
       sky <map id> <x> <y> <hour> Print the sky colors and fog at a WoW position and time.
     """;
 
@@ -67,6 +68,8 @@ try
             return CheckModels(source, text);
         case ["emitters", var file]:
             return PrintEmitters(source, file);
+        case ["anims", var file]:
+            return PrintAnims(source, file);
         case ["area", var map, var name]:
             return PrintArea(source, map, name);
         default:
@@ -230,12 +233,68 @@ static int PrintEmitters(MpqAssetSource source, string file)
     }
 
     var model = M2Model.Parse(source.Read(file) ?? throw new IOException($"Not in the client: {file}"), source.Read(M2Model.SkinPath(file)));
-    foreach (var e in model.Emitters)
+    var moving = M2SkinnedModel.Parse(
+        source.Read(file)!,
+        source.Read(M2Model.SkinPath(file))!,
+        s => s.Id == M2SequenceIds.Stand && s.Variation == 0,
+        s => source.Read(s.AnimPath(file)));
+    foreach (var e in moving.Emitters)
     {
-        Console.WriteLine($"bone {e.Bone} at {e.Position}: rate {e.Rate:F2}, life {e.Lifespan:F2} +-{e.LifespanVariation:F2}, speed {e.Speed:F2}, area {e.AreaLength:F2}x{e.AreaWidth:F2}, sizes {string.Join('/', e.Sizes.Select(v => v.ToString("F2")))}, blend {e.Blend}, {e.Texture}");
+        var path = moving.Clips.Count > 0 ? M2BoneBake.EmitterPath(moving, moving.Clips[0], e) : null;
+        Console.Write(path is null ? "still: " : $"moves {path.Points.Max(q => System.Numerics.Vector3.Distance(q, path.Points[0])):F2} over {path.Seconds:F1} s from {path.Points[0]}: ");
+        Console.WriteLine($"bone {e.Bone} at {e.Position}: rate {e.Rate:F2}, life {e.Lifespan:F2} +-{e.LifespanVariation:F2}, speed {e.Speed:F2}, area {e.AreaLength:F2}x{e.AreaWidth:F2}, sizes {string.Join('/', e.Sizes.Select(v => v.ToString("F2")))}, blend {e.Blend}, colors {string.Join(" ", e.Colors.Select(c => $"{c.X * 255:F0},{c.Y * 255:F0},{c.Z * 255:F0},{c.W:F2}"))}, {e.Texture}");
     }
 
     Console.WriteLine($"{model.Emitters.Count} emitters");
+    return 0;
+}
+
+static int PrintAnims(MpqAssetSource source, string file)
+{
+    if (int.TryParse(file, out var display))
+    {
+        file = WowVR.Formats.World.GameObjectDisplayTable.Read(source).ModelOf(display) ?? throw new IOException($"No object display {display}");
+    }
+
+    Console.WriteLine(file);
+    var model = M2SkinnedModel.Parse(source.Read(file) ?? throw new IOException($"Not in the client: {file}"), source.Read(M2Model.SkinPath(file))!, _ => true, q => source.Read(q.AnimPath(file)));
+    Console.WriteLine($"{model.Bones.Length} bones, {model.Emitters.Count} emitters, global sequences {string.Join(' ', model.GlobalSequences)}");
+    var low = model.Positions.Aggregate(System.Numerics.Vector3.Min);
+    var high = model.Positions.Aggregate(System.Numerics.Vector3.Max);
+    Console.WriteLine($"mesh bounds {low} to {high}");
+    foreach (var e in model.Emitters)
+    {
+        var posed = model.Clips.Count > 0 && e.Bone >= 0 ? System.Numerics.Vector3.Transform(e.Position, M2BoneBake.Pose(model, model.Clips[0], 0f)[e.Bone]) : e.Position;
+        Console.WriteLine($"emitter bone {e.Bone} pivot {model.Bones[e.Bone].Pivot}: file position {e.Position}, posed {posed}");
+    }
+
+    foreach (var clip in model.Clips)
+    {
+        var moving = 0;
+        for (var bone = 0; bone < model.Bones.Length; bone++)
+        {
+            moving += clip.Translations[bone].Times.Length > 1 || clip.Rotations[bone].Times.Length > 1 || clip.Scales[bone].Times.Length > 1 ? 1 : 0;
+        }
+
+        for (var bone = 0; bone < model.Bones.Length; bone++)
+        {
+            var (t, r, c) = (clip.Translations[bone], clip.Rotations[bone], clip.Scales[bone]);
+            if (!t.IsEmpty || !r.IsEmpty || !c.IsEmpty)
+            {
+                Console.WriteLine($"  bone {bone} parent {model.Bones[bone].Parent} billboard {model.Bones[bone].Billboard}: translation {t.Times.Length} keys global {t.GlobalSequence}, rotation {r.Times.Length} keys global {r.GlobalSequence}, scale {c.Times.Length} keys global {c.GlobalSequence}, last rotation {(r.IsEmpty ? "" : r.Values[^1].ToString())}, last scale {(c.IsEmpty ? "" : c.Values[^1].ToString())}");
+            }
+        }
+
+        Console.WriteLine($"sequence id {clip.Sequence.Id} variation {clip.Sequence.Variation}: {clip.Sequence.DurationSeconds:F2} s, flags {clip.Sequence.Flags:x}, {moving} bones with keys");
+    }
+
+    foreach (var batch in model.Batches)
+    {
+        var e = batch.Effect;
+        Console.WriteLine($"  color {string.Join(' ', e?.Color?.Values.Take(6) ?? [])} | alpha {string.Join(' ', e?.ColorAlpha?.Values.Take(6) ?? [])} | weight {string.Join(' ', e?.Weight?.Values.Take(6) ?? [])}");
+        Console.WriteLine($"batch geoset {batch.Geoset} blend {batch.Blend} {batch.Texture}: animated {e?.Animated}, uv0 {e?.Uv0Animation?.Changes}, uv1 {e?.Uv1Animation?.Changes}, color {e?.Color?.Changes} alpha {e?.ColorAlpha?.Changes} weight {e?.Weight?.Changes}");
+    }
+
     return 0;
 }
 

@@ -9,6 +9,9 @@ public static class M2SequenceIds
     public const int Stand = 0;
     public const int Walk = 4;
     public const int Run = 5;
+
+    /// <summary>Not played as such: its first pose is what a hand's fingers hold while it has something in it.</summary>
+    public const int HandsClosed = 15;
 }
 
 /// <summary>How a bone turns to the viewer. Spherical faces them fully, and the others turn around one of the model's axes.</summary>
@@ -22,7 +25,7 @@ public enum M2BillboardKind
 }
 
 /// <summary>A bone in Godot axes. Its keys move it around <see cref="Pivot"/>.</summary>
-public readonly record struct M2Bone(int Parent, uint Flags, Vector3 Pivot)
+public readonly record struct M2Bone(int Parent, uint Flags, Vector3 Pivot, int KeyBone = -1)
 {
     private const uint FlagSpherical = 0x8;
     private const uint FlagLockX = 0x10;
@@ -160,7 +163,7 @@ public sealed class M2SkinnedModel
             for (var i = 0; i < bones.Length; i++)
             {
                 ModelNativeMethods.M2Bone(model, (uint)i, out var bone);
-                bones[i] = new M2Bone(bone.Parent, bone.Flags, WowCoords.ModelToGodot(new Vector3(bone.Pivot[0], bone.Pivot[1], bone.Pivot[2])));
+                bones[i] = new M2Bone(bone.Parent, bone.Flags, WowCoords.ModelToGodot(new Vector3(bone.Pivot[0], bone.Pivot[1], bone.Pivot[2])), bone.KeyBone);
             }
 
             var sequences = ReadSequences(model);

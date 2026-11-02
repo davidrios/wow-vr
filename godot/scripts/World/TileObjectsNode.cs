@@ -423,7 +423,8 @@ public partial class TileObjectsNode : Node3D
         var added = 0;
         foreach (var cell in _doodadCells)
         {
-            if (added == MaxNewDoodadBodiesPerFrame || !cell.Bounds.Grow(DoodadCollisionRange).HasPoint(local))
+            // A model can be here only for its particles.
+            if (cell.Model.CollisionFaces.Length == 0 || added == MaxNewDoodadBodiesPerFrame || !cell.Bounds.Grow(DoodadCollisionRange).HasPoint(local))
             {
                 continue;
             }

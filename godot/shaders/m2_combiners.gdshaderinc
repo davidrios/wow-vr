@@ -45,8 +45,20 @@ mat4 bone_matrix(int bone, int frame) {
 }
 #endif
 
-#if defined(BAKED_BONES) || defined(BILLBOARD)
+#ifdef SHAPED_LIGHT
+// How much light a doodad's far side keeps, by eye. Its light is MODD's color, from one direction,
+// and this stands in for MOHD's ambient, which alone would leave those sides nearly black.
+const float SHAPED_FILL = 0.45;
+
+// Where this copy's light goes, in the world's axes. Empty for a WMO's own walls, whose light is baked.
+varying vec3 light_going;
+#endif
+
+#if defined(BAKED_BONES) || defined(BILLBOARD) || defined(SHAPED_LIGHT)
 void vertex() {
+#ifdef SHAPED_LIGHT
+	light_going = INSTANCE_CUSTOM.xyz;
+#endif
 	// A worn item has no bones of its own, but can still have parts that turn to the viewer.
 	mat4 skin = mat4(1.0);
 #ifdef BAKED_BONES
@@ -132,6 +144,12 @@ void fragment() {
 #ifdef INSTANCE_LIGHT
 	// Inside a building, each copy has its own baked light instead of the sky's.
 	lit *= COLOR.rgb;
+#endif
+#ifdef SHAPED_LIGHT
+	if (dot(light_going, light_going) > 0.25) {
+		vec3 toward_light = -normalize(mat3(VIEW_MATRIX) * light_going);
+		lit *= mix(SHAPED_FILL, 1.0, clamp(dot(NORMAL, toward_light), 0.0, 1.0));
+	}
 #endif
 	vec3 added = vec3(0.0);
 	float a = element_alpha;

@@ -105,6 +105,11 @@ public partial class CreatureNode : Node3D
             attachment.AddChild(particle.Particle.NewNode(particle.Offset));
         }
 
+        if (asset.ClosedFingers.Length > 0)
+        {
+            Skeleton.AddChild(new ClosedHands { Fingers = asset.ClosedFingers });
+        }
+
         if (asset.Skeleton.Billboards.Length > 0)
         {
             _billboards = new BillboardBones { Bones = asset.Skeleton.Billboards };

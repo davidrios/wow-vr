@@ -276,7 +276,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             var model = M2Model.Parse(m2, skin);
             var used = new List<ModelMaterial>();
             return BuildMesh(model.Surfaces, indoor: false, used) is { } mesh
-                ? new M2Asset(mesh, model.Radius, model.CollisionFaces.Select(ToGodot).ToArray(), used.ToArray()) { Particles = Particles.Build(model.Emitters) }
+                ? new M2Asset(mesh, model.Radius, model.CollisionFaces.Select(ToGodot).ToArray(), used.ToArray()) { Particles = model.Emitters.Count > 0 ? DoodadParticles(ParseStand(path, m2, skin)) : [] }
                 : null;
         }
         catch (WowAlchemyException e)
@@ -286,14 +286,19 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         }
     }
 
+    private M2SkinnedModel ParseStand(string path, byte[] m2, byte[] skin) => M2SkinnedModel.Parse(
+        m2,
+        skin,
+        s => s.Id == M2SequenceIds.Stand && s.Variation == 0,
+        s => source.Read(s.AnimPath(path)));
+
+    private ParticleAsset[] DoodadParticles(M2SkinnedModel data) =>
+        Particles.Build(data.Emitters, e => data.Clips.Count > 0 ? M2BoneBake.EmitterPath(data, data.Clips[0], e) : null);
+
     /// <summary>A doodad with a stand animation that moves, baked for its vertex shader. Null for any other.</summary>
     private M2Asset? LoadAnimatedM2(string path, byte[] m2, byte[] skin)
     {
-        var data = M2SkinnedModel.Parse(
-            m2,
-            skin,
-            s => s.Id == M2SequenceIds.Stand && s.Variation == 0,
-            s => source.Read(s.AnimPath(path)));
+        var data = ParseStand(path, m2, skin);
         if (data.Clips.Count == 0 || M2BoneBake.TryCreate(data, data.Clips[0]) is not { } bake)
         {
             return null;
@@ -346,7 +351,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         }
 
         var faces = M2Model.Parse(m2, skin).CollisionFaces.Select(ToGodot).ToArray();
-        return new M2Asset(mesh, Mathf.Max(bounds.Size.Length() / 2f, 0.1f), faces, used.ToArray()) { Particles = Particles.Build(data.Emitters) };
+        return new M2Asset(mesh, Mathf.Max(bounds.Size.Length() / 2f, 0.1f), faces, used.ToArray()) { Particles = DoodadParticles(data) };
     }
 
     public static void AddBakedSurface(ArrayMesh mesh, M2SkinnedModel data, M2BoneBake bake, List<int[]> parts, Material material, bool secondUv, bool billboard)
@@ -705,7 +710,9 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
 
         // Blended surfaces don't write depth or take occlusion, and glows shouldn't be dimmed.
         var indoorOccluded = indoor && !material.Unlit && !modulates && !effect.Tinted && !blended;
-        var key = $"{material.Blend}_{material.TwoSided}_{material.Repeat}_{effect.Repeat2}_{unshaded}_{blended}_{baked}_{material.Billboard}_{indoor}_{floorLit}_{indoorOccluded}";
+        // Glows and glass have no shape to show. The shader leaves a WMO's own walls alone, which get no direction.
+        var shaped = indoor && !material.Unlit && !effect.Tinted && material.Blend is ModelBlend.Opaque or ModelBlend.AlphaKey;
+        var key = $"{material.Blend}_{material.TwoSided}_{material.Repeat}_{effect.Repeat2}_{unshaded}_{blended}_{baked}_{material.Billboard}_{indoor}_{floorLit}_{indoorOccluded}_{shaped}";
         return _effectShaders.GetOrAdd(key, _ =>
         {
             var modes = new List<string> { material.TwoSided ? "cull_disabled" : "cull_back" };
@@ -767,6 +774,11 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             if (floorLit)
             {
                 defines.Add("#define FLOOR_LIGHT");
+            }
+
+            if (shaped)
+            {
+                defines.Add("#define SHAPED_LIGHT");
             }
 
             if (indoorOccluded)

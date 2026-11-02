@@ -2,6 +2,9 @@ using System.Numerics;
 
 namespace WowVR.Formats.Models;
 
+/// <summary>Where an emitter is at even steps through a clip that loops, in the same axes as the model.</summary>
+public sealed record M2EmitterPath(Vector3[] Points, float Seconds);
+
 /// <summary>
 /// A clip's bone matrices at even steps, for a vertex shader to read from a texture, so that
 /// thousands of copies of a doodad can animate without a skeleton each. Only bones with
@@ -13,6 +16,7 @@ public sealed class M2BoneBake
     private const int MaxFrames = 256;
     private const float FramesPerSecond = 30f;
     private const float MinMovement = 0.0005f;
+    private const float MinEmitterMovement = 0.01f;
 
     /// <summary>The bones kept, as columns of the texture divided by <see cref="RowsPerBone"/>.</summary>
     public required int BoneCount { get; init; }
@@ -163,6 +167,35 @@ public sealed class M2BoneBake
         return moves || billboards
             ? new M2BoneBake { BoneCount = count, Frames = frames, Seconds = seconds, Texels = texels, BoneRemap = remap }
             : null;
+    }
+
+    /// <summary>
+    /// The way an emitter's bone carries it through a clip, which for one with no speed of its
+    /// own is what draws its trail. Null when it stays where it is. Its bone needn't have vertices.
+    /// </summary>
+    public static M2EmitterPath? EmitterPath(M2SkinnedModel model, M2Clip clip, M2Emitter emitter)
+    {
+        var seconds = clip.Sequence.DurationSeconds;
+        if (seconds <= 0f && model.GlobalSequences.Length > 0)
+        {
+            seconds = model.GlobalSequences.Max();
+        }
+
+        if (seconds <= 0f || emitter.Bone < 0 || emitter.Bone >= model.Bones.Length)
+        {
+            return null;
+        }
+
+        var frames = Math.Clamp((int)MathF.Ceiling(seconds * FramesPerSecond), 2, MaxFrames);
+        var points = new Vector3[frames];
+        var moves = false;
+        for (var frame = 0; frame < frames; frame++)
+        {
+            points[frame] = Vector3.Transform(emitter.Position, Pose(model, clip, seconds * frame / frames)[emitter.Bone]);
+            moves |= Vector3.Distance(points[frame], points[0]) > MinEmitterMovement;
+        }
+
+        return moves ? new M2EmitterPath(points, seconds) : null;
     }
 
     /// <summary>The bone that turns a bone to the viewer, which is itself or the nearest ancestor that does.</summary>

@@ -21,7 +21,7 @@ public sealed class WmoFloorLight
     private const float CreatureSaturation = 0.3f;
     private const float CreatureMinBrightness = 0.85f;
     private const float CreatureMaxBrightness = 1f;
-    private const float DoodadSaturation = 0.6f;
+    private const float DoodadSaturation = 1f;
     private const float DoodadMinBrightness = 0.35f;
     private const float DoodadMaxBrightness = 1f;
 

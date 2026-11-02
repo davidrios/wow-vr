@@ -10,6 +10,8 @@ using WowVR.Formats.Terrain;
 using WowVR.Formats.World;
 using Godot;
 
+using WowVR.Debug;
+
 namespace WowVR.World;
 
 /// <summary>Where a tile's creatures come from.</summary>
@@ -46,7 +48,7 @@ public partial class CreatureManager : Node
     public const int MaxAnimated = 60;
 
     /// <summary>Making a skeleton is slow enough to see, so at most this many start per frame.</summary>
-    private const int MaxNewNodesPerFrame = 2;
+    private const int MaxNewNodesPerFrame = 1;
 
     private const double RankSeconds = 0.25;
 
@@ -179,11 +181,21 @@ public partial class CreatureManager : Node
         if (_rankTimer <= 0)
         {
             _rankTimer = RankSeconds;
-            Rank();
+            using (FrameProbe.Time("creature rank"))
+            {
+                Rank();
+            }
         }
 
-        AddWantedNodes();
-        MoveNodes(delta);
+        using (FrameProbe.Time("creature add"))
+        {
+            AddWantedNodes();
+        }
+
+        using (FrameProbe.Time("creature move"))
+        {
+            MoveNodes(delta);
+        }
     }
 
     private void CollectFinishedWork()
@@ -327,8 +339,22 @@ public partial class CreatureManager : Node
             }
 
             var node = new CreatureNode { Name = $"Creature_{entry.Spawn.Guid}" };
-            state.Container.AddChild(node);
-            node.Build(asset, entry.Spawn.Name);
+
+            // Built before it joins the scene, so nothing reacts to each bone and child as it's added.
+            using (FrameProbe.Time("creature add: build"))
+            {
+                node.Build(asset, entry.Spawn.Name);
+            }
+
+            using (FrameProbe.Time("creature add: enter scene"))
+            {
+                state.Container.AddChild(node);
+            }
+
+            using (FrameProbe.Time("creature add: first animation"))
+            {
+                node.StartIdle();
+            }
             node.Scale = Vector3.One * Math.Max(entry.Spawn.Scale, 0.01f);
             entry.Node = node;
             entry.Sounds = asset.Sounds;
@@ -416,7 +442,8 @@ public partial class CreatureManager : Node
             {
                 var player = CreatureSoundPlayer.NewPlayer();
                 player.Stream = loop.Stream;
-                player.VolumeDb = CreatureSoundPlayer.VolumeDb(loop.Volume);
+                player.VolumeDb = CreatureSoundPlayer.VolumeDb(loop.Entry.Volume);
+                CreatureSoundPlayer.ApplyRange(player, loop.Entry);
                 player.Autoplay = true;
                 node.AddChild(player);
             }

@@ -401,7 +401,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
     }
 
     /// <summary>What turns a vertex to the viewer: its heaviest bone decides.</summary>
-    private static (M2BillboardKind Kind, System.Numerics.Vector3 Pivot) VertexBillboard(M2SkinnedModel data, int vertex)
+    public static (M2BillboardKind Kind, System.Numerics.Vector3 Pivot) VertexBillboard(M2SkinnedModel data, int vertex)
     {
         var heaviest = 0;
         for (var slot = 1; slot < 4; slot++)
@@ -563,7 +563,11 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
     private Material? GetMaterial(ModelMaterial material, bool indoor) =>
         _materials.GetOrAdd((material, indoor, false), key => key.Material.Effect is { } effect
             ? BuildEffectMaterial(key.Material, effect, key.Indoor, creature: false)
-            : BuildMaterial(key.Material, key.Indoor));
+            : key.Material.Blend is ModelBlend.Alpha or ModelBlend.Add
+
+                // Blending needs the shader, to match the client's. See its GAMMA_ADD.
+                ? BuildEffectMaterial(key.Material with { Unlit = key.Material.Unlit || key.Material.Blend == ModelBlend.Add }, PlainMod, key.Indoor, creature: false)
+                : BuildMaterial(key.Material, key.Indoor));
 
     private ShaderMaterial? BuildEffectMaterial(ModelMaterial material, M2Effect effect, bool indoor, bool creature)
     {
@@ -702,6 +706,15 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             if (floorLit)
             {
                 defines.Add("#define FLOOR_LIGHT");
+            }
+
+            if (material.Blend == ModelBlend.Add && unshaded)
+            {
+                defines.Add("#define GAMMA_ADD");
+            }
+            else if (material.Blend == ModelBlend.Alpha)
+            {
+                defines.Add("#define GAMMA_ALPHA");
             }
 
             if (material.Billboard)

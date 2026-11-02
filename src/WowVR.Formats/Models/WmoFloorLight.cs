@@ -19,8 +19,8 @@ public sealed class WmoFloorLight
 
     /// <summary>How much of a floor's color a creature keeps, and the brightness it's kept within. Picked by eye.</summary>
     private const float CreatureSaturation = 0.3f;
-    private const float CreatureMinBrightness = 0.6f;
-    private const float CreatureMaxBrightness = 0.95f;
+    private const float CreatureMinBrightness = 0.85f;
+    private const float CreatureMaxBrightness = 1f;
     private const float DoodadSaturation = 0.6f;
     private const float DoodadMinBrightness = 0.35f;
     private const float DoodadMaxBrightness = 1f;

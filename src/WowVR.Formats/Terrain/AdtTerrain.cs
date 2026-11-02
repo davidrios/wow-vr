@@ -14,6 +14,9 @@ public sealed class TerrainChunk
     public required int AreaId { get; init; }
     public required ushort Holes { get; init; }
 
+    /// <summary>One bit per cell of the 8 by 8, row by row: no ground cover there.</summary>
+    public required ulong NoEffectDoodad { get; init; }
+
     /// <summary>The chunk's north-west corner: north, west, base height.</summary>
     public required System.Numerics.Vector3 WorldPosition { get; init; }
 
@@ -204,6 +207,7 @@ public sealed class AdtTerrain
             Iy = (int)chunk.Iy,
             AreaId = (int)chunk.AreaId,
             Holes = (ushort)chunk.Holes,
+            NoEffectDoodad = chunk.NoEffectDoodad,
             WorldPosition = new System.Numerics.Vector3(chunk.Position[0], chunk.Position[1], chunk.Position[2]),
             Heights = new ReadOnlySpan<float>(chunk.Heights, TerrainChunk.VertexCount).ToArray(),
             Normals = new ReadOnlySpan<sbyte>(chunk.Normals, TerrainChunk.VertexCount * 3).ToArray(),

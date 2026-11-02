@@ -19,8 +19,8 @@ VR exploration of the WotLK WoW world in Godot 4 (.NET / C#), reading the player
 
 ## Commands
 - Build: `dotnet build WowVR.sln` (also builds the native library, which needs `cargo` and `../wow-alchemy`)
-- Tests: `dotnet test --project src/WowVR.Formats.Tests`
-- Terrain flight test: `godot --path godot -- --tour` (flies Goldshire to Northshire, prints frame times, quits); `--tour=walk` walks it through physics
+- Tests: while developing, run only what's relevant: `dotnet test --project src/WowVR.Formats.Tests -- --filter-class "*Name*"`. Run them all with `WOWVR_CLIENT_PATH` set only before committing, since those with client data are slow and skip without it. The same goes for the Godot checks below.
+- Terrain flight test: `godot --path godot -- --tour` (flies Goldshire to Northshire, prints frame times, quits); `--tour=walk` walks it through physics. Its report splits frame time by phase and system and lists slow frames; add `--no-shadows` to compare, and `--disable-vsync` before the `--` for uncapped times
 - Movement check: `godot --path godot -- --movement-check` (prints PASS or FAIL for standing, flying, teleports and recovery, then quits); add `--xr-player` to run the VR player's scene, physics and controllers without a headset, using simulated trackers (not menu clicks)
 - Creature check: `godot --path godot -- --creature-check` (places sample creatures, prints PASS or FAIL for animating, moving, staying on the ground and frame time, then quits); add `--xr-player` for the VR player, or `--sample-spawns=400` to test the cap with a crowd
 - Sample creatures: `godot --path godot -- --sample-spawns` shows made-up creatures around the start, which needs no spawn export. Exported files are read from the repo's `spawns/`, then `user://spawns`, or `--spawns=<folder>`

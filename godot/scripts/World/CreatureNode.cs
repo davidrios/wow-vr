@@ -104,7 +104,6 @@ public partial class CreatureNode : Node3D
         _body.AddChild(_player);
         _player.AddAnimationLibrary("", asset.Skeleton.Animations);
         _player.AnimationFinished += _ => PlayNextIdle();
-        PlayNextIdle();
 
         if (name.Length > 0)
         {
@@ -123,6 +122,9 @@ public partial class CreatureNode : Node3D
             AddChild(_name);
         }
     }
+
+    /// <summary>Starts animating, once the creature is in the scene.</summary>
+    public void StartIdle() => PlayNextIdle();
 
     /// <summary>Stops bones moving, keeping the current pose, for creatures past the animation cap.</summary>
     public void SetAnimated(bool animated)

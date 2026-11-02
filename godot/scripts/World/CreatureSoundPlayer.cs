@@ -15,13 +15,17 @@ public partial class CreatureSoundPlayer : Node
 {
     /// <summary>A crowd's footsteps share these, and sounds past them are skipped.</summary>
     private const int MaxVoices = 16;
-    public const float MaxDistance = 40f;
-    private const float UnitSize = 6f;
+
+    /// <summary>Sounds aren't asked for past this, which is the cutoff most creature sounds have.</summary>
+    public const float MaxDistance = 45f;
+
+    /// <summary>For the few rows that give no distances.</summary>
+    private const float DefaultMinDistance = 8f;
     private const double GiveUpSeconds = 1;
 
     private readonly List<AudioStreamPlayer3D> _voices = [];
     private readonly ConcurrentDictionary<string, Task<AudioStream?>> _streams = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentQueue<(AudioStream Stream, Vector3 Position, float Volume, ulong Asked)> _ready = new();
+    private readonly ConcurrentQueue<(AudioStream Stream, Vector3 Position, SoundEntryRecord Entry, ulong Asked)> _ready = new();
     private Dictionary<int, SoundEntryRecord> _entries = [];
     private IAssetSource _source = null!;
 
@@ -42,10 +46,20 @@ public partial class CreatureSoundPlayer : Node
 
     public static AudioStreamPlayer3D NewPlayer() => new()
     {
-        UnitSize = UnitSize,
+        UnitSize = DefaultMinDistance,
         MaxDistance = MaxDistance,
-        AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.InverseDistance,
+
+        // Plain inverse is still only 15 dB down at the cutoff, so a sound would stop dead there.
+        AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.InverseSquareDistance,
+        MaxDb = 0f,
     };
+
+    /// <summary>Uses a SoundEntries row's own distances.</summary>
+    public static void ApplyRange(AudioStreamPlayer3D player, SoundEntryRecord entry)
+    {
+        player.UnitSize = entry.MinDistance > 0f ? entry.MinDistance : DefaultMinDistance;
+        player.MaxDistance = entry.Cutoff > 0f ? entry.Cutoff : MaxDistance;
+    }
 
     public static float VolumeDb(float volume) => Mathf.LinearToDb(Mathf.Max(volume * AppSettings.AmbienceVolume, 0.0001f));
 
@@ -63,14 +77,14 @@ public partial class CreatureSoundPlayer : Node
             {
                 if (t.Result is { } stream)
                 {
-                    _ready.Enqueue((stream, position, entry.Volume, asked));
+                    _ready.Enqueue((stream, position, entry, asked));
                 }
             },
             TaskContinuationOptions.OnlyOnRanToCompletion);
     }
 
     /// <summary>Loads a looping sound for a player that follows its creature. Null when it has none.</summary>
-    public async Task<(AudioStream Stream, float Volume)?> LoadLoopAsync(int entryId)
+    public async Task<(AudioStream Stream, SoundEntryRecord Entry)?> LoadLoopAsync(int entryId)
     {
         if (entryId == 0 || !_entries.TryGetValue(entryId, out var entry) || PathOf(entry) is not { } path || await Load(path) is not { } stream)
         {
@@ -88,7 +102,7 @@ public partial class CreatureSoundPlayer : Node
                 break;
         }
 
-        return (stream, entry.Volume);
+        return (stream, entry);
     }
 
     private static string? PathOf(SoundEntryRecord entry)
@@ -141,7 +155,8 @@ public partial class CreatureSoundPlayer : Node
 
             voice.Stream = sound.Stream;
             voice.GlobalPosition = sound.Position;
-            voice.VolumeDb = VolumeDb(sound.Volume);
+            voice.VolumeDb = VolumeDb(sound.Entry.Volume);
+            ApplyRange(voice, sound.Entry);
             voice.Play();
             PlayedCount++;
         }

@@ -6,6 +6,8 @@ using WowVR.Formats.Models;
 using WowVR.Converters;
 using Godot;
 
+using WowVR.Debug;
+
 namespace WowVR.World;
 
 /// <summary>
@@ -41,7 +43,20 @@ public partial class TileObjectsNode : Node3D
     private readonly record struct CollisionGroup(Node3D Wmo, WmoGroupAsset Group, System.Numerics.Vector3 Ambient);
 
     /// <summary>The copies of a model in one cell, with bounds around them to skip the whole cell quickly.</summary>
-    private sealed record DoodadCell(M2Asset Model, Transform3D[] Transforms, Aabb Bounds);
+    /// <remarks>Not a record: a model's hash changes when it gets its interior mesh, which would lose this cell's dictionary entries.</remarks>
+    private sealed class DoodadCell(M2Asset model, Transform3D[] transforms, Aabb bounds)
+    {
+        public M2Asset Model { get; } = model;
+        public Transform3D[] Transforms { get; } = transforms;
+        public Aabb Bounds { get; } = bounds;
+    }
+
+    /// <summary>The player must move this far before collision is looked at again, unless some is still waiting.</summary>
+    private const float CollisionCheckDistance = 1f;
+
+    private Vector3 _collisionCheckedAt;
+    private bool _collisionChecked;
+    private bool _collisionWaiting;
 
     private readonly List<DoodadCell> _doodadCells = [];
     private readonly Dictionary<(DoodadCell Cell, int Copy), StaticBody3D> _doodadBodies = [];
@@ -68,6 +83,10 @@ public partial class TileObjectsNode : Node3D
     private bool _sorted;
 
     public IPlayer Player { get; set; } = null!;
+
+    /// <summary>Collision around the player's position has caught up, so a ray there sees the buildings.</summary>
+    public bool CollisionSettled => _collisionChecked && !_collisionWaiting
+        && ToLocal(Player.Feet).DistanceTo(_collisionCheckedAt) < CollisionCheckDistance;
 
     /// <summary>Everything is in the scene.</summary>
     public bool Finished => _pending.Count == 0;
@@ -265,9 +284,28 @@ public partial class TileObjectsNode : Node3D
 
     public override void _Process(double delta)
     {
-        UpdatePortals();
-        UpdateCollision();
-        UpdateDoodadCollision();
+        using (FrameProbe.Time("portals"))
+        {
+            UpdatePortals();
+        }
+
+        // Relative to this tile, because a teleport moves the tiles and leaves the player near the origin.
+        var feet = ToLocal(Player.Feet);
+        if (_collisionChecked && !_collisionWaiting && feet.DistanceTo(_collisionCheckedAt) < CollisionCheckDistance)
+        {
+            return;
+        }
+
+        (_collisionCheckedAt, _collisionChecked, _collisionWaiting) = (feet, true, false);
+        using (FrameProbe.Time("wmo collision"))
+        {
+            UpdateCollision();
+        }
+
+        using (FrameProbe.Time("doodad collision"))
+        {
+            UpdateDoodadCollision();
+        }
     }
 
     private void UpdateDoodadCollision()
@@ -289,6 +327,7 @@ public partial class TileObjectsNode : Node3D
                 {
                     _doodadBodies[(cell, copy)] = AddDoodadBody(cell.Model, transform);
                     added++;
+                    _collisionWaiting |= added == MaxNewDoodadBodiesPerFrame;
                 }
             }
         }
@@ -330,6 +369,7 @@ public partial class TileObjectsNode : Node3D
                 entry.Wmo.AddChild(body);
                 _bodies[entry] = body;
                 added++;
+                _collisionWaiting = true;
             }
             else if (has && !entry.Group.Bounds.Grow(CollisionKeepRange).HasPoint(local))
             {

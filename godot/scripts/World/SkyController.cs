@@ -89,8 +89,10 @@ public partial class SkyController : Node
         _sun.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel2Splits;
         _sun.DirectionalShadowMaxDistance = ShadowDistance;
         _sun.ShadowOpacity = ShadowOpacity;
-        _sun.ShadowEnabled = AppSettings.Shadows;
-        AppSettings.Changed += () => _sun.ShadowEnabled = AppSettings.Shadows;
+        // For comparing frame times, without touching the player's saved setting.
+        var noShadows = System.Array.IndexOf(OS.GetCmdlineUserArgs(), "--no-shadows") >= 0;
+        _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
+        AppSettings.Changed += () => _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
 
         liquids.MaterialCreated += (material, kind) => _newLiquids.Enqueue((material, kind));
 

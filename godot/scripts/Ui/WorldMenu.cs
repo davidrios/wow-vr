@@ -96,6 +96,9 @@ public partial class WorldMenu : PanelContainer
         var graphics = new HBoxContainer();
         graphics.AddChild(smoothTurn);
         graphics.AddChild(shadows);
+        var groundCover = new CheckButton { Text = "Grass", ButtonPressed = AppSettings.GroundCover, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        groundCover.Toggled += on => AppSettings.GroundCover = on;
+        graphics.AddChild(groundCover);
         rows.AddChild(graphics);
 
         rows.AddChild(new Label { Text = "Comfort vignette size, left is off (VR)" });

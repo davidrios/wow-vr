@@ -10,6 +10,8 @@ using WowVR.Formats.Assets;
 using WowVR.Formats.Terrain;
 using Godot;
 
+using WowVR.Debug;
+
 namespace WowVR.World;
 
 public enum GroundState
@@ -170,6 +172,12 @@ public partial class TileManager : Node3D
 
     public bool PlacingPlayer => _guard.Placing;
 
+    /// <summary>
+    /// Every tile's collision has caught up with the player. Any tile, since a WMO belongs to
+    /// the tile of its origin, which for a city can be a long way from where it's stood on.
+    /// </summary>
+    public bool CollisionSettled => _objects.Values.All(o => o.CollisionSettled);
+
     /// <summary>Waits for the ground, then stands on it.</summary>
     public void PlacePlayerOnSurface() => _guard.PlaceOnSurfaceWhenLoaded();
 
@@ -197,14 +205,37 @@ public partial class TileManager : Node3D
         var center = WowCoords.TileAt(wow.X, wow.Y);
 
         _materialClock += delta;
-        Models.AnimateMaterials(_materialClock);
-        CommitOneBuiltTile();
-        CommitBuiltObjects();
-        AddNearestObjects();
-        UnloadFarTiles(center);
-        StartNextBuild(center);
-        StartNextObjectsBuild(center);
-        _collision.Update(ChunkAt(_player.Feet));
+        using (FrameProbe.Time("materials"))
+        {
+            Models.AnimateMaterials(_materialClock);
+        }
+
+        using (FrameProbe.Time("commit tile"))
+        {
+            CommitOneBuiltTile();
+        }
+
+        using (FrameProbe.Time("commit objects"))
+        {
+            CommitBuiltObjects();
+        }
+
+        using (FrameProbe.Time("add objects"))
+        {
+            AddNearestObjects();
+        }
+
+        using (FrameProbe.Time("unload and start builds"))
+        {
+            UnloadFarTiles(center);
+            StartNextBuild(center);
+            StartNextObjectsBuild(center);
+        }
+
+        using (FrameProbe.Time("terrain collision"))
+        {
+            _collision.Update(ChunkAt(_player.Feet));
+        }
     }
 
     private void ApplyDebugView(MeshInstance3D tile)

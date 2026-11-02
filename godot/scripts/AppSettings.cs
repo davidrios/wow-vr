@@ -87,6 +87,12 @@ public static class AppSettings
         set => WriteMovement("shadows", value);
     }
 
+    public static bool GroundCover
+    {
+        get => Read(MovementSection, "ground_cover", true).AsBool();
+        set => WriteMovement("ground_cover", value);
+    }
+
     private static bool? _namePlates;
 
     /// <summary>Kept in memory because creatures read it every frame.</summary>

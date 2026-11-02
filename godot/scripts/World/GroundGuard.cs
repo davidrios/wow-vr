@@ -84,7 +84,9 @@ public partial class GroundGuard : Node
     private void PlacePending(Vector3 feet, GroundState ground)
     {
         Player.Frozen = true;
-        _readyTicks = ground == GroundState.Ready ? _readyTicks + 1 : 0;
+
+        // Too early, and the surface found is the terrain under a city's floor.
+        _readyTicks = ground == GroundState.Ready && Tiles.CollisionSettled ? _readyTicks + 1 : 0;
 
         if (ground == GroundState.NoTerrain)
         {

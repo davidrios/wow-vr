@@ -91,6 +91,12 @@ public sealed class FootstepTable
     /// <summary>The SoundEntries row for a creature's footstep on a layer's effect, or 0. Unknown ground sounds like the first type.</summary>
     public int SoundFor(int creatureFootstep, uint effect)
     {
+        // 0 is unset, as cats' and chickens' are. The lookup has a row 0, but it's an Ancient Protector's stomp.
+        if (creatureFootstep == 0)
+        {
+            return 0;
+        }
+
         var terrainSound = _terrainTypeOfEffect.TryGetValue(effect, out var type) && _soundOfTerrainType.TryGetValue(type, out var sound) && sound != 0
             ? sound
             : DefaultTerrainSound;

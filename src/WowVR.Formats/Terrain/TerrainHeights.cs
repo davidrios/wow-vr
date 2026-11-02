@@ -3,7 +3,9 @@ namespace WowVR.Formats.Terrain;
 /// <summary>A tile's terrain height anywhere on it, without physics, for things far from the player.</summary>
 public sealed class TerrainHeights
 {
-    private const int CellsPerChunk = 8;
+    public const int CellsPerChunk = 8;
+    private const int CellsPerHole = 2;
+    private const int HolesPerSide = 4;
     private const int RowStride = 17;
     private const int InnerRowOffset = 9;
 
@@ -16,13 +18,31 @@ public sealed class TerrainHeights
     /// <summary>The ground effect showing most in each cell of each chunk.</summary>
     private readonly uint[] _effects = new uint[AdtTerrain.ChunksPerSide * AdtTerrain.ChunksPerSide * CellsPerChunk * CellsPerChunk];
 
+    /// <summary>Per chunk, the cells that get no ground cover: as the map says, or with a hole.</summary>
+    private readonly ulong[] _noCover = new ulong[AdtTerrain.ChunksPerSide * AdtTerrain.ChunksPerSide];
+
+    /// <summary>The liquid layers of the chunks that have any.</summary>
+    private readonly Dictionary<int, List<LiquidLayer>> _liquids = [];
+
     public TerrainHeights(AdtTerrain terrain, int tileX, int tileY)
     {
         _tileX = tileX;
         _tileY = tileY;
+        foreach (var layer in terrain.Liquids)
+        {
+            var index = layer.ChunkIy * AdtTerrain.ChunksPerSide + layer.ChunkIx;
+            if (!_liquids.TryGetValue(index, out var layers))
+            {
+                _liquids[index] = layers = [];
+            }
+
+            layers.Add(layer);
+        }
+
         foreach (var chunk in terrain.Chunks)
         {
             FillEffects(chunk);
+            _noCover[chunk.Iy * AdtTerrain.ChunksPerSide + chunk.Ix] = chunk.NoEffectDoodad | HoleCells(chunk.Holes);
             var start = (chunk.Iy * AdtTerrain.ChunksPerSide + chunk.Ix) * TerrainChunk.VertexCount;
             for (var i = 0; i < TerrainChunk.VertexCount; i++)
             {
@@ -30,6 +50,71 @@ public sealed class TerrainHeights
             }
         }
     }
+
+    /// <summary>Whether a point at a WoW position and height is below the surface of the tile's liquid.</summary>
+    public bool UnderLiquid(double wowX, double wowY, float wowZ)
+    {
+        var east = (WowCoords.MapOrigin - wowY - _tileX * WowCoords.TileSize) / WowCoords.ChunkSize;
+        var south = (WowCoords.MapOrigin - wowX - _tileY * WowCoords.TileSize) / WowCoords.ChunkSize;
+        var ix = Math.Clamp((int)Math.Floor(east), 0, AdtTerrain.ChunksPerSide - 1);
+        var iy = Math.Clamp((int)Math.Floor(south), 0, AdtTerrain.ChunksPerSide - 1);
+        if (!_liquids.TryGetValue(iy * AdtTerrain.ChunksPerSide + ix, out var layers))
+        {
+            return false;
+        }
+
+        var cellX = Math.Clamp((east - ix) * LiquidLayer.CellsPerSide, 0, LiquidLayer.CellsPerSide);
+        var cellY = Math.Clamp((south - iy) * LiquidLayer.CellsPerSide, 0, LiquidLayer.CellsPerSide);
+        var column = Math.Min((int)cellX, LiquidLayer.CellsPerSide - 1);
+        var row = Math.Min((int)cellY, LiquidLayer.CellsPerSide - 1);
+        var u = (float)(cellX - column);
+        var v = (float)(cellY - row);
+        foreach (var layer in layers)
+        {
+            if (!layer.HasCell(column, row))
+            {
+                continue;
+            }
+
+            var top = row * LiquidLayer.VerticesPerSide + column;
+            var bottom = top + LiquidLayer.VerticesPerSide;
+            var surface = float.Lerp(
+                float.Lerp(layer.Heights[top], layer.Heights[top + 1], u),
+                float.Lerp(layer.Heights[bottom], layer.Heights[bottom + 1], u),
+                v);
+            if (wowZ < surface)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ulong HoleCells(ushort holes)
+    {
+        var cells = 0UL;
+        for (var row = 0; row < CellsPerChunk; row++)
+        {
+            for (var column = 0; column < CellsPerChunk; column++)
+            {
+                if ((holes & (1 << (row / CellsPerHole * HolesPerSide + column / CellsPerHole))) != 0)
+                {
+                    cells |= 1UL << (row * CellsPerChunk + column);
+                }
+            }
+        }
+
+        return cells;
+    }
+
+    /// <summary>Whether a cell of a chunk should stay clear of ground cover.</summary>
+    public bool CoverBlocked(int ix, int iy, int row, int column) =>
+        (_noCover[iy * AdtTerrain.ChunksPerSide + ix] & (1UL << (row * CellsPerChunk + column))) != 0;
+
+    /// <summary>The ground effect showing most in a cell of a chunk.</summary>
+    public uint EffectOfCell(int ix, int iy, int row, int column) =>
+        _effects[(iy * AdtTerrain.ChunksPerSide + ix) * CellsPerChunk * CellsPerChunk + row * CellsPerChunk + column];
 
     private void FillEffects(TerrainChunk chunk)
     {

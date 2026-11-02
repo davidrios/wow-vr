@@ -400,7 +400,10 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             var texture2 = batch.Effect is { HasTwoTextures: true } effect
                 ? effect.Texture2Name ?? look.Textures.GetValueOrDefault(effect.Texture2Type)
                 : null;
-            var material = new ModelMaterial(texture, batch.Blend, batch.Unlit, batch.TwoSided, batch.Repeat, batch.Effect, texture2);
+            
+            // A creature's skeleton turns its own billboards, and an item has no skeleton to do it.
+            var billboard = !skinned && batch.Indices.Any(v => ModelLibrary.VertexBillboard(data, v).Kind != M2BillboardKind.None);
+            var material = new ModelMaterial(texture, batch.Blend, batch.Unlit, batch.TwoSided, batch.Repeat, batch.Effect, texture2, Billboard: billboard);
             if (!byMaterial.TryGetValue(material, out var parts))
             {
                 byMaterial[material] = parts = [];
@@ -419,13 +422,13 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             }
 
             mesh ??= new ArrayMesh { CustomAabb = bounds };
-            AddSurface(mesh, data, parts, material, remap, skinned, key.Effect?.UsesSecondUv == true);
+            AddSurface(mesh, data, parts, material, remap, skinned, key.Effect?.UsesSecondUv == true, key.Billboard);
         }
 
         return mesh;
     }
 
-    private static void AddSurface(ArrayMesh mesh, M2SkinnedModel data, List<int[]> parts, Material material, int[] remap, bool skinned, bool secondUv)
+    private static void AddSurface(ArrayMesh mesh, M2SkinnedModel data, List<int[]> parts, Material material, int[] remap, bool skinned, bool secondUv, bool billboard)
     {
         Array.Fill(remap, -1);
         var used = new List<int>();
@@ -490,7 +493,21 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             arrays[(int)Mesh.ArrayType.Weights] = weights;
         }
 
-        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        var format = (Mesh.ArrayFormat)0;
+        if (billboard)
+        {
+            var turning = new float[used.Count * 4];
+            for (var i = 0; i < used.Count; i++)
+            {
+                var (kind, pivot) = ModelLibrary.VertexBillboard(data, used[i]);
+                (turning[i * 4], turning[i * 4 + 1], turning[i * 4 + 2], turning[i * 4 + 3]) = (pivot.X, pivot.Y, pivot.Z, (float)kind);
+            }
+
+            arrays[(int)Mesh.ArrayType.Custom2] = turning;
+            format = (Mesh.ArrayFormat)((long)Mesh.ArrayCustomFormat.RgbaFloat << (int)Mesh.ArrayFormat.FormatCustom2Shift);
+        }
+
+        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, flags: format);
         mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, material);
     }
 

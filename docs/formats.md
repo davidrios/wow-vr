@@ -120,6 +120,7 @@ Reached through `wa_m2_open` with the model and its `<name>00.skin`, which gives
 - **Combiner formulas** are on the wiki's `M2/Rendering`. They're in gamma space, so the shader's samplers aren't `source_color` and it converts at the end.
 - **Lookups:** a batch's texture, UV set and transform indexes are the first of `texture_count` in their lookup tables.
 - **Alpha** is color alpha times the first texture weight. A batch whose alpha is always 0 isn't drawn, whatever its blend mode.
+- **Blending:** the client blends in gamma space and Godot in linear, which makes faint glows far too strong. Alpha batches raise their alpha to the power of 2.2, and unlit additive ones multiply color by alpha before converting it. Both are exact only over a dark background.
 - **Color tracks** replace lighting with a tint. WoWModelViewer draws them this way, through emission, but no reference states what the client does. Opaque batches on creatures are the exception: they multiply the lit color. Human eyelids are such a batch, with a white track, so replacing lighting left them bright against a dark face.
 - **Texture transforms** only apply when batch flag `0x10` is clear, as in WoWModelViewer. Rotation is around the texture's middle, as the wiki says, with no real model checked for direction.
 - **Time:** tracks on a global sequence loop on its length, and others on the first sequence's. WoWModelViewer also reads color and weights from the first sequence, whatever is playing.
@@ -138,6 +139,7 @@ See `decisions/0009-billboards-and-creature-sounds.md`.
 
 - **Which row:** `CreatureDisplayInfo` field 2, or `CreatureModelData` field 13 when that's 0, is a `CreatureSoundData` row.
 - **CreatureSoundData** (38 fields): 9 footstep, which is an id for `FootstepTerrainLookup` and not a sound, 11 wing flap, 14 to 18 fidgets, 24 loop, and 31 and 32 fidget delays as floats. The others are `SoundEntries` rows too.
+- **Ground cover:** `GroundEffectTexture` fields 1 to 4 are `GroundEffectDoodad` rows, 5 to 8 their weights and 9 an amount. `GroundEffectDoodad` field 1 is a model under `World\NoDXT\Detail\`. The 8 bytes `wow-alchemy` reads as `pred_tex` and `n_effect_doodad` are a per-cell bitmap of cells to leave clear, whose bit order is assumed to be row by row. Treating the amount as a count per cell, with random positions, is a guess, as no reference says how the client uses it.
 - **GroundEffectTexture** (11 fields): 10 is the `TerrainType` row. **TerrainType** (6 fields): 4 is the terrain's sound. **FootstepTerrainLookup** (5 fields): 1 creature footstep id, 2 terrain sound, 3 dry `SoundEntries` row, 4 wet.
 
 ## Creature displays

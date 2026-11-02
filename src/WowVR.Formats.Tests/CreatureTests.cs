@@ -6,6 +6,27 @@ using Xunit;
 
 namespace WowVR.Formats.Tests;
 
+public class CreatureSoundDistanceTests
+{
+    [Fact]
+    public void SoundsReadTheirDistancesAndUnsetFootstepsAreSilent()
+    {
+        var client = Environment.GetEnvironmentVariable("WOWVR_CLIENT_PATH");
+        if (string.IsNullOrWhiteSpace(client))
+        {
+            return;
+        }
+
+        using var source = WowVR.Formats.Assets.MpqAssetSource.Open(client);
+        var entry = WowVR.Formats.Database.SoundEntryRecord.ReadAll(source).First(e => e.Id == 651);
+        var footsteps = WowVR.Formats.World.FootstepTable.Read(source);
+
+        Assert.True(entry.MinDistance > 0f && entry.MinDistance < entry.Cutoff);
+        Assert.Equal(0, footsteps.SoundFor(0, 0));
+        Assert.NotEqual(0, footsteps.SoundFor(8, 0));
+    }
+}
+
 public class CreatureMotionTests
 {
     private static CreatureSpawn Spawn(CreatureMovement movement, float radius = 0f, IReadOnlyList<CreatureWaypoint>? path = null) => new()

@@ -64,6 +64,9 @@ public partial class Main : Node3D
 
     public override void _Ready()
     {
+        // Loading makes a lot of garbage on other threads, and a blocking collection stops every frame for tens of milliseconds.
+        System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
+
         ApplyClientPathArgument();
         LogClientPath();
 
@@ -127,6 +130,10 @@ public partial class Main : Node3D
             AddChild(creatureSounds);
             creatureSounds.Start(source);
             creatures.Start(new CreatureLibrary(source, displays, tiles.Models), tiles, ChooseSpawnSource(arguments, displays, mapId, startPosition), creatureSounds, footsteps);
+
+            var groundCover = new GroundCoverManager { Name = "GroundCover" };
+            AddChild(groundCover);
+            groundCover.Start(GroundEffectTable.Read(source), tiles);
 
             var walkTour = Array.IndexOf(arguments, WalkTourArgument) >= 0;
             var flyTour = Array.IndexOf(arguments, TourArgument) >= 0;

@@ -134,13 +134,17 @@ public sealed record SoundAmbienceRecord(int Id, int DaySoundId, int NightSoundI
 }
 
 /// <summary>A row of DBFilesClient\SoundEntries.dbc. A sound picks one of its files by weight.</summary>
-public sealed record SoundEntryRecord(int Id, IReadOnlyList<(string Name, int Weight)> Files, string Directory, float Volume)
+/// <param name="MinDistance">Full volume this close, in yards.</param>
+/// <param name="Cutoff">Silent past this, in yards.</param>
+public sealed record SoundEntryRecord(int Id, IReadOnlyList<(string Name, int Weight)> Files, string Directory, float Volume, float MinDistance, float Cutoff)
 {
     private const int FileField = 3;
     private const int WeightField = 13;
     private const int MaxFiles = 10;
     private const int DirectoryField = 23;
     private const int VolumeField = 24;
+    private const int MinDistanceField = 26;
+    private const int CutoffField = 27;
 
     public static IReadOnlyList<SoundEntryRecord> ReadAll(IAssetSource source) =>
         DbcTables.Read<IReadOnlyList<SoundEntryRecord>>(source, @"DBFilesClient\SoundEntries.dbc", dbc =>
@@ -152,7 +156,9 @@ public sealed record SoundEntryRecord(int Id, IReadOnlyList<(string Name, int We
                         .Where(f => f.Name.Length > 0)
                         .ToList(),
                     dbc.GetString(i, DirectoryField),
-                    dbc.GetSingle(i, VolumeField)))
+                    dbc.GetSingle(i, VolumeField),
+                    dbc.GetSingle(i, MinDistanceField),
+                    dbc.GetSingle(i, CutoffField)))
                 .ToList());
 }
 

@@ -31,8 +31,13 @@ mat4 bone_matrix(int bone, int frame) {
 	vec4 z = texelFetch(bone_texture, ivec2(bone * 3 + 2, frame), 0);
 	return transpose(mat4(x, y, z, vec4(0.0, 0.0, 0.0, 1.0)));
 }
+#endif
 
+#if defined(BAKED_BONES) || defined(BILLBOARD)
 void vertex() {
+	// A worn item has no bones of its own, but can still have parts that turn to the viewer.
+	mat4 skin = mat4(1.0);
+#ifdef BAKED_BONES
 	// Each copy keeps its own phase, from where it stands, so a forest doesn't sway as one.
 	float phase = fract(dot(MODEL_MATRIX[3].xz, vec2(0.0137, 0.0071)));
 	float position = fract(TIME / bake_seconds + phase) * float(bake_frames);
@@ -40,12 +45,13 @@ void vertex() {
 	int frame_b = (frame_a + 1) % bake_frames;
 	float blend = fract(position);
 	ivec4 bones = ivec4(CUSTOM0 * 255.0 + 0.5);
-	mat4 skin = mat4(0.0);
+	skin = mat4(0.0);
 	for (int i = 0; i < 4; i++) {
 		if (CUSTOM1[i] > 0.0) {
 			skin += CUSTOM1[i] * ((1.0 - blend) * bone_matrix(bones[i], frame_a) + blend * bone_matrix(bones[i], frame_b));
 		}
 	}
+#endif
 
 #ifdef BILLBOARD
 	// CUSTOM2 is the pivot of the bone that turns, and its M2BillboardKind. Each model axis
@@ -163,13 +169,20 @@ void fragment() {
 	ALBEDO = to_linear(lit) * (1.0 - floor_light.a);
 	// Darker facing down, so a body indoors keeps its shape. The amounts are by eye.
 	float facing = dot(NORMAL, normalize(mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0)));
-	EMISSION = to_linear(added) + to_linear(lit * floor_light.rgb * (0.8 + 0.2 * facing)) * floor_light.a;
+	EMISSION = to_linear(added) + to_linear(lit * floor_light.rgb * (0.9 + 0.1 * facing)) * floor_light.a;
 #else
 	ALBEDO = to_linear(lit);
 	EMISSION = to_linear(added);
 #endif
 
-#ifdef BLENDED
+#if defined(GAMMA_ADD)
+	// The client blends in gamma space and Godot in linear, where a faint glow comes out far
+	// stronger. Over a dark background, these give what the client would.
+	ALBEDO = to_linear((lit + added) * clamp(a, 0.0, 1.0));
+	ALPHA = 1.0;
+#elif defined(GAMMA_ALPHA)
+	ALPHA = pow(clamp(a, 0.0, 1.0), 2.2);
+#elif defined(BLENDED)
 	ALPHA = clamp(a, 0.0, 1.0);
 #endif
 

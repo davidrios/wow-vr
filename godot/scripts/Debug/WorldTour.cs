@@ -30,6 +30,13 @@ public partial class WorldTour : Node
         new(-9030f, -44f, FlightHeight),
     ];
 
+    private const double SlowFrameMilliseconds = 22.2;
+    private const int SlowFramesListed = 12;
+
+    /// <summary>What one frame spent, to tell the CPU's script work, its rendering work and the GPU apart.</summary>
+    private readonly record struct FrameCost(double Total, double Process, double Physics, double RenderCpu, double RenderGpu, double DrawCalls, double Objects, double Primitives);
+
+    private readonly List<FrameCost> _costs = [];
     private readonly List<double> _frames = [];
 
     public required TileManager Tiles { get; init; }
@@ -48,6 +55,10 @@ public partial class WorldTour : Node
             _started = Tiles.LoadedTileCount >= TilesBeforeStart;
             if (_started)
             {
+                RenderingServer.ViewportSetMeasureRenderTime(GetViewport().GetViewportRid(), true);
+                FrameProbe.Enabled = true;
+                AddChild(new FramePhases());
+                AddChild(new FramePhases { IsLast = true });
                 GD.Print("Tour started.");
             }
 
@@ -55,6 +66,17 @@ public partial class WorldTour : Node
         }
 
         _frames.Add(delta * 1000);
+        FrameProbe.EndFrame(delta * 1000, SlowFrameMilliseconds);
+        var viewport = GetViewport().GetViewportRid();
+        _costs.Add(new FrameCost(
+            delta * 1000,
+            Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000,
+            Performance.GetMonitor(Performance.Monitor.TimePhysicsProcess) * 1000,
+            RenderingServer.ViewportGetMeasuredRenderTimeCpu(viewport),
+            RenderingServer.ViewportGetMeasuredRenderTimeGpu(viewport),
+            Performance.GetMonitor(Performance.Monitor.RenderTotalDrawCallsInFrame),
+            Performance.GetMonitor(Performance.Monitor.RenderTotalObjectsInFrame),
+            Performance.GetMonitor(Performance.Monitor.RenderTotalPrimitivesInFrame)));
 
         var wow = WowCoords.ToGodot(Walk && _waypoint < WalkRoute.Length ? WalkRoute[_waypoint] : Northshire);
         var target = Tiles.WorldToLocal(wow.X, wow.Y, wow.Z);
@@ -113,5 +135,15 @@ public partial class WorldTour : Node
         GD.Print($"Tour finished: {sorted.Count} frames, {Tiles.LoadedTileCount} tiles loaded.");
         GD.Print($"Frame ms: median {sorted[sorted.Count / 2]:F1}, 99% {sorted[(int)(sorted.Count * 0.99)]:F1}, worst {sorted[^1]:F1}");
         GD.Print($"Frames over 11.1 ms: {sorted.Count(f => f > 11.1)}, over 22.2 ms: {sorted.Count(f => f > 22.2)}, over 50 ms: {sorted.Count(f => f > 50)}");
+
+        FrameProbe.Report();
+
+        double Median(Func<FrameCost, double> value) => _costs.Select(value).Order().ElementAt(_costs.Count / 2);
+        GD.Print($"Median ms: script {Median(c => c.Process):F2}, physics {Median(c => c.Physics):F2}, render CPU {Median(c => c.RenderCpu):F2}, GPU {Median(c => c.RenderGpu):F2}");
+        GD.Print($"Median scene: {Median(c => c.DrawCalls):F0} draw calls, {Median(c => c.Objects):F0} objects, {Median(c => c.Primitives):F0} primitives");
+        foreach (var c in _costs.Where(c => c.Total > SlowFrameMilliseconds).OrderByDescending(c => c.Total).Take(SlowFramesListed))
+        {
+            GD.Print($"Slow frame {c.Total:F1} ms: script {c.Process:F1}, physics {c.Physics:F1}, render CPU {c.RenderCpu:F1}, GPU {c.RenderGpu:F1}, {c.DrawCalls:F0} draw calls");
+        }
     }
 }

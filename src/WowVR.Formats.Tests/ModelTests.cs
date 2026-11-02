@@ -43,6 +43,75 @@ public class PlacementMathTests
     }
 }
 
+public class GroundCoverDataTests
+{
+    [Fact]
+    public void ElwynnCoverIsRepeatableAndLeavesSomeCellsClear()
+    {
+        var client = Environment.GetEnvironmentVariable("WOWVR_CLIENT_PATH");
+        if (string.IsNullOrWhiteSpace(client))
+        {
+            return;
+        }
+
+        using var source = WowVR.Formats.Assets.MpqAssetSource.Open(client);
+        var table = WowVR.Formats.World.GroundEffectTable.Read(source);
+        var terrain = AdtTerrain.Parse(source.Read(@"World\Maps\Azeroth\Azeroth_31_49.adt")!, false);
+        var heights = new TerrainHeights(terrain, 31, 49);
+
+        var blocked = terrain.Chunks.Sum(c => System.Numerics.BitOperations.PopCount(c.NoEffectDoodad));
+        var items = Enumerable.Range(0, AdtTerrain.ChunksPerSide)
+            .SelectMany(iy => Enumerable.Range(0, AdtTerrain.ChunksPerSide)
+                .SelectMany(ix => WowVR.Formats.World.GroundCover.PlaceChunk(heights, table, 31, 49, ix, iy)))
+            .ToList();
+
+        Assert.InRange(blocked, 1, 256 * 64 - 1);
+        Assert.NotEmpty(items);
+        Assert.All(items.Select(i => i.Model).Distinct(), model => Assert.NotNull(source.Read(model)));
+        Assert.All(items.Take(500), i => Assert.Equal(heights.HeightAt(i.WowX, i.WowY), i.WowZ));
+        Assert.Equal(
+            WowVR.Formats.World.GroundCover.PlaceChunk(heights, table, 31, 49, 8, 8),
+            WowVR.Formats.World.GroundCover.PlaceChunk(heights, table, 31, 49, 8, 8));
+    }
+}
+
+public class GroundCoverWaterTests
+{
+    [Fact]
+    public void NoCoverGrowsUnderwater()
+    {
+        var client = Environment.GetEnvironmentVariable("WOWVR_CLIENT_PATH");
+        if (string.IsNullOrWhiteSpace(client))
+        {
+            return;
+        }
+
+        using var source = WowVR.Formats.Assets.MpqAssetSource.Open(client);
+        var table = WowVR.Formats.World.GroundEffectTable.Read(source);
+        var underwaterGround = 0;
+        var items = 0;
+        foreach (var (x, y) in new[] { (31, 49), (32, 49), (32, 50), (31, 50), (33, 49) })
+        {
+            var terrain = AdtTerrain.Parse(source.Read($@"World\Maps\Azeroth\Azeroth_{x}_{y}.adt")!, false);
+            var heights = new TerrainHeights(terrain, x, y);
+            foreach (var layer in terrain.Liquids)
+            {
+                var wowX = WowCoords.MapOrigin - y * WowCoords.TileSize - (layer.ChunkIy + 0.5) * WowCoords.ChunkSize;
+                var wowY = WowCoords.MapOrigin - x * WowCoords.TileSize - (layer.ChunkIx + 0.5) * WowCoords.ChunkSize;
+                underwaterGround += heights.UnderLiquid(wowX, wowY, heights.HeightAt(wowX, wowY)) ? 1 : 0;
+
+                var placed = WowVR.Formats.World.GroundCover.PlaceChunk(heights, table, x, y, layer.ChunkIx, layer.ChunkIy);
+                items += placed.Count;
+                Assert.DoesNotContain(placed, i => heights.UnderLiquid(i.WowX, i.WowY, i.WowZ));
+            }
+        }
+
+        // Without these, the check above proves nothing.
+        Assert.True(underwaterGround > 0);
+        Assert.True(items > 0);
+    }
+}
+
 public class WmoFloorLightTests
 {
     private static ModelSurface Surface(Vector3[] positions, byte[]? colors, int[] indices) => new()
@@ -111,9 +180,9 @@ public class WmoFloorLightTests
     {
         var light = WmoFloorLight.ForCreature(Vector3.Zero);
 
-        Assert.Equal(0.6f, light.X, 3);
-        Assert.Equal(0.6f, light.Y, 3);
-        Assert.Equal(0.6f, light.Z, 3);
+        Assert.Equal(0.85f, light.X, 3);
+        Assert.Equal(0.85f, light.Y, 3);
+        Assert.Equal(0.85f, light.Z, 3);
     }
 
     [Fact]

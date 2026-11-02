@@ -8,7 +8,9 @@
 - **Creatures turn in a `SkeletonModifier3D`,** because a skeleton has moved the vertices before a vertex shader sees them. It uses the one camera, so it isn't exact per eye, and it pauses with the animation cap.
 - **M2 events time the sounds.** `$FL`, `$FR`, `$RL`, `$RR`, `$BL` and `$BR` are footsteps, `$FD1` to `$FD5` fidgets and `$WNG` wing flaps. `$FSD` also fires on most walks, and the parser's notes only guess that it's a footstep, so it's left out to avoid doubling them.
 - **Footsteps depend on the ground,** through the terrain layer showing most in that cell of the chunk, and from there `GroundEffectTexture`, `TerrainType` and `FootstepTerrainLookup`.
-- **Sounds only play within 40 yards,** from 16 shared voices, and are skipped when those are busy or the file takes over a second to load. Creatures past the animation cap make no sound.
+- **Footstep type 0 is silent.** Cats, chickens and cows have it, and the lookup's row 0 is an Ancient Protector's stomp. Treating 0 as unset is a judgment: no reference confirms it.
+- **Each sound uses its `SoundEntries` distances,** usually full volume to 8 yards and silent past 45, falling off by inverse square. The client's falloff shape isn't known.
+- **Sounds only play within 45 yards,** from 16 shared voices, and are skipped when those are busy or the file takes over a second to load. Creatures past the animation cap make no sound.
 - **Creature sounds use the ambient volume,** because the wrist menu has no room for another slider.
 
 ## Consequences

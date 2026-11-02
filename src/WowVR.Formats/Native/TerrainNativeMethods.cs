@@ -19,6 +19,7 @@ internal unsafe struct WaTerrainChunk
     public fixed uint EffectIds[4];
     public byte* Alpha;
     public byte* VertexColors;
+    public ulong NoEffectDoodad;
 }
 
 [StructLayout(LayoutKind.Sequential)]

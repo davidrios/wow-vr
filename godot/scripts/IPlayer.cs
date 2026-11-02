@@ -19,6 +19,9 @@ public interface IPlayer
 
     WorldMenu Menu { get; }
 
+    /// <summary>Swims rather than walks, floating with the feet at this height when left alone.</summary>
+    void SetSwimming(bool swimming, float floatHeight);
+
     void SetMenuOpen(bool open);
 
     /// <summary>

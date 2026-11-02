@@ -1,8 +1,8 @@
 shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, cull_disabled;
 
-// Water is painted to go with WoW's hand-painted world, and kept comfortable in a headset: no
-// moving geometry, nothing read from the screen, and soft shapes that fade out before they can
+// Water is painted to go with WoW's hand-painted world, and kept comfortable in a headset: only
+// a low, slow swell for moving geometry, only depth read from the screen, for foam, and soft shapes that fade out before they can
 // shimmer. All its positions come from UV, so it doesn't jump when the world re-centers.
 
 // The liquid's animation frames.
@@ -30,7 +30,24 @@ uniform vec3 sun_color : source_color = vec3(1.0);
 uniform vec3 sun_direction = vec3(0.0, 1.0, 0.0);
 uniform float road_strength = 1.0;
 
-const float MAX_REFLECTION = 0.55;
+// A long, low swell, in yards. It's slow and gentle because small quick movement of what
+// surrounds the viewer is what's uncomfortable in a headset. It stays seamless between tiles for
+// the same reason as the ripples, and dies away at the waterline so the shoreline stays still.
+// Most lakes' depth values are low, around 0.15, so it has to finish fading well before that.
+//
+// This water isn't lit, so height alone can't be seen except at its edges. The swell also tilts
+// what the surface reflects, by more than its real slope, which is what shows it moving.
+const float SWELL_HEIGHT = 0.2;
+const float SWELL_FADE_DEPTH = 0.08;
+const float SWELL_TILT = 9.0;
+// A texture repeat is 4 cells, of 25 / 6 yards each. Slopes are measured over one cell.
+const float SWELL_SLOPE_UV = 0.25;
+const float SWELL_SLOPE_YARDS = 4.1667;
+const float SWELL_SCALE = 0.125;
+const vec2 SWELL_DRIFT_A = vec2(0.0035, 0.0025);
+const vec2 SWELL_DRIFT_B = vec2(-0.0025, 0.0035);
+
+const float MAX_REFLECTION = 0.206;
 const float BLOTCH_STRENGTH = 0.28;
 const float FRAME_STRENGTH = 0.10;
 const float RIPPLE_LINE_WIDTH = 0.045;
@@ -41,7 +58,36 @@ const float RIPPLE_FADE_END = 0.09;
 const float ROAD_SHARPNESS = 70.0;
 const float SHORE_WIDTH = 0.09;
 const float SHORE_WOBBLE = 0.12;
-const float SHORE_STRENGTH = 0.3;
+const float SHORE_STRENGTH = 0.1125;
+
+// Foam where something meets the water, in yards of depth below it, so it hugs a boat's hull.
+const float FOAM_WIDTH = 0.18;
+const float FOAM_WOBBLE = 0.2;
+const float FOAM_STRENGTH = 0.25;
+const float FOAM_FADE_START = 50.0;
+const float FOAM_FADE_END = 110.0;
+
+uniform sampler2D scene_depth : hint_depth_texture, repeat_disable, filter_nearest;
+
+varying vec2 swell_slope;
+
+float swell_at(vec2 at, float time) {
+	vec2 uv = at * paint_scale * SWELL_SCALE;
+	float a = textureLod(paint_noise, uv + time * SWELL_DRIFT_A, 0.0).r;
+	float b = textureLod(paint_noise, vec2(uv.x + uv.y, uv.x - uv.y) + time * SWELL_DRIFT_B, 0.0).r;
+	return (a + b - 1.0) * 2.0 * SWELL_HEIGHT;
+}
+
+void vertex() {
+	if (!textured) {
+		float fade = smoothstep(0.0, SWELL_FADE_DEPTH, UV2.x);
+		float here = swell_at(UV, TIME);
+		swell_slope = vec2(
+			swell_at(UV + vec2(SWELL_SLOPE_UV, 0.0), TIME) - here,
+			swell_at(UV + vec2(0.0, SWELL_SLOPE_UV), TIME) - here) / SWELL_SLOPE_YARDS * fade;
+		VERTEX.y += here * fade;
+	}
+}
 
 void fragment() {
 	if (textured) {
@@ -80,9 +126,10 @@ void fragment() {
 		// VIEW is the same for both eyes, so this works it out per eye, which puts highlights at
 		// the right depth in a headset.
 		vec3 to_camera = normalize((INV_VIEW_MATRIX * vec4(EYE_OFFSET - VERTEX, 0.0)).xyz);
-		float facing = abs(to_camera.y);
+		vec3 surface_normal = normalize(vec3(-swell_slope.x * SWELL_TILT, 1.0, -swell_slope.y * SWELL_TILT));
+		float facing = abs(dot(to_camera, surface_normal));
 		float reflection = MAX_REFLECTION * pow(1.0 - facing, 3.0);
-		vec3 reflected = reflect(-to_camera, vec3(0.0, 1.0, 0.0));
+		vec3 reflected = reflect(-to_camera, surface_normal);
 		vec3 sky = mix(sky_horizon, sky_top, sqrt(clamp(reflected.y, 0.0, 1.0)));
 
 		float depth = UV2.x;
@@ -93,6 +140,17 @@ void fragment() {
 		// A soft pale band that wanders along the shore.
 		float shore = 1.0 - smoothstep(0.0, SHORE_WIDTH, depth + (a - 0.5) * SHORE_WOBBLE);
 		color = mix(color, sky_horizon, shore * SHORE_STRENGTH);
+
+		// How far below the water's surface whatever's behind this pixel is. Per eye, as both
+		// the depth and the matrices are.
+		vec4 scene = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, texture(scene_depth, SCREEN_UV).r, 1.0);
+		float scene_y = (INV_VIEW_MATRIX * vec4(scene.xyz / scene.w, 1.0)).y;
+		float water_y = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y;
+		float gap = water_y - scene_y + (a - 0.5) * FOAM_WOBBLE;
+		float foam = 1.0 - smoothstep(0.0, FOAM_WIDTH, gap);
+		foam *= smoothstep(0.3, 0.55, b) * FOAM_STRENGTH;
+		foam *= 1.0 - smoothstep(FOAM_FADE_START, FOAM_FADE_END, -VERTEX.z);
+		color = mix(color, mix(sky_horizon, vec3(1.0), 0.5), foam);
 
 		// Ripple lines catch the sky's light.
 		color = mix(color, sky_horizon, lines * RIPPLE_STRENGTH);
@@ -107,6 +165,7 @@ void fragment() {
 		float alpha = mix(shallow_alpha, deep_alpha, depth);
 		alpha = max(alpha, max(reflection, lines * RIPPLE_STRENGTH));
 		alpha = max(alpha, shore * SHORE_STRENGTH);
+		alpha = max(alpha, foam);
 		ALPHA = clamp(alpha + glow, 0.0, 1.0);
 	}
 }

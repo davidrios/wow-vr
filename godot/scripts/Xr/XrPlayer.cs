@@ -45,6 +45,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     private Node3D _walk = null!;
     private Node3D _turn = null!;
     private Node3D _fly = null!;
+    private Node3D _swim = null!;
     private Node3D _teleport = null!;
     private Node3D _pointer = null!;
     private Node3D _vignette = null!;
@@ -61,6 +62,12 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     public WorldMenu Menu { get; private set; } = null!;
 
     public Vector3 Feet => _body.GlobalPosition;
+
+    public void SetSwimming(bool swimming, float floatHeight)
+    {
+        _swim.Set("is_active", swimming);
+        _swim.Set("float_height", floatHeight);
+    }
 
     public bool Flying
     {
@@ -96,6 +103,8 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _turn = GetNode<Node3D>("RightController/MovementTurn");
         _pointer = GetNode<Node3D>("RightController/FunctionPointer");
         _fly = GetNode<Node3D>("MovementFly");
+        _swim = GetNode<Node3D>("MovementSwim");
+        _swim.Set("controller", _leftController);
         _vignette = GetNode<Node3D>("XRCamera3D/Vignette");
         _fly.Set("controller", _leftController);
         _teleport.Set("step_size", TeleportStepSize);

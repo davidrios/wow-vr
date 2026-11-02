@@ -57,6 +57,13 @@ public partial class TileManager : Node3D
     private readonly Dictionary<(int X, int Y), AdtTerrain> _objectsToBuild = [];
 
     private readonly Dictionary<(int X, int Y), TileObjectsNode> _objects = [];
+    private readonly Dictionary<(int X, int Y), TerrainHeights> _heights = [];
+
+    /// <summary>A building's water counts only this far under its surface, in yards, or a canal would reach the cellar below.</summary>
+    private const float WmoLiquidReach = 3f;
+
+    /// <summary>How far under the ground a point can be and still count as in the water over it.</summary>
+    private const float GroundAllowance = 1f;
 
     /// <summary>Each loaded tile's area ids, by chunk.</summary>
     private readonly Dictionary<(int X, int Y), int[]> _areas = [];
@@ -172,6 +179,52 @@ public partial class TileManager : Node3D
     }
 
     public bool PlacingPlayer => _guard.Placing;
+
+    /// <summary>
+    /// The liquid a point in the scene is in or under, as its surface's height and LiquidType
+    /// row. A building's own water counts first. A terrain lake doesn't reach a point below
+    /// the ground, like a cave under it, or inside a building.
+    /// </summary>
+    public (float Surface, int Type)? LiquidAt(Vector3 point)
+    {
+        (float Surface, int Type)? best = null;
+        foreach (var objects in _objects.Values)
+        {
+            if (objects.WmoLiquidAt(point) is { } wmo && wmo.Surface >= point.Y - WmoLiquidReach && (best is null || wmo.Surface > best.Value.Surface))
+            {
+                best = wmo;
+            }
+        }
+
+        if (best is not null)
+        {
+            return best;
+        }
+
+        if (TerrainLiquidAt(point) is not { } terrain || terrain.Liquid is not { } liquid || point.Y < terrain.Ground - GroundAllowance || terrain.Ground >= liquid.Surface)
+        {
+            return null;
+        }
+
+        return _objects.Values.Any(o => o.Indoors(point)) ? null : liquid;
+    }
+
+    /// <summary>The deepest a terrain liquid is over a point, whatever the point's height.</summary>
+    public (float Surface, float Depth)? DeepestLiquidAt(Vector3 point) =>
+        TerrainLiquidAt(point) is { Liquid: { } liquid } terrain ? (liquid.Surface, liquid.Surface - terrain.Ground) : null;
+
+    private (float Ground, (float Surface, int Type)? Liquid)? TerrainLiquidAt(Vector3 point)
+    {
+        var chunk = ChunkAt(point);
+        var tile = (X: chunk.X / WowCoords.ChunksPerTile, Y: chunk.Z / WowCoords.ChunksPerTile);
+        if (chunk.X < 0 || chunk.Z < 0 || !_heights.TryGetValue(tile, out var heights))
+        {
+            return null;
+        }
+
+        var wow = WowCoords.ToWow(new System.Numerics.Vector3((float)(point.X + _originX), point.Y, (float)(point.Z + _originZ)));
+        return (heights.HeightAt(wow.X, wow.Y), heights.LiquidAt(wow.X, wow.Y));
+    }
 
     /// <summary>
     /// Every tile's collision has caught up with the player. Any tile, since a WMO belongs to
@@ -388,7 +441,9 @@ public partial class TileManager : Node3D
         _tiles[built.Tile] = node;
         _collision.AddTile(built.Tile, node, built.Collision);
         _objectsToBuild[built.Tile] = built.Terrain!;
-        TileAdded?.Invoke(built.Tile, node, new TerrainHeights(built.Terrain, built.Tile.X, built.Tile.Y));
+        var heights = new TerrainHeights(built.Terrain, built.Tile.X, built.Tile.Y);
+        _heights[built.Tile] = heights;
+        TileAdded?.Invoke(built.Tile, node, heights);
     }
 
     private void UnloadFarTiles((int X, int Y) center)
@@ -399,6 +454,7 @@ public partial class TileManager : Node3D
             _collision.RemoveTile(tile);
             _objectsToBuild.Remove(tile);
             _objects.Remove(tile);
+            _heights.Remove(tile);
             _areas.Remove(tile);
             _tiles[tile]?.QueueFree();
             _tiles.Remove(tile);

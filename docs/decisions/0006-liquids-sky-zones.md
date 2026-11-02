@@ -22,7 +22,7 @@ These aren't from a file, and are constants in `SkyController` and `SunPath`:
 
 ## Consequences
 
-- There's no swimming, liquid collision or underwater view yet: you walk along the lakebed, and the lights' underwater settings aren't used.
+- Swimming and the underwater view came later, and are in `formats.md`. There was no swimming, liquid collision or underwater view at first: you walk along the lakebed, and the lights' underwater settings aren't used.
 - Only clear weather's lights are used.
 - Northrend's zone lights are hardcoded in the client's executable, so its zones show the global sky until someone transcribes them.
 - The sun casts real-time shadows up to 150 yards, in 2 splits, and the menu can turn them off. The client also bakes shadows into terrain (`MCSH`), which aren't read. Light stays at least a little above the horizon so low sun doesn't lose all shading, so shadows at dusk are shorter than the sun's position suggests, and at night the moon casts them. Doodads inside buildings don't cast, since nothing lights them from outside.

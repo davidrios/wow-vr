@@ -361,10 +361,12 @@ public partial class MovementCheck : Node
         return hit.Count > 0 ? hit["position"].AsVector3() : null;
     }
 
+    private bool InWater() => !Player.OnGround && Tiles.LiquidAt(Player.Feet + Vector3.Up * 2f) is { } liquid && liquid.Surface > Player.Feet.Y;
+
     private async Task StandsOnTheGround(string when)
     {
         var started = Time.GetTicksMsec();
-        while ((Tiles.PlacingPlayer || !Player.OnGround) && Time.GetTicksMsec() - started < SecondsToLoad * 1000)
+        while ((Tiles.PlacingPlayer || (!Player.OnGround && !InWater())) && Time.GetTicksMsec() - started < SecondsToLoad * 1000)
         {
             await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
         }
@@ -376,6 +378,13 @@ public partial class MovementCheck : Node
         var ray = PhysicsRayQueryParameters3D.Create(
             new Vector3(feet.X, 6000, feet.Z), new Vector3(feet.X, -6000, feet.Z), TileManager.TerrainLayer);
         var hit = GetViewport().FindWorld3D().DirectSpaceState.IntersectRay(ray);
+
+        // Some landmarks are over water, where the player floats rather than stands.
+        if (InWater())
+        {
+            Check(when, true, $"floating over deep water, settled in {waited} ms");
+            return;
+        }
 
         var gap = hit.Count > 0 ? feet.Y - hit["position"].AsVector3().Y : float.NaN;
         Check(when, Player.OnGround && Mathf.Abs(gap) < StandTolerance, $"{gap:F2} above the terrain, settled in {waited} ms");

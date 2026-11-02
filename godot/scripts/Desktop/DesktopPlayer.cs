@@ -5,7 +5,7 @@ namespace WowVR.Desktop;
 
 /// <summary>
 /// Click to capture the mouse, Esc to release it. WASD walks, Shift goes faster, F toggles
-/// flying, Q/E go down/up while flying, and Tab opens the menu.
+/// flying, Q/E go down/up while flying or swimming, and Tab opens the menu.
 /// </summary>
 public partial class DesktopPlayer : CharacterBody3D, IPlayer
 {
@@ -18,6 +18,10 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     private const float MaxSlopeDegrees = 50f;
     private const float GroundSnapLength = 1f;
     private const float Gravity = 19f;
+    private const float SwimSpeed = 4.7f;
+    private const float SwimResponse = 4f;
+    private const float Buoyancy = 2f;
+    private const float MaxRise = 2.5f;
 
     /// <summary>How high a step can be, in yards. A capsule can't climb one by itself.</summary>
     private const float StepHeight = 1.2f;
@@ -31,6 +35,8 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     private CanvasLayer _menuLayer = null!;
     private float _pitch;
     private bool _frozen;
+    private bool _swimming;
+    private float _floatHeight;
 
     public WorldMenu Menu { get; private set; } = null!;
 
@@ -82,6 +88,8 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     }
 
     public override void _ExitTree() => AppSettings.Changed -= ApplySettings;
+
+    public void SetSwimming(bool swimming, float floatHeight) => (_swimming, _floatHeight) = (swimming, floatHeight);
 
     public void PlaceAt(Vector3 feet, bool keepVelocity = false)
     {
@@ -145,6 +153,10 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         {
             Fly();
         }
+        else if (_swimming)
+        {
+            Swim((float)delta);
+        }
         else
         {
             Walk((float)delta);
@@ -162,6 +174,32 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         var speed = AppSettings.FlySpeed * (Input.IsPhysicalKeyPressed(Key.Shift) ? FastFlyFactor : 1f);
 
         Velocity = input == Vector3.Zero ? Vector3.Zero : _camera.GlobalBasis * input.Normalized() * speed;
+    }
+
+    /// <summary>Goes where the camera looks, and floats up when left alone. The numbers match movement_swim.gd.</summary>
+    private void Swim(float delta)
+    {
+        var input = _menuLayer.Visible
+            ? Vector3.Zero
+            : new Vector3(Axis(Key.A, Key.D), Axis(Key.Q, Key.E), Axis(Key.W, Key.S));
+        if (ScriptedWalk is { } scripted)
+        {
+            input = GlobalBasis.Inverse() * scripted;
+        }
+
+        var target = input == Vector3.Zero ? Vector3.Zero : _camera.GlobalBasis * input.Normalized() * SwimSpeed;
+        var feet = GlobalPosition.Y;
+        if (input == Vector3.Zero)
+        {
+            target.Y = Mathf.Clamp((_floatHeight - feet) * Buoyancy, -MaxRise, MaxRise);
+        }
+        else if (feet >= _floatHeight)
+        {
+            // Can't swim up out of the water, only along its surface.
+            target.Y = Mathf.Min(target.Y, (_floatHeight - feet) * Buoyancy);
+        }
+
+        Velocity = Velocity.Lerp(target, Mathf.Clamp(SwimResponse * delta, 0f, 1f));
     }
 
     private void Walk(float delta)

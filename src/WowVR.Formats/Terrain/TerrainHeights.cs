@@ -51,8 +51,8 @@ public sealed class TerrainHeights
         }
     }
 
-    /// <summary>Whether a point at a WoW position and height is below the surface of the tile's liquid.</summary>
-    public bool UnderLiquid(double wowX, double wowY, float wowZ)
+    /// <summary>The highest liquid over a WoW position, as its height and LiquidType row. Null where there's none.</summary>
+    public (float Surface, int Type)? LiquidAt(double wowX, double wowY)
     {
         var east = (WowCoords.MapOrigin - wowY - _tileX * WowCoords.TileSize) / WowCoords.ChunkSize;
         var south = (WowCoords.MapOrigin - wowX - _tileY * WowCoords.TileSize) / WowCoords.ChunkSize;
@@ -60,7 +60,7 @@ public sealed class TerrainHeights
         var iy = Math.Clamp((int)Math.Floor(south), 0, AdtTerrain.ChunksPerSide - 1);
         if (!_liquids.TryGetValue(iy * AdtTerrain.ChunksPerSide + ix, out var layers))
         {
-            return false;
+            return null;
         }
 
         var cellX = Math.Clamp((east - ix) * LiquidLayer.CellsPerSide, 0, LiquidLayer.CellsPerSide);
@@ -69,6 +69,7 @@ public sealed class TerrainHeights
         var row = Math.Min((int)cellY, LiquidLayer.CellsPerSide - 1);
         var u = (float)(cellX - column);
         var v = (float)(cellY - row);
+        (float Surface, int Type)? best = null;
         foreach (var layer in layers)
         {
             if (!layer.HasCell(column, row))
@@ -82,14 +83,17 @@ public sealed class TerrainHeights
                 float.Lerp(layer.Heights[top], layer.Heights[top + 1], u),
                 float.Lerp(layer.Heights[bottom], layer.Heights[bottom + 1], u),
                 v);
-            if (wowZ < surface)
+            if (best is null || surface > best.Value.Surface)
             {
-                return true;
+                best = (surface, layer.LiquidType);
             }
         }
 
-        return false;
+        return best;
     }
+
+    /// <summary>Whether a point at a WoW position and height is below the surface of the tile's liquid.</summary>
+    public bool UnderLiquid(double wowX, double wowY, float wowZ) => LiquidAt(wowX, wowY) is { } liquid && wowZ < liquid.Surface;
 
     private static ulong HoleCells(ushort holes)
     {

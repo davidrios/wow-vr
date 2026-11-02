@@ -149,6 +149,14 @@ public partial class Main : Node3D
             AddChild(groundCover);
             groundCover.Start(GroundEffectTable.Read(source), tiles);
 
+            var water = new PlayerWater { Name = "PlayerWater" };
+            AddChild(water);
+            water.Start(source, tiles, player, sky);
+            if (Array.IndexOf(arguments, "--water-check") >= 0)
+            {
+                AddChild(new WaterCheck { Tiles = tiles, Player = player, Water = water });
+            }
+
             var walkTour = Array.IndexOf(arguments, WalkTourArgument) >= 0;
             var flyTour = Array.IndexOf(arguments, TourArgument) >= 0;
             if (explicitStart || flyTour)

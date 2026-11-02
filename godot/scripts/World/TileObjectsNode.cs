@@ -63,6 +63,8 @@ public partial class TileObjectsNode : Node3D
     private bool _collisionChecked;
     private bool _collisionWaiting;
 
+    private readonly List<(Node3D Wmo, WmoGroupAsset Group)> _liquidGroups = [];
+    private readonly List<(Node3D Wmo, WmoGroupAsset Group)> _indoorGroups = [];
     private readonly List<DoodadCell> _doodadCells = [];
     private readonly Dictionary<(DoodadCell Cell, int Copy), StaticBody3D> _doodadBodies = [];
     private readonly Dictionary<(DoodadCell Cell, int Copy), Node3D> _doodadParticles = [];
@@ -93,6 +95,40 @@ public partial class TileObjectsNode : Node3D
     /// <summary>Collision around the player's position has caught up, so a ray there sees the buildings.</summary>
     public bool CollisionSettled => _collisionChecked && !_collisionWaiting
         && ToLocal(Player.Feet).DistanceTo(_collisionCheckedAt) < CollisionCheckDistance;
+
+    /// <summary>The highest WMO liquid over a point in the scene, within the group's bounds. Null where there's none.</summary>
+    public (float Surface, int Type)? WmoLiquidAt(Vector3 point)
+    {
+        (float Surface, int Type)? best = null;
+        foreach (var (wmo, group) in _liquidGroups)
+        {
+            var local = wmo.ToLocal(point);
+            if (group.LiquidHeights!.HeightAt(local.X, local.Z) is { } height)
+            {
+                var surface = wmo.ToGlobal(new Vector3(local.X, height, local.Z)).Y;
+                if (best is null || surface > best.Value.Surface)
+                {
+                    best = (surface, group.LiquidType);
+                }
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>Whether a point is inside an indoor WMO group, where a lake outside it doesn't reach.</summary>
+    public bool Indoors(Vector3 point)
+    {
+        foreach (var (wmo, group) in _indoorGroups)
+        {
+            if (group.Bounds.HasPoint(wmo.ToLocal(point)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Everything is in the scene.</summary>
     public bool Finished => _pending.Count == 0;
@@ -175,6 +211,16 @@ public partial class TileObjectsNode : Node3D
                         node.AddChild(item);
                         Track(item, index);
                     }));
+                }
+
+                if (group.LiquidHeights is not null)
+                {
+                    _liquidGroups.Add((node, group));
+                }
+
+                if (group.Indoor)
+                {
+                    _indoorGroups.Add((node, group));
                 }
 
                 if (group.LiquidMesh is { } liquid)

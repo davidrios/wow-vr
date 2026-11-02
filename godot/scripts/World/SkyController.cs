@@ -72,6 +72,9 @@ public partial class SkyController : Node
     /// <summary>Half minutes since midnight.</summary>
     public double Ticks { get; set; } = 12 * 120;
 
+    /// <summary>Which liquid the eyes are under, or null above it, which closes in the fog.</summary>
+    public LiquidKind? Underwater { get; set; }
+
     public bool TimePasses { get; set; } = true;
 
     /// <summary>Whether it's day as far as zone music is concerned.</summary>
@@ -190,6 +193,19 @@ public partial class SkyController : Node
         var fogEnd = _state.FogEnd * FogDistanceScale;
         _environment.FogDepthBegin = fogEnd * _state.FogStart;
         _environment.FogDepthEnd = Mathf.Max(fogEnd, fogEnd * _state.FogStart + 1f);
+        _environment.FogSkyAffect = 0f;
+        if (Underwater is { } liquid)
+        {
+            // How far one can see, in yards, by eye. The bands are what the water's surface is painted with.
+            (_environment.FogLightColor, _environment.FogDepthBegin, _environment.FogDepthEnd) = liquid switch
+            {
+                LiquidKind.Ocean => (ToColor(SkyBand.OceanDeep), 0f, 60f),
+                LiquidKind.Magma => (new Color(0.6f, 0.15f, 0.02f), 0f, 8f),
+                LiquidKind.Slime => (new Color(0.15f, 0.3f, 0.05f), 0f, 15f),
+                _ => (ToColor(SkyBand.RiverDeep), 0f, 45f),
+            };
+            _environment.FogSkyAffect = 1f;
+        }
 
         _skyMaterial.SetShaderParameter("top_color", ToColor(SkyBand.SkyTop));
         _skyMaterial.SetShaderParameter("middle_color", ToColor(SkyBand.SkyMiddle));

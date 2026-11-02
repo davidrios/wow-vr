@@ -6,6 +6,7 @@ using System.Threading;
 using WowVR.Formats;
 using WowVR.Formats.Assets;
 using WowVR.Formats.Models;
+using WowVR.Formats.Terrain;
 using WowVR.Formats.Textures;
 using Godot;
 
@@ -40,6 +41,10 @@ public sealed class WmoGroupAsset
 
     /// <summary>Null when the group has no liquid.</summary>
     public ArrayMesh? LiquidMesh { get; init; }
+
+    /// <summary>The same liquid's height at any point, and its LiquidType row.</summary>
+    public LiquidHeightField? LiquidHeights { get; init; }
+    public int LiquidType { get; init; }
 
     public bool Indoor { get; init; }
 
@@ -474,6 +479,8 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         {
             Mesh = mesh,
             LiquidMesh = group.Liquid is { } liquid ? liquids.BuildMesh([liquid]) : null,
+            LiquidHeights = group.Liquid is { } surface ? new LiquidHeightField(surface) : null,
+            LiquidType = group.Liquid?.LiquidType ?? 0,
             Center = mesh?.GetAabb().GetCenter() ?? Vector3.Zero,
             Indoor = group.Indoor,
             FloorLight = group.Indoor ? WmoFloorLight.Build(group.Surfaces) : null,

@@ -191,3 +191,7 @@ Reached through `wa_wmo_open` and `wa_wmo_group_open`, which use `wow_alchemy_wm
 - The wiki at wowdev.wiki blocks scripts, so it needs a real browser. Its pages on `DB/Light`, `DB/LightIntBand`, `ADT/v18` and `WMO` confirmed what's written here.
 - Localized strings take 16 slots plus a flags field. A client only fills in its own slot, and enGB uses the enUS slot, so typed records need the source's locale.
 - String offsets can point into the middle of a string, so the FFI reads the string block directly rather than using `WdbFile::get_string_by_offset`, which only finds whole strings.
+
+## Terrain specular
+
+A terrain texture can have a file beside it named `_s.blp`, with the same colors and its shininess in alpha, where the plain file's alpha is solid. About 45% of `TILESET` is these files, and `Wow.exe` names the suffix. The client's shaders in the MPQs read as empty here, so how it shades them is unconfirmed. `terrain.gdshader` follows acazuc's client: Phong with power 10, the texture's color times the mask, times 2, and none in shadow. WoWModelViewer's reading of later clients is `(N.H)^20` times the mask instead, which is the one to try if this looks wrong. Exterior WMO materials with shader 1, 2 or 5 follow acazuc's client: Phong with power 10, plain, times alpha times 4, or times the texture color. M2s have none, by WoWModelViewer's reading. A layer without a `_s` file doesn't shine, where acazuc's falls back to the plain file.

@@ -76,6 +76,21 @@ public class ClientDataTests(ClientFixture client) : IClassFixture<ClientFixture
     }
 
     [Fact]
+    public void ATerrainTexturesSpecularFileKeepsItsColorsAndHasShineInAlpha()
+    {
+        const string Path = @"TILESET\Elwynn\ElwynnCobbleStoneBase.blp";
+
+        var plain = BlpDecoder.Decode(Source.Read(Path)!);
+        var specular = BlpDecoder.Decode(Source.Read(WowVR.Formats.Terrain.TerrainTextures.SpecularPath(Path))!);
+
+        Assert.Equal((plain.Width, plain.Height), (specular.Width, specular.Height));
+        Assert.Equal(plain.Rgba8[0..3], specular.Rgba8[0..3]);
+        var alphas = specular.Rgba8.Where((_, i) => i % 4 == 3).ToArray();
+        Assert.InRange(alphas.Average(a => (double)a), 20, 100);
+        Assert.True(alphas.Min() < alphas.Max());
+    }
+
+    [Fact]
     public void AreaTableHasElwynnForestAndGoldshire()
     {
         var areas = AreaTableRecord.ReadAll(Source).ToDictionary(a => a.Id);

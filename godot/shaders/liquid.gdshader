@@ -56,6 +56,7 @@ const float RIPPLE_STRENGTH = 0.2;
 const float RIPPLE_FADE_START = 0.02;
 const float RIPPLE_FADE_END = 0.09;
 const float ROAD_SHARPNESS = 70.0;
+const float ROAD_BRIGHTNESS = 0.5;
 const float SHORE_WIDTH = 0.09;
 const float SHORE_WOBBLE = 0.12;
 const float SHORE_STRENGTH = 0.1125;
@@ -158,7 +159,7 @@ void fragment() {
 		// The sun's road: a broad glow, broken up by the same shapes rather than by sparkles.
 		float road = pow(clamp(dot(reflected, sun_direction), 0.0, 1.0), ROAD_SHARPNESS);
 		float broken = smoothstep(0.42, 0.58, a * 0.5 + b * 0.5 + road * 0.3);
-		float glow = road * (0.35 + 0.65 * broken) * road_strength;
+		float glow = road * (0.35 + 0.65 * broken) * road_strength * ROAD_BRIGHTNESS;
 		color += sun_color * glow;
 
 		ALBEDO = color;

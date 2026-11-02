@@ -13,6 +13,8 @@ uniform vec3 tint = vec3(1.0);
 uniform float element_alpha = 1.0;
 uniform float alpha_key = 0.878;
 
+#include "res://shaders/wow_fog.gdshaderinc"
+
 #ifdef INDOOR_OCCLUSION
 // Baked light already says how an interior looks, but only lit surfaces take ambient occlusion,
 // which only dims their ambient light. So this ignores every other light, and divides by the
@@ -196,6 +198,13 @@ void fragment() {
 	ALPHA = pow(clamp(a, 0.0, 1.0), 2.2);
 #elif defined(BLENDED)
 	ALPHA = clamp(a, 0.0, 1.0);
+#endif
+
+#if defined(FOG_TO_BLACK)
+	ALBEDO *= 1.0 - fog_amount(VERTEX);
+	EMISSION *= 1.0 - fog_amount(VERTEX);
+#elif defined(FOG_TO_WHITE)
+	ALBEDO = mix(ALBEDO, vec3(1.0), fog_amount(VERTEX));
 #endif
 
 	ROUGHNESS = 1.0;

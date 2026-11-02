@@ -142,6 +142,6 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
 
     private Shader ShaderOf(bool keyed) => _shaders.GetOrAdd(keyed, k => new Shader
     {
-        Code = $"shader_type spatial;\nrender_mode unshaded, cull_disabled, shadows_disabled{(k ? "" : ", blend_add, depth_draw_never")};\n{(k ? "#define ALPHA_KEY\n" : "")}#include \"res://shaders/m2_particle.gdshaderinc\"\n",
+        Code = $"shader_type spatial;\nrender_mode unshaded, cull_disabled, shadows_disabled{(k ? "" : ", blend_add, depth_draw_never, fog_disabled")};\n{(k ? "#define ALPHA_KEY\n" : "")}#include \"res://shaders/m2_particle.gdshaderinc\"\n",
     });
 }

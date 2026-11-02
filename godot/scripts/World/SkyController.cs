@@ -224,6 +224,8 @@ public partial class SkyController : Node
             _environment.FogSkyAffect = 1f;
         }
 
+        RenderingServer.GlobalShaderParameterSet("fog_range", new Vector2(_environment.FogDepthBegin, _environment.FogDepthEnd));
+
         _skyMaterial.SetShaderParameter("top_color", ToColor(SkyBand.SkyTop));
         _skyMaterial.SetShaderParameter("middle_color", ToColor(SkyBand.SkyMiddle));
         _skyMaterial.SetShaderParameter("low_color", ToColor(SkyBand.SkyLow));

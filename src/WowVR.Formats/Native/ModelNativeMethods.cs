@@ -119,6 +119,7 @@ internal struct WaWmoMaterial
 {
     public uint Flags;
     public uint BlendMode;
+    public uint Shader;
 }
 
 [StructLayout(LayoutKind.Sequential)]

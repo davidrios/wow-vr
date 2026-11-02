@@ -583,15 +583,38 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
     private Material? GetMaterial(ModelMaterial material, bool indoor) =>
         _materials.GetOrAdd((material, indoor, false), key => key.Material.Effect is { } effect
             ? BuildEffectMaterial(key.Material, effect, key.Indoor, creature: false)
-            : key.Material.Blend is ModelBlend.Alpha or ModelBlend.Add
+            : key.Material.Blend is ModelBlend.Alpha or ModelBlend.Add or ModelBlend.Modulate
 
-                // Blending needs the shader, to match the client's. See its GAMMA_ADD.
+                // Blending needs the shader, to match the client's and to fade in fog. See its GAMMA_ADD and FOG_TO_BLACK.
                 ? BuildEffectMaterial(key.Material with { Unlit = key.Material.Unlit || key.Material.Blend == ModelBlend.Add }, PlainMod, key.Indoor, creature: false)
                 : key.Indoor
 
                     // So does ambient occlusion indoors. See its INDOOR_OCCLUSION.
                     ? BuildEffectMaterial(key.Material, key.Material.Blend == ModelBlend.Opaque ? PlainOpaque : PlainMod, indoor: true, creature: false)
-                    : BuildMaterial(key.Material, key.Indoor));
+                    : key.Material.Shader is WmoShader.Specular or WmoShader.Metal or WmoShader.EnvironmentMetal && !key.Material.Unlit
+                        ? BuildSpecularMaterial(key.Material)
+                        : BuildMaterial(key.Material, key.Indoor));
+
+    /// <summary>The outside of a WMO, lit by the sun, whose shader has a highlight.</summary>
+    private ShaderMaterial? BuildSpecularMaterial(ModelMaterial material)
+    {
+        if (GetTexture(material.Texture) is not { } texture)
+        {
+            return null;
+        }
+
+        var alphaKey = material.Blend == ModelBlend.AlphaKey;
+        var cull = material.TwoSided ? "cull_disabled" : "cull_back";
+        var shader = _effectShaders.GetOrAdd($"wmo specular {cull} {alphaKey}", _ => new Shader
+        {
+            Code = $"shader_type spatial;\nrender_mode {cull};\n{(alphaKey ? "#define ALPHA_KEY\n" : "")}#include \"res://shaders/wmo_specular.gdshaderinc\"\n",
+        });
+
+        var result = new ShaderMaterial { Shader = shader };
+        result.SetShaderParameter("albedo_texture", texture);
+        result.SetShaderParameter("mode", (int)material.Shader);
+        return result;
+    }
 
     private ShaderMaterial? BuildEffectMaterial(ModelMaterial material, M2Effect effect, bool indoor, bool creature)
     {
@@ -694,10 +717,12 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             if (material.Blend == ModelBlend.Add)
             {
                 modes.Add("blend_add");
+                modes.Add("fog_disabled");
             }
             else if (modulates)
             {
                 modes.Add("blend_mul");
+                modes.Add("fog_disabled");
             }
 
             var defines = new List<string>
@@ -718,6 +743,15 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             if (material.Blend == ModelBlend.AlphaKey)
             {
                 defines.Add("#define ALPHA_KEY");
+            }
+
+            if (material.Blend == ModelBlend.Add)
+            {
+                defines.Add("#define FOG_TO_BLACK");
+            }
+            else if (modulates)
+            {
+                defines.Add("#define FOG_TO_WHITE");
             }
 
             if (baked)
@@ -792,16 +826,6 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
                 break;
             case ModelBlend.Alpha:
                 result.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-                break;
-            case ModelBlend.Add:
-                result.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-                result.BlendMode = BaseMaterial3D.BlendModeEnum.Add;
-                result.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
-                break;
-            case ModelBlend.Modulate:
-                result.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-                result.BlendMode = BaseMaterial3D.BlendModeEnum.Mul;
-                result.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
                 break;
         }
 

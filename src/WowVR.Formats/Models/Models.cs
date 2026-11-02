@@ -14,7 +14,18 @@ public enum ModelBlend
 }
 
 /// <summary>How a surface draws. Equal materials can share a GPU material.</summary>
-public readonly record struct ModelMaterial(string Texture, ModelBlend Blend, bool Unlit, bool TwoSided, bool Repeat, M2Effect? Effect = null, string? Texture2 = null, M2BoneBake? Bake = null, bool Billboard = false);
+public readonly record struct ModelMaterial(string Texture, ModelBlend Blend, bool Unlit, bool TwoSided, bool Repeat, M2Effect? Effect = null, string? Texture2 = null, M2BoneBake? Bake = null, bool Billboard = false, WmoShader Shader = WmoShader.Diffuse);
+
+/// <summary>A WMO material's shader in MOMT. Those not listed have no highlight.</summary>
+public enum WmoShader
+{
+    Diffuse = 0,
+    Specular = 1,
+    Metal = 2,
+    Environment = 3,
+    Opaque = 4,
+    EnvironmentMetal = 5,
+}
 
 /// <summary>One material's triangles with only the vertices they use, in Godot axes.</summary>
 public sealed class ModelSurface
@@ -302,7 +313,8 @@ public sealed class WmoRoot
                     BlendOf(material.BlendMode),
                     (material.Flags & FlagUnlit) != 0,
                     (material.Flags & FlagTwoSided) != 0,
-                    Repeat: true);
+                    Repeat: true,
+                    Shader: (WmoShader)material.Shader);
             }
 
             var sets = new (int, int)[ModelNativeMethods.WmoDoodadSetCount(wmo)];

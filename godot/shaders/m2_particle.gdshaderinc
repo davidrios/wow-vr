@@ -1,5 +1,7 @@
 // An M2 particle: a quad that faces the viewer, showing a tile of its texture.
 
+#include "res://shaders/wow_fog.gdshaderinc"
+
 uniform sampler2D tex : hint_default_white, filter_linear_mipmap_anisotropic, repeat_disable;
 uniform int rows = 1;
 uniform int columns = 1;
@@ -54,6 +56,6 @@ void fragment() {
 	// The client adds in gamma space, where a flame's dozens of faint quads soon reach full
 	// brightness. Fully converting each one, as a lone glow wants, leaves them too dim to do
 	// that, and this power is between the two. Picked by eye.
-	ALBEDO = pow(clamp(t.rgb * COLOR.rgb * a, vec3(0.0), vec3(1.0)), vec3(1.4));
+	ALBEDO = pow(clamp(t.rgb * COLOR.rgb * a, vec3(0.0), vec3(1.0)), vec3(1.4)) * (1.0 - fog_amount(VERTEX));
 #endif
 }

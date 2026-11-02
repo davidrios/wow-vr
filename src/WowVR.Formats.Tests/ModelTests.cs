@@ -389,6 +389,16 @@ public class ClientModelTests(ClientFixture client) : IClassFixture<ClientFixtur
     }
 
     [Fact]
+    public void StormwindHasMaterialsWithAHighlight()
+    {
+        SkipWithoutClient();
+        var root = WmoRoot.Parse(client.Source!.Read(@"World\wmo\Azeroth\Buildings\Stormwind\Stormwind.wmo"));
+
+        Assert.Contains(root.Materials, m => m.Shader is WmoShader.Specular or WmoShader.Metal or WmoShader.EnvironmentMetal);
+        Assert.Contains(root.Materials, m => m.Shader == WmoShader.Diffuse);
+    }
+
+    [Fact]
     public void UndercitysInteriorShowsFromInside()
     {
         SkipWithoutClient();

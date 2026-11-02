@@ -17,10 +17,14 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
     private const int FallbackTextureSize = 256;
     private const int MaxCachedTextures = 128;
 
+    /// <summary>Shine only shows as a soft sheen, so its masks are this many times smaller than the layers.</summary>
+    private const int SpecularMaskDivisor = 2;
+
     private static readonly Shader TerrainShader = GD.Load<Shader>("res://shaders/terrain.gdshader");
 
     private readonly ConcurrentDictionary<string, int> _sizes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<(string Name, int Size), Image> _textures = new();
+    private readonly ConcurrentDictionary<(string Name, int Size), Image> _specularMasks = new();
 
     public static void LoadShared() => _ = TerrainShader;
 
@@ -64,17 +68,24 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
         if (_textures.Count > MaxCachedTextures)
         {
             _textures.Clear();
+            _specularMasks.Clear();
         }
 
         var images = new Godot.Collections.Array<Image>(mesh.Textures.Select(name => LoadTexture(name, size)));
         var layers = new Texture2DArray();
         layers.CreateFromImages(images);
 
+        var maskSize = Math.Max(size / SpecularMaskDivisor, 1);
+        var masks = new Godot.Collections.Array<Image>(mesh.Textures.Select(name => LoadSpecularMask(name, maskSize)));
+        var specularMasks = new Texture2DArray();
+        specularMasks.CreateFromImages(masks);
+
         var atlas = Image.CreateFromData(
             TerrainMeshData.AtlasSize, TerrainMeshData.AtlasSize, false, Image.Format.Rgb8, mesh.AlphaAtlas);
 
         var material = new ShaderMaterial { Shader = TerrainShader };
         material.SetShaderParameter("layers", layers);
+        material.SetShaderParameter("specular_masks", specularMasks);
         material.SetShaderParameter("alpha_atlas", ImageTexture.CreateFromImage(atlas));
         material.SetShaderParameter("alpha_is_weights", map.BigAlpha);
         return material;
@@ -105,6 +116,35 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
 
         var mipmaps = data is null ? SolidMagentaBc1(key.Size) : BlpDecoder.ConvertToBc1(data, key.Size);
         return Image.CreateFromData(key.Size, key.Size, true, Image.Format.Dxt1, mipmaps);
+    });
+
+    /// <summary>
+    /// A layer's shininess is the alpha of a file beside it named <c>_s</c>, whose colors are the
+    /// same as the layer's. A layer without one doesn't shine.
+    /// </summary>
+    private Image LoadSpecularMask(string name, int size) => _specularMasks.GetOrAdd((name, size), key =>
+    {
+        Image mask;
+        var data = source.Read(TerrainTextures.SpecularPath(key.Name));
+        if (data is { Length: > 0 })
+        {
+            var decoded = BlpDecoder.Decode(data);
+            var alpha = new byte[decoded.Width * decoded.Height];
+            for (var i = 0; i < alpha.Length; i++)
+            {
+                alpha[i] = decoded.Rgba8[i * 4 + 3];
+            }
+
+            mask = Image.CreateFromData(decoded.Width, decoded.Height, false, Image.Format.R8, alpha);
+            mask.Resize(key.Size, key.Size, Image.Interpolation.Bilinear);
+        }
+        else
+        {
+            mask = Image.CreateEmpty(key.Size, key.Size, false, Image.Format.R8);
+        }
+
+        mask.GenerateMipmaps();
+        return mask;
     });
 
     private static byte[] SolidMagentaBc1(int size)

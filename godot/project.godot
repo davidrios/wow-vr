@@ -34,6 +34,10 @@ indoor_ambient={
 "type": "vec3",
 "value": Vector3(1, 1, 1)
 }
+fog_range={
+"type": "vec2",
+"value": Vector2(100000, 100001)
+}
 
 [xr]
 

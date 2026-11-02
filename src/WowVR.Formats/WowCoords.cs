@@ -42,6 +42,36 @@ public static class WowCoords
     /// </summary>
     public static Vector3 ModelToGodot(Vector3 model) => new(model.X, model.Z, -model.Y);
 
+    /// <summary>A rotation in a model's own space, in Godot axes.</summary>
+    public static Quaternion ModelRotationToGodot(Quaternion model)
+    {
+        var axis = ModelToGodot(new Vector3(model.X, model.Y, model.Z));
+        return new Quaternion(axis, model.W);
+    }
+
+    /// <summary>A scale along a model's own axes, in Godot axes. Scale has no direction, so it keeps its sign.</summary>
+    public static Vector3 ModelScaleToGodot(Vector3 model) => new(model.X, model.Z, model.Y);
+
+    /// <summary>A box in a model's own space, in Godot axes. Y flips, so its corners swap.</summary>
+    public static (Vector3 Min, Vector3 Max) ModelBoundsToGodot(Vector3 min, Vector3 max)
+    {
+        var (a, b) = (ModelToGodot(min), ModelToGodot(max));
+        return (Vector3.Min(a, b), Vector3.Max(a, b));
+    }
+
+    /// <summary>A WoW position relative to a tile's north-west corner, in Godot axes, precise far from the map's center.</summary>
+    public static Vector3 TileLocal(double wowX, double wowY, float wowZ, int tileX, int tileY)
+    {
+        var (originX, originZ) = TileOriginGodot(tileX, tileY);
+        return new Vector3((float)(-wowY - originX), wowZ, (float)(-wowX - originZ));
+    }
+
+    /// <summary>
+    /// The Godot Y rotation in radians that faces a model a WoW orientation's way. Orientations
+    /// turn left from north, and models face their own X, which <see cref="ModelToGodot"/> keeps as Godot's X (east).
+    /// </summary>
+    public static float YawFromOrientation(float orientation) => orientation + MathF.PI / 2;
+
     /// <summary>
     /// A model placed on a tile. Files give the position as east, up and south from the
     /// map's north-west corner, and rotations in degrees, as WoWModelViewer applies them:

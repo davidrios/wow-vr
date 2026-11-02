@@ -51,7 +51,20 @@ public partial class WorldMenu : PanelContainer
                 Player.Flying = on;
             }
         };
-        rows.AddChild(_fly);
+
+        // Shares a row, because the wrist menu has no room for another.
+        var namePlates = new CheckButton
+        {
+            Text = "Creature names",
+            ButtonPressed = AppSettings.NamePlates,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        namePlates.Toggled += on => AppSettings.NamePlates = on;
+        _fly.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        var toggles = new HBoxContainer();
+        toggles.AddChild(_fly);
+        toggles.AddChild(namePlates);
+        rows.AddChild(toggles);
 
         rows.AddChild(new Label { Text = "Fly speed" });
         var speed = new HSlider
@@ -118,7 +131,7 @@ public partial class WorldMenu : PanelContainer
         music.ValueChanged += value => AppSettings.MusicVolume = (float)value;
         rows.AddChild(music);
 
-        rows.AddChild(new Label { Text = "Ambient sound volume" });
+        rows.AddChild(new Label { Text = "Ambient and creature sound volume" });
         var ambience = new HSlider { MinValue = 0, MaxValue = 1, Step = 0.05, Value = AppSettings.AmbienceVolume };
         ambience.ValueChanged += value => AppSettings.AmbienceVolume = (float)value;
         rows.AddChild(ambience);

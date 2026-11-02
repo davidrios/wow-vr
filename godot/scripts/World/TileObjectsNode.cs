@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using WowVR.Formats;
+using WowVR.Formats.Models;
 using WowVR.Converters;
 using Godot;
 
@@ -46,6 +49,18 @@ public partial class TileObjectsNode : Node3D
     /// <summary>Something waiting to enter the scene, at a position relative to this node.</summary>
     private readonly record struct PendingItem(Vector3 Center, Action Add);
 
+    /// <summary>A WMO whose indoor groups show only through its portals, with what each group has in the scene.</summary>
+    private sealed class PortalWmo(Node3D node, WmoPortals portals, Aabb bounds)
+    {
+        public Node3D Node { get; } = node;
+        public WmoPortals Portals { get; } = portals;
+        public Aabb Bounds { get; } = bounds;
+        public List<Node3D>[] Members { get; } = Enumerable.Range(0, portals.GroupCount).Select(_ => new List<Node3D>()).ToArray();
+        public bool[] Visible { get; } = new bool[portals.GroupCount];
+        public bool[] Shown { get; } = Enumerable.Repeat(true, portals.GroupCount).ToArray();
+    }
+
+    private readonly List<PortalWmo> _portalWmos = [];
     private readonly List<PendingItem> _pending = [];
     private readonly List<CollisionGroup> _collision = [];
     private readonly Dictionary<CollisionGroup, StaticBody3D> _bodies = [];
@@ -61,16 +76,7 @@ public partial class TileObjectsNode : Node3D
     {
         foreach (var batch in objects.Doodads)
         {
-            if (batch.Transforms.Length > 0)
-            {
-                var bounds = new Aabb(batch.Transforms[0].Origin, Vector3.Zero);
-                foreach (var transform in batch.Transforms)
-                {
-                    bounds = bounds.Expand(transform.Origin);
-                }
-
-                _doodadCells.Add(new DoodadCell(batch.Model, batch.Transforms, bounds));
-            }
+            AddDoodadCell(batch);
 
             _pending.Add(new PendingItem(batch.Center, () => AddChild(new MultiMeshInstance3D
             {
@@ -85,8 +91,48 @@ public partial class TileObjectsNode : Node3D
             // Only a transform, so it can go straight in.
             var node = new Node3D { Transform = wmo.Transform };
             AddChild(node);
-            foreach (var group in wmo.Asset.Groups)
+
+            PortalWmo? portalWmo = null;
+            if (wmo.Asset.Portals is { } portals)
             {
+                portalWmo = new PortalWmo(node, portals, BoundsOf(wmo.Asset));
+                _portalWmos.Add(portalWmo);
+            }
+
+            void Track(Node3D item, int groupIndex)
+            {
+                if (portalWmo is not null)
+                {
+                    portalWmo.Members[groupIndex].Add(item);
+                    item.Visible = portalWmo.Shown[groupIndex];
+                }
+            }
+
+            foreach (var (groupIndex, batches) in wmo.GroupDoodads)
+            {
+                foreach (var batch in batches)
+                {
+                    AddDoodadCell(batch);
+
+                    // Their transforms already include the WMO's, so they go beside its node.
+                    _pending.Add(new PendingItem(batch.Center, () =>
+                    {
+                        var item = new MultiMeshInstance3D
+                        {
+                            Multimesh = batch.MultiMesh,
+                            VisibilityRangeEnd = batch.VisibleRange,
+                            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                        };
+                        AddChild(item);
+                        Track(item, groupIndex);
+                    }));
+                }
+            }
+
+            for (var groupIndex = 0; groupIndex < wmo.Asset.Groups.Length; groupIndex++)
+            {
+                var index = groupIndex;
+                var group = wmo.Asset.Groups[groupIndex];
                 if (group.Shape is not null)
                 {
                     _collision.Add(new CollisionGroup(node, group));
@@ -95,25 +141,52 @@ public partial class TileObjectsNode : Node3D
                 if (group.Mesh is { } mesh)
                 {
                     var center = wmo.Transform * group.Center;
-                    _pending.Add(new PendingItem(center, () => node.AddChild(new MeshInstance3D
+                    _pending.Add(new PendingItem(center, () =>
                     {
-                        Mesh = mesh,
-                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                        VisibilityRangeEnd = group.Indoor ? mesh.GetAabb().Size.Length() + IndoorVisibleMargin : 0f,
-                    })));
+                        var item = new MeshInstance3D
+                        {
+                            Mesh = mesh,
+                            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                            VisibilityRangeEnd = group.Indoor ? mesh.GetAabb().Size.Length() + IndoorVisibleMargin : 0f,
+                        };
+                        node.AddChild(item);
+                        Track(item, index);
+                    }));
                 }
 
                 if (group.LiquidMesh is { } liquid)
                 {
                     var center = wmo.Transform * liquid.GetAabb().GetCenter();
-                    _pending.Add(new PendingItem(center, () => node.AddChild(new MeshInstance3D
+                    _pending.Add(new PendingItem(center, () =>
                     {
-                        Mesh = liquid,
-                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                    })));
+                        var item = new MeshInstance3D
+                        {
+                            Mesh = liquid,
+                            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                        };
+                        node.AddChild(item);
+                        Track(item, index);
+                    }));
                 }
             }
         }
+    }
+
+    /// <summary>Collision stays whether or not a doodad's group is showing.</summary>
+    private void AddDoodadCell(DoodadBatch batch)
+    {
+        if (batch.Transforms.Length == 0)
+        {
+            return;
+        }
+
+        var bounds = new Aabb(batch.Transforms[0].Origin, Vector3.Zero);
+        foreach (var transform in batch.Transforms)
+        {
+            bounds = bounds.Expand(transform.Origin);
+        }
+
+        _doodadCells.Add(new DoodadCell(batch.Model, batch.Transforms, bounds));
     }
 
     /// <summary>How far this tile's next item is from the player, or infinity if it has none.</summary>
@@ -144,8 +217,57 @@ public partial class TileObjectsNode : Node3D
         item.Add();
     }
 
+    private static Aabb BoundsOf(WmoAsset asset)
+    {
+        var (min, max) = asset.Root.Bounds;
+        var a = new Vector3(min.X, min.Z, -min.Y);
+        var b = new Vector3(max.X, max.Z, -max.Y);
+        return new Aabb(a, Vector3.Zero).Expand(b);
+    }
+
+    /// <summary>Shows each portal WMO's groups that can be seen from the camera, in every mode the same way.</summary>
+    private void UpdatePortals()
+    {
+        if (_portalWmos.Count == 0 || GetViewport().GetCamera3D() is not { } camera)
+        {
+            return;
+        }
+
+        var projection = camera.GetCameraProjection();
+        var view = camera.GlobalTransform.AffineInverse();
+        foreach (var wmo in _portalWmos)
+        {
+            var fromWmo = view * wmo.Node.GlobalTransform;
+
+            // Portals are in the file's axes, Z up, so a point goes to Godot's first.
+            (float, float, float) ToClip(System.Numerics.Vector3 file)
+            {
+                var godot = WowCoords.ModelToGodot(file);
+                var inView = fromWmo * new Vector3(godot.X, godot.Y, godot.Z);
+                var clip = projection * new Vector4(inView.X, inView.Y, inView.Z, 1f);
+                return (clip.X, clip.Y, clip.W);
+            }
+
+            var cameraLocal = wmo.Node.ToLocal(camera.GlobalPosition);
+            var cameraFile = new System.Numerics.Vector3(cameraLocal.X, -cameraLocal.Z, cameraLocal.Y);
+            wmo.Portals.Compute(cameraFile, ToClip, wmo.Visible);
+            for (var group = 0; group < wmo.Visible.Length; group++)
+            {
+                if (wmo.Visible[group] != wmo.Shown[group])
+                {
+                    wmo.Shown[group] = wmo.Visible[group];
+                    foreach (var item in wmo.Members[group])
+                    {
+                        item.Visible = wmo.Visible[group];
+                    }
+                }
+            }
+        }
+    }
+
     public override void _Process(double delta)
     {
+        UpdatePortals();
         UpdateCollision();
         UpdateDoodadCollision();
     }

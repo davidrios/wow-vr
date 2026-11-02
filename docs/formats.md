@@ -95,6 +95,65 @@ Reached through `wa_m2_open` with the model and its `<name>00.skin`, which gives
 - **Particle emitters** are 476 bytes on this client. Their "fake" animation blocks hold 2 arrays, not 3. Reading 3 made 6,365 models fail to parse, because the emitters come last.
 - **Empty files:** 63 M2s or their skins are empty in this client. `inspect check-models` reports them, and the game skips them.
 
+## Animated M2s
+
+`M2SkinnedModel` reads what a static doodad doesn't need. See `decisions/0007-creatures.md`.
+
+- **Bones:** a vertex's bone indexes point straight at the model's bones, not through a lookup table.
+- **The bone formula** is `parent * T(pivot) * T(translation) * R * S * T(-pivot)`. In a skeleton, that's a bone at its pivot, with a rest offset of `pivot - parent's pivot`, the translation keys added on, and a bind of `T(-pivot)`.
+- **Rotations** are 4 `i16`s, which unpack as `(v < 0 ? v + 32768 : v - 32767) / 32767`. In Godot's axes they're `(x, z, -y, w)`, not reversed. WoWModelViewer writes `(-x, -z, y, w)` because its matrix builder is the inverse of the usual one.
+- **Checking the math:** each sequence stores its bounds while playing. Playing human stand gives them to within 0.0004 yards. Reversing the rotations puts every tested clip at least 0.16 off, where correct ones are within 0.125. A count of vertices inside the bounds doesn't show this, as reversed rotations still leave 97% of them inside.
+- **Keys** can be outside the M2. Sequence flag `0x20` means they're inside it. Otherwise they're in `<model><id:04>-<variation:02>.anim`, at the same offsets. Flag `0x40` means an alias with no keys, which plays those of `alias_next`.
+- **Track headers** are arrays of arrays, with one inner array per sequence. `read_sequence_keys` reads the outer one from the M2 and the inner one from wherever the sequence's keys are. The crate's `M2BoneData` reads both from the M2, which is garbage for external sequences, so don't use it for those.
+- **Global sequences** hold their keys in the first slot, and 16,408 of the 165,781 rotation tracks in stand, walk and run use one. None of those tracks is curved.
+- **Models:** 1,098 of the 1,104 models that displays use parse, and the other 6 are empty files.
+
+## M2 textures and effects
+
+`M2BatchLooks` works out how each batch draws, for doodads and creatures alike. Batches with one still texture keep a plain `StandardMaterial3D`. Others get `godot/shaders/m2_combiners.gdshaderinc`. See `decisions/0008-m2-effects.md`.
+
+- **`shader_id` isn't the shader on this client.** It's nearly always 0 on disk, and the client works the shader out when it loads a skin. `M2ShaderSelection` follows the wiki's port of those functions, on `M2/.skin/WotLK_shader_selection`, which calls itself "mostly-working".
+- **Bits of the result:** `0x70` is the first texture's combiner and `0x07` the second's, `0x80` and `0x08` mean they're sphere mapped, `0x4000` means the last one uses the second UV set, and `0x8000` means a special case: `0x8000` alone isn't drawn, and `0x8001` to `0x8003` are `Opaque_Mod2xNA_Alpha`, `Opaque_AddAlpha` and `Opaque_AddAlpha_Alpha`.
+- **Layers merge.** A shine in its own batch, with a sphere map and add or mod2x blending, merges into the opaque batch below it when their texture weights match. Drawing both, as WoWModelViewer's 3.3.5a tag does, gives the wrong look. Its upstream code from 2026 reaches the same result for these models.
+- **Combiner formulas** are on the wiki's `M2/Rendering`. They're in gamma space, so the shader's samplers aren't `source_color` and it converts at the end.
+- **Lookups:** a batch's texture, UV set and transform indexes are the first of `texture_count` in their lookup tables.
+- **Alpha** is color alpha times the first texture weight. A batch whose alpha is always 0 isn't drawn, whatever its blend mode.
+- **Color tracks** replace lighting with a tint. WoWModelViewer draws them this way, through emission, but no reference states what the client does.
+- **Texture transforms** only apply when batch flag `0x10` is clear, as in WoWModelViewer. Rotation is around the texture's middle, as the wiki says, with no real model checked for direction.
+- **Time:** tracks on a global sequence loop on its length, and others on the first sequence's. WoWModelViewer also reads color and weights from the first sequence, whatever is playing.
+- **Numbers:** of 22,619 non-empty M2s, 10,577 batches use two textures, 8,963 animate and 8,829 are sphere mapped. Every combiner they reach is in the shader. The client's wiki says blend modes 3 and 7 aren't used in 3.3.5.
+
+## Billboards and events
+
+See `decisions/0009-billboards-and-creature-sounds.md`.
+
+- **Billboard flags** on a bone are `0x8` spherical, then `0x10`, `0x20` and `0x40` to turn around the model's X, Y or Z only. The wiki says only one is ever set. Of the client's M2s, 1,797 use spherical, 376 lock Z, 12 lock X and 12 lock Y.
+- **Facing:** the model's X points at the viewer and its Z up, as in WoWModelViewer's `Bone::calcMatrix`, which only does spherical. The wiki adds that locked ones exist, and these turn to face the viewer's position.
+- **Events** are a 4-byte name, a data value, a bone and a position, followed by a track of times with no values, where each time means "fire now". Their times are per sequence, in the `.anim` file for sequences kept there.
+- **What creatures fire** in stand, walk and run, by how many of the 1,098 models: `$BTH` 680, `$RR0` 630, `$RL0` 626, `$FSD` 632, `$FL0` 622, `$FR0` 621, `$HIT` 336, `$CST` 360, `$WNG` 109, `$FD1` 69.
+
+## Creature sounds
+
+- **Which row:** `CreatureDisplayInfo` field 2, or `CreatureModelData` field 13 when that's 0, is a `CreatureSoundData` row.
+- **CreatureSoundData** (38 fields): 9 footstep, which is an id for `FootstepTerrainLookup` and not a sound, 11 wing flap, 14 to 18 fidgets, 24 loop, and 31 and 32 fidget delays as floats. The others are `SoundEntries` rows too.
+- **GroundEffectTexture** (11 fields): 10 is the `TerrainType` row. **TerrainType** (6 fields): 4 is the terrain's sound. **FootstepTerrainLookup** (5 fields): 1 creature footstep id, 2 terrain sound, 3 dry `SoundEntries` row, 4 wet.
+
+## Creature displays
+
+`CreatureDisplayTable.Resolve` turns a display id into a `CreatureLook`. Field numbers were checked against build 12340's files, and the rules follow WoWModelViewer's `charcontrol.cpp`.
+
+- **CreatureDisplayInfo** (16 fields): 1 model row, 3 extra row, 4 scale, 6 to 8 skins. A skin named `Foo` is `Foo.blp` beside the model, and fills texture types 11 to 13.
+- **CreatureModelData** (28 fields): 2 path, 4 scale.
+- **CreatureDisplayInfoExtra** (21 fields): 1 race, 2 sex, 3 skin, 5 hair style, 6 hair color, 7 beard, 8 to 18 items, 20 baked texture. The items run head, shoulder, shirt, chest, belt, pants, boots, wrists, gloves, tabard, cape. The bake already paints clothes and face onto the body, so only geosets and worn models are left to do.
+- **Texture types:** 1 is `Textures\BakedNpcTextures\<bake>`, 6 is hair from `CharSections`, 8 is fur, and 2 is the cape, under `Item\ObjectComponents\Cape\`.
+- **CharSections** (10 fields): 1 race, 2 sex, 3 section (0 skin, 3 hair), 4 to 6 textures, 8 variation, 9 color.
+- **CharHairGeosets** (6 fields): 1 race, 2 sex, 3 style, 4 geoset, 5 whether to show the scalp, which is geoset 1.
+- **CharacterFacialHairStyles** (8 fields) has no id: 0 race, 1 sex, 2 style, then the geosets for groups 100, 300 and 200, in that order.
+- **ItemDisplayInfo** (25 fields): 1 and 2 models, 3 and 4 their textures, 7 to 9 geoset groups, 13 and 14 `HelmetGeosetVisData` rows for male and female.
+- **HelmetGeosetVisData** (8 fields): 1 hair, 2 to 4 the beard groups, 5 ears. Each is a mask of the races it applies to, as `1 << race`. WoWModelViewer has this code commented out and wow.export doesn't use the table, so the reading comes from the data: `4094` is exactly races 1 to 11, and many hair masks leave out bit 6, Tauren, whose hair is horns. Fields 6 and 7 aren't used, and their meaning isn't known.
+- **Geosets:** each hundred is a group that shows one member, and every group starts at 1, except beards at 0 and ears at 2. Later items overrule earlier ones, so the dressing order matters. A robe hides boots and tabard.
+- **Worn models:** a head is `Item\ObjectComponents\Head\<model>_<race prefix><M or F>.m2`, using `ChrRaces` field 6, at attachment 11. Shoulders use models 1 and 2, at attachments 6 and 5.
+
 ## WMO
 
 Reached through `wa_wmo_open` and `wa_wmo_group_open`, which use `wow_alchemy_wmo::render`. The crate's older `parser` and `group_parser` don't match 3.3.5a files: they read materials as 40 bytes where they're 64, use the wrong `MOGP` header and `MOBA` layouts, and test the wrong flag bits. They still serve its editing tools, and should move to `render`'s records.
@@ -102,8 +161,12 @@ Reached through `wa_wmo_open` and `wa_wmo_group_open`, which use `wow_alchemy_wm
 - **Group files** are `<root>_NNN.wmo`. `MOGP` wraps all the other chunks, after a 68-byte header.
 - **Names:** materials and doodads hold offsets into `MOTX` and `MODN`, which can have gaps, so names must be read by offset. The top byte of a doodad's name offset is flags.
 - **Collision:** a triangle collides if its `MOPY` flags have `0x08`, or `0x20` without `0x04`. Material `0xFF` means collision only.
-- **Vertex colors:** `MOCV` is BGRA. Only indoor groups (`MOGP` flag `0x2000`) use them, as WoWModelViewer does.
+- **Indoor or outdoor:** a group is indoor with `MOGP` flag `0x2000` unless it also has `0x40`, which means lit from outside. 88 of Stormwind's 286 groups and 4 of Undercity's 206 have both, and have no vertex colors, so treating them as indoor draws them fully bright at any hour. Flag `0x8` is plain exterior.
+- **Vertex colors:** `MOCV` is BGRA. Only indoor groups use them. WoWModelViewer's upstream found exterior groups' `MOCV` isn't a tint, and leaves it out too.
+- **Doodads' context:** `MODR` in a group lists the doodads standing in it. As in WoWModelViewer's upstream, one listed by an indoor group is indoor, even if an outdoor group lists it too. Doodads placed on a tile (`MDDF`) are always outdoor.
+- **Indoor doodads' light:** this draws them unlit, tinted by `MOHD`'s ambient plus their `MODD` color, both stored as `0xAARRGGBB`. That formula is a guess: upstream hasn't reached interior light yet, and no reference states it.
 - **Doodad sets:** a placement shows set 0 and its own set.
+- **Portals:** `MOPV` holds corners, `MOPT` a corner range and plane (20 bytes), and `MOPR` a portal, the group behind it and the side it's seen from (8 bytes). `MOGP`'s header holds the group's box at byte 12 and its `MOPR` range at bytes 36 and 38. Interior parts can stick out of the ground, such as Undercity's chains, so they can only be hidden by these, not by distance. `WmoPortals` starts from the indoor groups whose boxes hold the camera, or else from the exterior groups (flag `0x8`), and only follows a portal on screen, through the part of the screen it covers. The client uses the BSP tree for which group the camera is in, and this uses boxes, which can overlap.
 
 ## Placing models
 

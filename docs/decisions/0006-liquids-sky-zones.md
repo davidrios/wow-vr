@@ -25,6 +25,7 @@ These aren't from a file, and are constants in `SkyController` and `SunPath`:
 - There's no swimming, liquid collision or underwater view yet: you walk along the lakebed, and the lights' underwater settings aren't used.
 - Only clear weather's lights are used.
 - Northrend's zone lights are hardcoded in the client's executable, so its zones show the global sky until someone transcribes them.
+- Playtesting found that some music seems wrong at times. The cause isn't known yet.
 - WMO areas aren't read, so an inn plays its zone's sounds rather than its own. Zone intro music isn't played either.
 - A WMO group with a liquid type but no MLIQ grid should be full of liquid, according to the wiki. These draw nothing.
 - Lava and slime don't glow or follow the files' flow directions.

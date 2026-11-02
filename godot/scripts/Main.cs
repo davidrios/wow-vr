@@ -25,6 +25,15 @@ public partial class Main : Node3D
     private const string OpenMenuArgument = "--open-menu";
     private const string StartArgument = "--start=";
     private const string ScreenshotArgument = "--screenshot=";
+    private const string SpawnsArgument = "--spawns=";
+    private const string SampleSpawnsArgument = "--sample-spawns";
+    private const string CreatureCheckArgument = "--creature-check";
+
+    /// <summary>Where tools/spawn-exporter writes, next to the Godot project, when running from a checkout.</summary>
+    private const string ProjectSpawnFolder = "res://../spawns";
+
+    /// <summary>Where a player's exported spawn files go otherwise.</summary>
+    private const string DefaultSpawnFolder = "user://spawns";
 
     private Node3D _player = null!;
 
@@ -74,12 +83,12 @@ public partial class Main : Node3D
         try
         {
             var (startMap, startPosition, startPitch, startYaw, explicitStart) = ReadStart();
-            var (source, map, lights, zones, liquids, mapId) = await Task.Run(() =>
+            var (source, map, lights, zones, liquids, mapId, displays, footsteps) = await Task.Run(() =>
             {
                 var opened = MpqAssetSource.Open(clientPath);
                 var id = MapRecord.ReadAll(opened)
                     .First(m => m.Directory.Equals(startMap, StringComparison.OrdinalIgnoreCase)).Id;
-                return (opened, WdtMap.Read(opened, startMap), LightTable.Read(opened), ZoneTable.Read(opened), new LiquidLibrary(opened), id);
+                return (opened, WdtMap.Read(opened, startMap), LightTable.Read(opened), ZoneTable.Read(opened), new LiquidLibrary(opened), id, CreatureDisplayTable.Read(opened), FootstepTable.Read(opened));
             });
             GD.Print($"Client opened: {map.TileCountWithData} tiles in {startMap}");
 
@@ -111,6 +120,13 @@ public partial class Main : Node3D
             player.Menu.SetLandmarks(Landmarks.On(startMap), l => tiles.TeleportTo(l.WowX, l.WowY));
 
             var arguments = OS.GetCmdlineUserArgs();
+            var creatures = new CreatureManager { Name = "Creatures" };
+            AddChild(creatures);
+            var creatureSounds = new CreatureSoundPlayer { Name = "CreatureSounds" };
+            AddChild(creatureSounds);
+            creatureSounds.Start(source);
+            creatures.Start(new CreatureLibrary(source, displays, tiles.Models), tiles, ChooseSpawnSource(arguments, displays, mapId, startPosition), creatureSounds, footsteps);
+
             var walkTour = Array.IndexOf(arguments, WalkTourArgument) >= 0;
             var flyTour = Array.IndexOf(arguments, TourArgument) >= 0;
             if (explicitStart || flyTour)
@@ -136,8 +152,13 @@ public partial class Main : Node3D
             {
                 if (argument.StartsWith(ScreenshotArgument))
                 {
-                    AddChild(new ScreenshotTaker { Tiles = tiles, Path = argument[ScreenshotArgument.Length..] });
+                    AddChild(new ScreenshotTaker { Tiles = tiles, Creatures = creatures, Path = argument[ScreenshotArgument.Length..] });
                 }
+            }
+
+            if (Array.IndexOf(arguments, CreatureCheckArgument) >= 0)
+            {
+                AddChild(new CreatureCheck { Tiles = tiles, Creatures = creatures });
             }
 
             if (walkTour || flyTour)
@@ -149,6 +170,34 @@ public partial class Main : Node3D
         {
             GD.PushError($"Could not open the client at {clientPath}: {e.Message}");
         }
+    }
+
+    /// <summary>
+    /// Files exported from the database, or <c>--sample-spawns[=count]</c>'s made-up creatures around
+    /// the start, which need no database.
+    /// </summary>
+    private static ISpawnSource ChooseSpawnSource(string[] arguments, CreatureDisplayTable displays, int mapId, System.Numerics.Vector3 start)
+    {
+        foreach (var argument in arguments)
+        {
+            if (argument.StartsWith(SampleSpawnsArgument) || argument == CreatureCheckArgument)
+            {
+                var count = argument.StartsWith(SampleSpawnsArgument + "=")
+                    ? int.Parse(argument[(SampleSpawnsArgument.Length + 1)..], CultureInfo.InvariantCulture)
+                    : SampleSpawns.DefaultCount;
+                return new SampleSpawns(displays, start.X, start.Y, count);
+            }
+        }
+
+        var folder = arguments.FirstOrDefault(a => a.StartsWith(SpawnsArgument))?[SpawnsArgument.Length..];
+        if (folder is null)
+        {
+            var project = ProjectSettings.GlobalizePath(ProjectSpawnFolder);
+            folder = System.IO.Directory.Exists(project) ? project : ProjectSettings.GlobalizePath(DefaultSpawnFolder);
+        }
+
+        GD.Print($"Spawn files: {folder}");
+        return new SpawnFiles(folder, mapId);
     }
 
     private static Node3D LoadPlayer()

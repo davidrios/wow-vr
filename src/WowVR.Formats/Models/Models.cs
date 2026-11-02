@@ -14,7 +14,7 @@ public enum ModelBlend
 }
 
 /// <summary>How a surface draws. Equal materials can share a GPU material.</summary>
-public readonly record struct ModelMaterial(string Texture, ModelBlend Blend, bool Unlit, bool TwoSided, bool Repeat);
+public readonly record struct ModelMaterial(string Texture, ModelBlend Blend, bool Unlit, bool TwoSided, bool Repeat, M2Effect? Effect = null, string? Texture2 = null, M2BoneBake? Bake = null, bool Billboard = false);
 
 /// <summary>One material's triangles with only the vertices they use, in Godot axes.</summary>
 public sealed class ModelSurface
@@ -23,6 +23,9 @@ public sealed class ModelSurface
     public required Vector3[] Positions { get; init; }
     public required Vector3[] Normals { get; init; }
     public required Vector2[] TexCoords { get; init; }
+
+    /// <summary>The second UV set, when a material uses it.</summary>
+    public Vector2[]? TexCoords2 { get; init; }
 
     /// <summary>4 bytes per vertex: red, green, blue, alpha. Null when there are none.</summary>
     public byte[]? Colors { get; init; }
@@ -36,7 +39,7 @@ internal static unsafe class MeshReader
     public static string Text(byte* text, nuint length) => Encoding.UTF8.GetString(text, checked((int)length));
 
     /// <summary>Splits a mesh by material, merging batches that share one.</summary>
-    public static List<ModelSurface> Surfaces(in WaMesh mesh, Func<uint, ModelMaterial?> materialOf)
+    public static List<ModelSurface> Surfaces(in WaMesh mesh, Func<uint, ModelMaterial?> materialOf, float* texCoords2 = null)
     {
         var positions = new ReadOnlySpan<float>(mesh.Positions, checked((int)mesh.VertexCount * 3));
         var normals = new ReadOnlySpan<float>(mesh.Normals, checked((int)mesh.VertexCount * 3));
@@ -92,12 +95,18 @@ internal static unsafe class MeshReader
             var outNormals = new Vector3[used.Count];
             var outTexCoords = new Vector2[used.Count];
             var outColors = colors.IsEmpty ? null : new byte[used.Count * 4];
+            var outTexCoords2 = texCoords2 is not null && material.Effect?.UsesSecondUv == true ? new Vector2[used.Count] : null;
             for (var i = 0; i < used.Count; i++)
             {
                 var v = used[i];
                 outPositions[i] = WowCoords.ModelToGodot(new Vector3(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]));
                 outNormals[i] = WowCoords.ModelToGodot(new Vector3(normals[v * 3], normals[v * 3 + 1], normals[v * 3 + 2]));
                 outTexCoords[i] = new Vector2(texCoords[v * 2], texCoords[v * 2 + 1]);
+                if (outTexCoords2 is not null)
+                {
+                    outTexCoords2[i] = new Vector2(texCoords2[v * 2], texCoords2[v * 2 + 1]);
+                }
+
                 if (outColors is not null)
                 {
                     colors.Slice(v * 4, 4).CopyTo(outColors.AsSpan(i * 4));
@@ -110,6 +119,7 @@ internal static unsafe class MeshReader
                 Positions = outPositions,
                 Normals = outNormals,
                 TexCoords = outTexCoords,
+                TexCoords2 = outTexCoords2,
                 Colors = outColors,
                 Indices = surfaceIndices.ToArray(),
             });
@@ -122,11 +132,6 @@ internal static unsafe class MeshReader
 /// <summary>An M2 model in its rest pose.</summary>
 public sealed class M2Model
 {
-    private const uint FlagUnlit = 0x1;
-    private const uint FlagTwoSided = 0x4;
-    private const uint TextureWrapX = 0x1;
-    private const uint TextureWrapY = 0x2;
-
     public required IReadOnlyList<ModelSurface> Surfaces { get; init; }
 
     /// <summary>The distance of the furthest vertex from the model's origin.</summary>
@@ -161,26 +166,20 @@ public sealed class M2Model
         {
             ModelNativeMethods.M2Mesh(model, out var mesh);
 
+            var looks = M2BatchLooks.Read(model, mesh.BatchCount, BlendOf);
+
+            // Each batch's material says which, so batches with an effect keep their own surface.
             ModelMaterial? MaterialOf(uint index)
             {
-                if (ModelNativeMethods.M2Material(model, index, out var material) != WaStatus.Ok
-                    || material.Texture == ModelNativeMethods.NoTexture
-                    || ModelNativeMethods.M2TextureName(model, material.Texture, out var text, out var length) != WaStatus.Ok)
-                {
-                    return null;
-                }
-
-                return new ModelMaterial(
-                    MeshReader.Text(text, length),
-                    BlendOf(material.BlendMode),
-                    (material.Flags & FlagUnlit) != 0,
-                    (material.Flags & FlagTwoSided) != 0,
-                    (material.TextureFlags & (TextureWrapX | TextureWrapY)) != 0);
+                var look = looks[index];
+                return look.Hidden || look.Texture is null
+                    ? null
+                    : new ModelMaterial(look.Texture, look.Blend, look.Unlit, look.TwoSided, look.Repeat, look.Effect, look.Effect?.Texture2Name);
             }
 
             return new M2Model
             {
-                Surfaces = MeshReader.Surfaces(mesh, MaterialOf),
+                Surfaces = MeshReader.Surfaces(mesh, MaterialOf, ModelNativeMethods.M2TexCoords2(model)),
                 Radius = ModelNativeMethods.M2BoundingRadius(model),
                 CollisionFaces = ReadCollision(model),
             };
@@ -217,7 +216,9 @@ public sealed class M2Model
 }
 
 /// <summary>A doodad placed in a WMO's own space, in Godot axes.</summary>
-public readonly record struct WmoDoodad(string Model, PlacementTransform Transform);
+/// <param name="Index">Its place in <see cref="WmoRoot.Doodads"/>, which groups refer to it by.</param>
+/// <param name="Color">Its baked light: red, green and blue from 0 to 1.</param>
+public readonly record struct WmoDoodad(string Model, PlacementTransform Transform, int Index = 0, Vector3 Color = default);
 
 /// <summary>A WMO root file.</summary>
 public sealed class WmoRoot
@@ -232,6 +233,18 @@ public sealed class WmoRoot
 
     /// <summary>The corners of the WMO's bounding box in its own space, Z up, as stored.</summary>
     public required (Vector3 Min, Vector3 Max) Bounds { get; init; }
+
+    /// <summary>MOPV, in the file's axes.</summary>
+    public Vector3[] PortalVertices { get; init; } = [];
+
+    /// <summary>MOPT: the first vertex, how many, and the plane, in the file's axes.</summary>
+    public (int Start, int Count, Vector3 Normal, float Offset)[] Portals { get; init; } = [];
+
+    /// <summary>MOPR: the portal, the group behind it, and the side it's seen from. Groups say which range is theirs.</summary>
+    public (int Portal, int Group, int Side)[] PortalRefs { get; init; } = [];
+
+    /// <summary>MOHD's ambient color: red, green and blue from 0 to 1.</summary>
+    public Vector3 Ambient { get; init; }
 
     public required IReadOnlyList<ModelMaterial> Materials { get; init; }
     public required IReadOnlyList<(int Start, int Count)> DoodadSets { get; init; }
@@ -306,13 +319,40 @@ public sealed class WmoRoot
                     WowCoords.WmoDoodadTransform(
                         new Vector3(doodad.Position[0], doodad.Position[1], doodad.Position[2]),
                         new Quaternion(doodad.Rotation[0], doodad.Rotation[1], doodad.Rotation[2], doodad.Rotation[3]),
-                        doodad.Scale));
+                        doodad.Scale),
+                    i,
+                    ColorOf(doodad.Color));
+            }
+
+            ModelNativeMethods.WmoPortalVertices(wmo, out var portalCorners, out var cornerCount);
+            var portalVertices = new Vector3[cornerCount];
+            for (var i = 0; i < portalVertices.Length; i++)
+            {
+                portalVertices[i] = new Vector3(portalCorners[i * 3], portalCorners[i * 3 + 1], portalCorners[i * 3 + 2]);
+            }
+
+            var portals = new (int, int, Vector3, float)[ModelNativeMethods.WmoPortalCount(wmo)];
+            for (var i = 0; i < portals.Length; i++)
+            {
+                ModelNativeMethods.WmoPortal(wmo, (uint)i, out var portal);
+                portals[i] = ((int)portal.Start, (int)portal.Count, new Vector3(portal.Normal[0], portal.Normal[1], portal.Normal[2]), portal.Offset);
+            }
+
+            var portalRefs = new (int, int, int)[ModelNativeMethods.WmoPortalRefCount(wmo)];
+            for (var i = 0; i < portalRefs.Length; i++)
+            {
+                ModelNativeMethods.WmoPortalRef(wmo, (uint)i, out var portalRef);
+                portalRefs[i] = ((int)portalRef.Portal, (int)portalRef.Group, portalRef.Side);
             }
 
             return new WmoRoot
             {
+                PortalVertices = portalVertices,
+                Portals = portals,
+                PortalRefs = portalRefs,
                 GroupCount = (int)ModelNativeMethods.WmoGroupCount(wmo),
                 Flags = ModelNativeMethods.WmoFlags(wmo),
+                Ambient = ColorOf(ModelNativeMethods.WmoAmbientColor(wmo)),
                 Bounds = (new Vector3(bounds[0], bounds[1], bounds[2]), new Vector3(bounds[3], bounds[4], bounds[5])),
                 Materials = materials,
                 DoodadSets = sets,
@@ -324,6 +364,10 @@ public sealed class WmoRoot
             ModelNativeMethods.WmoFree(wmo);
         }
     }
+
+    /// <summary>A stored 0xAARRGGBB as red, green and blue from 0 to 1.</summary>
+    private static Vector3 ColorOf(uint color) =>
+        new(((color >> 16) & 0xFF) / 255f, ((color >> 8) & 0xFF) / 255f, (color & 0xFF) / 255f);
 
     private static ModelBlend BlendOf(uint mode) => mode switch
     {
@@ -338,9 +382,24 @@ public sealed class WmoRoot
 /// <summary>One group of a WMO.</summary>
 public sealed class WmoGroup
 {
-    private const uint FlagIndoor = 0x2000;
+    private const uint FlagInterior = 0x2000;
+    private const uint FlagExteriorLit = 0x40;
 
+    /// <summary>Lit by what's baked into it rather than the sky. A group can be flagged interior and still be lit from outside, as much of Stormwind's streets are.</summary>
     public required bool Indoor { get; init; }
+
+    /// <summary>The doodads standing in this group, as indexes into <see cref="WmoRoot.Doodads"/>.</summary>
+    public required ushort[] DoodadRefs { get; init; }
+
+    /// <summary>The group's box in the file's axes.</summary>
+    public required (Vector3 Min, Vector3 Max) Bounds { get; init; }
+
+    /// <summary>Its range of <see cref="WmoRoot.PortalRefs"/>.</summary>
+    public required (int Start, int Count) PortalRange { get; init; }
+
+
+    /// <summary>MOGP flags.</summary>
+    public required uint Flags { get; init; }
     public required IReadOnlyList<ModelSurface> Surfaces { get; init; }
 
     /// <summary>Three corners per triangle in Godot axes, wound like the surfaces.</summary>
@@ -348,6 +407,25 @@ public sealed class WmoGroup
 
     /// <summary>Null when the group has no liquid.</summary>
     public Terrain.LiquidSurface? Liquid { get; init; }
+
+    private static unsafe (Vector3 Min, Vector3 Max) ReadBounds(nint group)
+    {
+        var bounds = stackalloc float[6];
+        ModelNativeMethods.WmoGroupBounds(group, bounds);
+        return (new Vector3(bounds[0], bounds[1], bounds[2]), new Vector3(bounds[3], bounds[4], bounds[5]));
+    }
+
+    private static (int Start, int Count) ReadPortalRange(nint group)
+    {
+        ModelNativeMethods.WmoGroupPortalRefs(group, out var start, out var count);
+        return ((int)start, (int)count);
+    }
+
+    private static unsafe ushort[] ReadDoodadRefs(nint group)
+    {
+        ModelNativeMethods.WmoGroupDoodadRefs(group, out var refs, out var count);
+        return new ReadOnlySpan<ushort>(refs, checked((int)count)).ToArray();
+    }
 
     private static unsafe Terrain.LiquidSurface? ReadLiquid(nint group, uint rootFlags)
     {
@@ -397,7 +475,11 @@ public sealed class WmoGroup
 
             return new WmoGroup
             {
-                Indoor = (ModelNativeMethods.WmoGroupFlags(group) & FlagIndoor) != 0,
+                Indoor = (ModelNativeMethods.WmoGroupFlags(group) & FlagInterior) != 0 && (ModelNativeMethods.WmoGroupFlags(group) & FlagExteriorLit) == 0,
+                DoodadRefs = ReadDoodadRefs(group),
+                Bounds = ReadBounds(group),
+                PortalRange = ReadPortalRange(group),
+                Flags = ModelNativeMethods.WmoGroupFlags(group),
                 Surfaces = MeshReader.Surfaces(mesh, m => m < root.Materials.Count ? root.Materials[(int)m] : null),
                 CollisionFaces = faces,
                 Liquid = ReadLiquid(group, root.Flags),

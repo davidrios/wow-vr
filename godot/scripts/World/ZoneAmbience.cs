@@ -206,7 +206,7 @@ public partial class ZoneAmbience : Node
         started(path);
     }
 
-    private static AudioStream? ToStream(string path, byte[] data)
+    public static AudioStream? ToStream(string path, byte[] data)
     {
         if (path.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
         {

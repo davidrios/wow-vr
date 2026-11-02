@@ -70,8 +70,19 @@ public partial class TileManager : Node3D
     private double _originX;
     private double _originZ;
     private bool _building;
+    private double _materialClock;
     private bool _checkerboard = Array.IndexOf(OS.GetCmdlineUserArgs(), "--checkerboard") >= 0;
     private bool _swapVertexColors = Array.IndexOf(OS.GetCmdlineUserArgs(), "--swap-vertex-colors") >= 0;
+
+    /// <summary>A tile's terrain joined the scene, and things can be added to its node.</summary>
+    public event Action<(int X, int Y), Node3D, TerrainHeights>? TileAdded;
+
+    /// <summary>A tile is leaving, along with its node's children.</summary>
+    public event Action<(int X, int Y)>? TileRemoved;
+
+    public ModelLibrary Models { get; private set; } = null!;
+
+    public IPlayer Player => _player;
 
     public int LoadedTileCount => _tiles.Values.Count(t => t is not null);
 
@@ -119,7 +130,8 @@ public partial class TileManager : Node3D
         _originZ = originZ;
         _builder = new TerrainBuilder(source, map);
         _liquids = liquids;
-        _objectsBuilder = new TileObjectsBuilder(new ModelLibrary(source, liquids), map);
+        Models = new ModelLibrary(source, liquids);
+        _objectsBuilder = new TileObjectsBuilder(Models, map);
         TerrainBuilder.LoadShared();
     }
 
@@ -184,6 +196,8 @@ public partial class TileManager : Node3D
             (float)(position.X + _originX), position.Y, (float)(position.Z + _originZ)));
         var center = WowCoords.TileAt(wow.X, wow.Y);
 
+        _materialClock += delta;
+        Models.AnimateMaterials(_materialClock);
         CommitOneBuiltTile();
         CommitBuiltObjects();
         AddNearestObjects();
@@ -342,12 +356,14 @@ public partial class TileManager : Node3D
         _tiles[built.Tile] = node;
         _collision.AddTile(built.Tile, node, built.Collision);
         _objectsToBuild[built.Tile] = built.Terrain!;
+        TileAdded?.Invoke(built.Tile, node, new TerrainHeights(built.Terrain, built.Tile.X, built.Tile.Y));
     }
 
     private void UnloadFarTiles((int X, int Y) center)
     {
         foreach (var tile in _tiles.Keys.Where(t => Distance(t, center) > UnloadRadius).ToList())
         {
+            TileRemoved?.Invoke(tile);
             _collision.RemoveTile(tile);
             _objectsToBuild.Remove(tile);
             _objects.Remove(tile);

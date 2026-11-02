@@ -16,6 +16,7 @@ internal unsafe struct WaTerrainChunk
     public uint LayerCount;
     public fixed uint TextureIds[4];
     public fixed uint LayerFlags[4];
+    public fixed uint EffectIds[4];
     public byte* Alpha;
     public byte* VertexColors;
 }

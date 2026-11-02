@@ -22,6 +22,7 @@ public static class AppSettings
     private const string ClientSection = "client";
     private const string MovementSection = "movement";
     private const string AudioSection = "audio";
+    private const string InterfaceSection = "interface";
     private const string PathKey = "path";
     private const string EnvironmentVariable = "WOWVR_CLIENT_PATH";
 
@@ -78,6 +79,19 @@ public static class AppSettings
     {
         get => Read(MovementSection, "vignette_size", 0.65f).AsSingle();
         set => WriteMovement("vignette_size", Mathf.Clamp(value, 0f, 1f));
+    }
+
+    private static bool? _namePlates;
+
+    /// <summary>Kept in memory because creatures read it every frame.</summary>
+    public static bool NamePlates
+    {
+        get => _namePlates ??= Read(InterfaceSection, "name_plates", true).AsBool();
+        set
+        {
+            _namePlates = value;
+            Write(InterfaceSection, "name_plates", value);
+        }
     }
 
     private static float? _musicVolume;

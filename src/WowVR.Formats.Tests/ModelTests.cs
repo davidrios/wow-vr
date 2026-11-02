@@ -43,8 +43,204 @@ public class PlacementMathTests
     }
 }
 
+public class WmoPortalTests
+{
+    private const uint Exterior = 0x8;
+    private const uint Interior = 0x2000;
+
+    /// <summary>Outside, then room 1 through a door at X = 10 facing the camera, then room 2 behind room 1 through a door at X = 20.</summary>
+    private static WmoPortals House() => new(
+        [Exterior, Interior, Interior],
+        [(new Vector3(-100, -100, -100), new Vector3(100, 100, 100)), (new Vector3(10, -5, -5), new Vector3(20, 5, 5)), (new Vector3(20, -5, -5), new Vector3(30, 5, 5))],
+        [new(10, -1, -1), new(10, 1, -1), new(10, 1, 1), new(10, -1, 1), new(20, -1, -1), new(20, 1, -1), new(20, 1, 1), new(20, -1, 1)],
+        [(0, 4, Vector3.UnitX, -10f), (4, 4, Vector3.UnitX, -20f)],
+        [(0, 0, 1, -1), (1, 0, 0, 1), (1, 1, 2, -1), (2, 1, 1, 1)]);
+
+    /// <summary>A camera at the origin-relative position, looking along +X, with a 90 degree view.</summary>
+    private static Func<Vector3, (float X, float Y, float W)> LookingAlongX(Vector3 camera) =>
+        p => (p.Y - camera.Y, p.Z - camera.Z, p.X - camera.X);
+
+    private static bool[] Compute(WmoPortals portals, Vector3 camera, Func<Vector3, (float X, float Y, float W)> toClip)
+    {
+        var visible = new bool[portals.GroupCount];
+        portals.Compute(camera, toClip, visible);
+        return visible;
+    }
+
+    [Fact]
+    public void LookingAtTheDoorShowsWhatsBehindIt()
+    {
+        var camera = new Vector3(0, 0, 0);
+
+        Assert.Equal([true, true, true], Compute(House(), camera, LookingAlongX(camera)));
+    }
+
+    [Fact]
+    public void LookingAwayFromTheDoorHidesTheRooms()
+    {
+        var camera = new Vector3(0, 0, 0);
+
+        var lookingBack = Compute(House(), camera, p => (p.Y, p.Z, camera.X - p.X));
+
+        Assert.Equal([true, false, false], lookingBack);
+    }
+
+    [Fact]
+    public void ADoorOffToTheSideOfTheViewIsntFollowed()
+    {
+        var camera = new Vector3(0, 0, 0);
+
+        var aside = Compute(House(), camera, p => (p.Y + 50f * p.X, p.Z, p.X));
+
+        Assert.Equal([true, false, false], aside);
+    }
+
+    [Fact]
+    public void FromBehindTheDoorsPlaneItLeadsNowhere()
+    {
+        var camera = new Vector3(40, 0, 0);
+
+        var visible = Compute(House(), camera, p => (p.Y, p.Z, camera.X - p.X));
+
+        Assert.Equal([true, false, false], visible);
+    }
+
+    [Fact]
+    public void InsideARoomOnlyPortalsLeadOut()
+    {
+        var camera = new Vector3(15, 0, 0);
+
+        var visible = Compute(House(), camera, LookingAlongX(camera));
+
+        Assert.True(visible[1]);
+        Assert.True(visible[2]);
+        Assert.False(visible[0]);
+    }
+
+    [Fact]
+    public void AWmoWithNoOutsideShowsEverythingFromOutside()
+    {
+        var portals = new WmoPortals([Interior], [(Vector3.Zero, Vector3.One)], [], [], []);
+
+        Assert.Equal([true], Compute(portals, new Vector3(50, 0, 0), p => (0, 0, 1)));
+    }
+}
+
 public class ClientModelTests(ClientFixture client) : IClassFixture<ClientFixture>
 {
+    [Theory]
+    [InlineData(@"World\wmo\Lorderon\Undercity\Undercity.wmo")]
+    [InlineData(@"World\wmo\Azeroth\Buildings\Stormwind\Stormwind.wmo")]
+    public void PortalPlanesAndSidesReadTheWayTheCullingExpects(string path)
+    {
+        SkipWithoutClient();
+        var root = WmoRoot.Parse(client.Source!.Read(path));
+        var groups = Enumerable.Range(0, root.GroupCount).Select(i => WmoGroup.Parse(client.Source.Read(WmoRoot.GroupPath(path, i)), root)).ToArray();
+
+        foreach (var (start, count, normal, offset) in root.Portals)
+        {
+            for (var i = start; i < start + count; i++)
+            {
+                Assert.True(Math.Abs(Vector3.Dot(normal, root.PortalVertices[i]) + offset) < 0.1f);
+            }
+        }
+
+        // The group listing a portal mostly lies on the side the listing states.
+        var (agree, total) = (0, 0);
+        foreach (var group in groups)
+        {
+            var center = (group.Bounds.Min + group.Bounds.Max) / 2;
+            for (var i = group.PortalRange.Start; i < group.PortalRange.Start + group.PortalRange.Count; i++)
+            {
+                var (portal, _, side) = root.PortalRefs[i];
+                total++;
+                agree += Math.Sign(Vector3.Dot(root.Portals[portal].Normal, center) + root.Portals[portal].Offset) == side ? 1 : 0;
+            }
+        }
+
+        Assert.True(agree >= total * 0.9, $"{agree} of {total}");
+    }
+
+    [Fact]
+    public void UndercitysInteriorShowsFromInside()
+    {
+        SkipWithoutClient();
+        const string Path = @"World\wmo\Lorderon\Undercity\Undercity.wmo";
+        var root = WmoRoot.Parse(client.Source!.Read(Path));
+        var groups = Enumerable.Range(0, root.GroupCount).Select(i => WmoGroup.Parse(client.Source.Read(WmoRoot.GroupPath(Path, i)), root)).ToArray();
+        var references = new List<(int, int, int, int)>();
+        for (var g = 0; g < groups.Length; g++)
+        {
+            for (var i = groups[g].PortalRange.Start; i < groups[g].PortalRange.Start + groups[g].PortalRange.Count; i++)
+            {
+                var (portal, other, side) = root.PortalRefs[i];
+                references.Add((g, portal, other, side));
+            }
+        }
+
+        var portals = new WmoPortals(groups.Select(g => g.Flags).ToArray(), groups.Select(g => g.Bounds).ToArray(), root.PortalVertices, root.Portals, references.ToArray());
+        var biggest = Array.IndexOf(groups, groups.Where(g => g.Indoor).MaxBy(g => (g.Bounds.Max - g.Bounds.Min).LengthSquared()));
+        var camera = (groups[biggest].Bounds.Min + groups[biggest].Bounds.Max) / 2;
+        var visible = new bool[groups.Length];
+
+        portals.Compute(camera, p => (p.Y - camera.Y, p.Z - camera.Z, p.X - camera.X), visible);
+
+        Assert.True(visible[biggest]);
+        Assert.True(visible.Count(v => v) > 1, "nothing shows through its portals");
+    }
+
+    [Fact]
+    public void UndercitysInteriorHidesFromTheSurface()
+    {
+        SkipWithoutClient();
+        const string Path = @"World\wmo\Lorderon\Undercity\Undercity.wmo";
+        const uint Exterior = 0x8;
+        var root = WmoRoot.Parse(client.Source!.Read(Path));
+        var groups = Enumerable.Range(0, root.GroupCount).Select(i => WmoGroup.Parse(client.Source.Read(WmoRoot.GroupPath(Path, i)), root)).ToArray();
+        var references = new List<(int, int, int, int)>();
+        for (var g = 0; g < groups.Length; g++)
+        {
+            for (var i = groups[g].PortalRange.Start; i < groups[g].PortalRange.Start + groups[g].PortalRange.Count; i++)
+            {
+                var (portal, other, side) = root.PortalRefs[i];
+                references.Add((g, portal, other, side));
+            }
+        }
+
+        Assert.NotEmpty(references);
+        var portals = new WmoPortals(groups.Select(g => g.Flags).ToArray(), groups.Select(g => g.Bounds).ToArray(), root.PortalVertices, root.Portals, references.ToArray());
+
+        // High above, looking straight along +X, past the top of the whole thing.
+        var height = root.Bounds.Max.Z + 500f;
+        var camera = new Vector3(root.Bounds.Min.X - 2000f, 0, height);
+        var visible = new bool[groups.Length];
+        portals.Compute(camera, p => (p.Y - camera.Y, p.Z - camera.Z, p.X - camera.X), visible);
+
+        Assert.All(groups.Select((g, i) => (g, i)).Where(x => (x.g.Flags & Exterior) != 0), x => Assert.True(visible[x.i]));
+        Assert.True(visible.Count(v => !v) > groups.Length / 2, $"{visible.Count(v => !v)} of {groups.Length} are hidden");
+    }
+
+    [Theory]
+    [InlineData(@"World\wmo\Azeroth\Buildings\Stormwind\Stormwind.wmo")]
+    [InlineData(@"World\wmo\Lorderon\Undercity\Undercity.wmo")]
+    public void GroupsLitFromOutsideArentIndoor(string path)
+    {
+        SkipWithoutClient();
+        const uint Interior = 0x2000;
+        const uint ExteriorLit = 0x40;
+        var root = WmoRoot.Parse(client.Source!.Read(path));
+        var groups = Enumerable.Range(0, root.GroupCount)
+            .Select(i => client.Source.Read(WmoRoot.GroupPath(path, i)))
+            .Where(g => g is { Length: > 0 })
+            .Select(g => WmoGroup.Parse(g!, root))
+            .ToList();
+
+        Assert.Contains(groups, g => (g.Flags & (Interior | ExteriorLit)) == (Interior | ExteriorLit));
+        Assert.All(groups, g => Assert.Equal((g.Flags & Interior) != 0 && (g.Flags & ExteriorLit) == 0, g.Indoor));
+        Assert.Contains(groups, g => g.Indoor && g.DoodadRefs.Length > 0);
+        Assert.All(groups, g => Assert.All(g.DoodadRefs, r => Assert.True(r < root.Doodads.Count)));
+    }
+
     private const int GoldshireX = 31;
     private const int GoldshireY = 49;
 

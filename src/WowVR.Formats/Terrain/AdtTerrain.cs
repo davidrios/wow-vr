@@ -31,6 +31,9 @@ public sealed class TerrainChunk
     /// <summary>MCLY flags of each layer, 4 slots.</summary>
     public required uint[] LayerFlags { get; init; }
 
+    /// <summary>Each layer's GroundEffectTexture row, 4 slots.</summary>
+    public required uint[] EffectIds { get; init; }
+
     /// <summary>Alpha of layers 1 to 3: 3 maps of 64x64 bytes, row by row.</summary>
     public required byte[] Alpha { get; init; }
 
@@ -213,6 +216,7 @@ public sealed class AdtTerrain
                 (int)chunk.TextureIds[3],
             ],
             LayerFlags = [chunk.LayerFlags[0], chunk.LayerFlags[1], chunk.LayerFlags[2], chunk.LayerFlags[3]],
+            EffectIds = [chunk.EffectIds[0], chunk.EffectIds[1], chunk.EffectIds[2], chunk.EffectIds[3]],
             Alpha = new ReadOnlySpan<byte>(chunk.Alpha, 3 * TerrainChunk.AlphaMapSize * TerrainChunk.AlphaMapSize).ToArray(),
             VertexColors = new ReadOnlySpan<byte>(chunk.VertexColors, TerrainChunk.VertexCount * 4).ToArray(),
         };

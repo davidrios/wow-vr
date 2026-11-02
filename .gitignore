@@ -32,3 +32,7 @@ spawns/
 
 # Local converted caches
 cache/
+
+# AzerothCore tables and anything made from them: never commit
+data/
+__pycache__/

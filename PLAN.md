@@ -188,7 +188,7 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - Zone detection via `AreaTable`; zone music and ambient sound from the client's files.
 - Zone name pop-up when crossing borders.
 
-**Done when:** sunset at Crystal Lake, with the right music, is genuinely nice. Built and checked on desktop on 2026-11-01, waiting for hands-on listening and a headset session. See `docs/decisions/0006-liquids-sky-zones.md`.
+**Done when:** sunset at Crystal Lake, with the right music, is genuinely nice. Passed on 2026-11-02 after a hands-on session in the headset. Some music still seems wrong at times, which isn't looked into yet. See `docs/decisions/0006-liquids-sky-zones.md`.
 
 ### M6 — Creatures and NPCs
 - `tools/spawn-exporter`: connect to a locally imported AzerothCore world DB and export per-tile JSON:
@@ -200,7 +200,7 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - Stream creatures with tiles; cap active animated creatures for performance.
 - Name plates (toggleable).
 
-**Done when:** Goldshire's guards, Marshal Dughan, and the kobolds in Fargodeep Mine are all where they should be, moving naturally.
+**Done when:** Goldshire's guards, Marshal Dughan, and the kobolds in Fargodeep Mine are all where they should be, moving naturally. Built on 2026-11-02, and `--creature-check` passes on desktop with made-up spawns. It now runs from real AzerothCore tables, turned into spawn files by `tools/spawn-exporter`, waiting for hands-on checking and a headset session. See `docs/decisions/0007-creatures.md`.
 
 ### M7 — Multiplayer
 - Headless dedicated server build (Godot `--headless`) using high-level multiplayer over ENet.

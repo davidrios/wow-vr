@@ -109,6 +109,7 @@ public partial class WorldTour : Node
     private void Report()
     {
         var sorted = _frames.Order().ToList();
+        GD.Print($"Animated materials: {Tiles.Models.AnimatedMaterialCount}");
         GD.Print($"Tour finished: {sorted.Count} frames, {Tiles.LoadedTileCount} tiles loaded.");
         GD.Print($"Frame ms: median {sorted[sorted.Count / 2]:F1}, 99% {sorted[(int)(sorted.Count * 0.99)]:F1}, worst {sorted[^1]:F1}");
         GD.Print($"Frames over 11.1 ms: {sorted.Count(f => f > 11.1)}, over 22.2 ms: {sorted.Count(f => f > 22.2)}, over 50 ms: {sorted.Count(f => f > 50)}");

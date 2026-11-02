@@ -15,6 +15,7 @@ public partial class ScreenshotTaker : Node
 
     public required TileManager Tiles { get; init; }
     public required string Path { get; init; }
+    public CreatureManager? Creatures { get; init; }
 
     private double _age;
     private double _settled;
@@ -22,7 +23,7 @@ public partial class ScreenshotTaker : Node
     public override void _Process(double delta)
     {
         _age += delta;
-        var ready = Tiles.LoadedTileCount >= TilesBeforeShot && !Tiles.IsBusy;
+        var ready = Tiles.LoadedTileCount >= TilesBeforeShot && !Tiles.IsBusy && Creatures?.IsBusy != true;
         _settled = ready ? _settled + delta : 0;
 
         if (_settled < SettleSeconds && _age < GiveUpSeconds)

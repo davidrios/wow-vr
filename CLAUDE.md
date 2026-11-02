@@ -4,7 +4,7 @@ VR exploration of the WotLK WoW world in Godot 4 (.NET / C#), reading the player
 
 ## Hard rules
 - **Never commit or generate Blizzard assets** (game files, extracted textures/models/maps/DBCs, music, or converted versions). They're read at runtime from the player's install. If a test needs game data, read it from `WOWVR_CLIENT_PATH` and skip when it's unset.
-- **Never commit exported spawn data** from emulator databases; only the exporter tool.
+- **Never commit exported spawn data** from emulator databases; only the exporter tool. The AzerothCore tables in `data/` and the files in `spawns/` are both gitignored.
 - Keep `src/WowVR.Formats` free of any `Godot` dependency.
 
 ## Conventions
@@ -22,6 +22,9 @@ VR exploration of the WotLK WoW world in Godot 4 (.NET / C#), reading the player
 - Tests: `dotnet test --project src/WowVR.Formats.Tests`
 - Terrain flight test: `godot --path godot -- --tour` (flies Goldshire to Northshire, prints frame times, quits); `--tour=walk` walks it through physics
 - Movement check: `godot --path godot -- --movement-check` (prints PASS or FAIL for standing, flying, teleports and recovery, then quits); add `--xr-player` to run the VR player's scene, physics and controllers without a headset, using simulated trackers (not menu clicks)
+- Creature check: `godot --path godot -- --creature-check` (places sample creatures, prints PASS or FAIL for animating, moving, staying on the ground and frame time, then quits); add `--xr-player` for the VR player, or `--sample-spawns=400` to test the cap with a crowd
+- Sample creatures: `godot --path godot -- --sample-spawns` shows made-up creatures around the start, which needs no spawn export. Exported files are read from the repo's `spawns/`, then `user://spawns`, or `--spawns=<folder>`
+- Spawn files: `python tools/spawn-exporter/export_spawns.py` turns `data/azerothcore/*.json` into `spawns/`, and `python -m unittest discover tools/spawn-exporter` tests it
 - Desktop keys: WASD walks, Shift goes faster, F toggles flying, Q/E go down/up while flying, Tab opens the menu (or start with `-- --open-menu`)
 - VR controls: left stick moves, left Y toggles flying, left stick click boosts flight, left trigger teleports, left X opens the wrist menu, right stick turns, right trigger clicks in the menu
 - Debug keys: F2 prints the location and textures under the camera; F3 toggles a checkerboard of vertex-color-only chunks (or start with `-- --checkerboard`); F4 swaps vertex colors between BGRA and RGBA (or `-- --swap-vertex-colors`)

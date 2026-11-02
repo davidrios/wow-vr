@@ -10,7 +10,8 @@ namespace WowVR.Converters;
 public sealed record DoodadBatch(MultiMesh MultiMesh, float VisibleRange, Vector3 Center, M2Asset Model, Transform3D[] Transforms);
 
 /// <summary>A WMO on a tile, relative to the tile's corner.</summary>
-public sealed record WmoInstance(WmoAsset Asset, Transform3D Transform);
+/// <param name="GroupDoodads">Doodads that show and hide with a group, by group.</param>
+public sealed record WmoInstance(WmoAsset Asset, Transform3D Transform, Dictionary<int, List<DoodadBatch>> GroupDoodads);
 
 /// <summary>What a tile needs added to the scene.</summary>
 public sealed record TileObjects(List<DoodadBatch> Doodads, List<WmoInstance> Wmos);
@@ -35,7 +36,7 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
     {
         library.TrimCaches();
 
-        var cells = new Dictionary<(int X, int Z, string Model), List<PlacementTransform>>();
+        var cells = new Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light)>>();
         var wmos = new List<WmoInstance>();
         var tile = (tileX, tileY);
 
@@ -44,7 +45,7 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
             if (OwnedBy(placement, tile))
             {
                 var transform = WowCoords.TilePlacement(placement.Position, placement.Rotation, placement.Scale, tileX, tileY);
-                AddDoodad(cells, placement.Model, transform);
+                AddDoodad(cells, placement.Model, transform, false, default);
             }
         }
 
@@ -56,12 +57,41 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
             }
 
             var transform = WowCoords.TilePlacement(placement.Position, placement.Rotation, 1f, tileX, tileY);
-            wmos.Add(new WmoInstance(wmo, ToTransform3D(transform)));
-
+            var groupCopies = new Dictionary<(int Group, string Model), List<(PlacementTransform Transform, System.Numerics.Vector3 Light)>>();
             foreach (var doodad in wmo.Root.DoodadsInSet(placement.DoodadSet))
             {
-                AddDoodad(cells, doodad.Model, transform.Compose(doodad.Transform));
+                var interior = wmo.IsInterior(doodad);
+                var group = wmo.GroupOf(doodad);
+                if (group >= 0)
+                {
+                    var key = (group, doodad.Model.ToLowerInvariant());
+                    if (!groupCopies.TryGetValue(key, out var copies))
+                    {
+                        groupCopies[key] = copies = [];
+                    }
+
+                    copies.Add((transform.Compose(doodad.Transform), wmo.Root.Ambient + doodad.Color));
+                    continue;
+                }
+
+                AddDoodad(cells, doodad.Model, transform.Compose(doodad.Transform), interior, wmo.Root.Ambient + doodad.Color);
             }
+
+            var groupDoodads = new Dictionary<int, List<DoodadBatch>>();
+            foreach (var (key, copies) in groupCopies)
+            {
+                if (library.GetM2(key.Model) is { } model)
+                {
+                    if (!groupDoodads.TryGetValue(key.Group, out var batchList))
+                    {
+                        groupDoodads[key.Group] = batchList = [];
+                    }
+
+                    batchList.Add(BuildBatch(model, copies, interior: true));
+                }
+            }
+
+            wmos.Add(new WmoInstance(wmo, ToTransform3D(transform), groupDoodads));
         }
 
         var batches = new List<DoodadBatch>();
@@ -69,7 +99,7 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
         {
             if (library.GetM2(cell.Model) is { } model)
             {
-                batches.Add(BuildBatch(model, transforms));
+                batches.Add(BuildBatch(model, transforms, cell.Interior));
             }
         }
 
@@ -82,31 +112,34 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
         return origin == tile || !map.HasTile(origin.X, origin.Y);
     }
 
-    private static void AddDoodad(Dictionary<(int X, int Z, string Model), List<PlacementTransform>> cells, string model, in PlacementTransform transform)
+    private static void AddDoodad(Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light)>> cells, string model, in PlacementTransform transform, bool interior, System.Numerics.Vector3 light)
     {
         var key = (
             System.Math.Clamp((int)(transform.Origin.X / CellSize), 0, CellsPerSide - 1),
             System.Math.Clamp((int)(transform.Origin.Z / CellSize), 0, CellsPerSide - 1),
-            model.ToLowerInvariant());
+            model.ToLowerInvariant(),
+            interior);
 
         if (!cells.TryGetValue(key, out var transforms))
         {
             cells[key] = transforms = [];
         }
 
-        transforms.Add(transform);
+        transforms.Add((transform, light));
     }
 
-    private static DoodadBatch BuildBatch(M2Asset model, List<PlacementTransform> transforms)
+    private DoodadBatch BuildBatch(M2Asset model, List<(PlacementTransform Transform, System.Numerics.Vector3 Light)> copies, bool interior)
     {
-        // Twelve floats per copy: the transform's three rows.
-        var buffer = new float[transforms.Count * 12];
+        // Twelve floats per copy for the transform's three rows, and four for an interior copy's light.
+        var stride = interior ? 16 : 12;
+        var transforms = copies.Select(c => c.Transform).ToList();
+        var buffer = new float[transforms.Count * stride];
         var scale = 0f;
         var center = Vector3.Zero;
         for (var i = 0; i < transforms.Count; i++)
         {
             var t = transforms[i];
-            var row = i * 12;
+            var row = i * stride;
             buffer[row] = t.AxisX.X;
             buffer[row + 1] = t.AxisY.X;
             buffer[row + 2] = t.AxisZ.X;
@@ -119,6 +152,15 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
             buffer[row + 9] = t.AxisY.Z;
             buffer[row + 10] = t.AxisZ.Z;
             buffer[row + 11] = t.Origin.Z;
+            if (interior)
+            {
+                var light = copies[i].Light;
+                buffer[row + 12] = Mathf.Min(light.X, 1f);
+                buffer[row + 13] = Mathf.Min(light.Y, 1f);
+                buffer[row + 14] = Mathf.Min(light.Z, 1f);
+                buffer[row + 15] = 1f;
+            }
+
             scale = Mathf.Max(scale, t.AxisX.Length());
             center += ToGodot(t.Origin);
         }
@@ -126,7 +168,8 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
         var multiMesh = new MultiMesh
         {
             TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,
-            Mesh = model.Mesh,
+            UseColors = interior,
+            Mesh = interior ? library.InteriorMeshOf(model) : model.Mesh,
             InstanceCount = transforms.Count,
             Buffer = buffer,
         };

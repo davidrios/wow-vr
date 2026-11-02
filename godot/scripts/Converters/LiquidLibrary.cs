@@ -25,6 +25,25 @@ public sealed class LiquidLibrary
 
     private static readonly Shader LiquidShader = GD.Load<Shader>("res://shaders/liquid.gdshader");
 
+    /// <summary>
+    /// The soft shapes the water paints with. It repeats seamlessly, and its mipmaps fade to flat
+    /// grey, so distant water can't shimmer. Generated, so it's not a game asset.
+    /// </summary>
+    private static readonly NoiseTexture2D PaintNoise = new()
+    {
+        Width = 256,
+        Height = 256,
+        Seamless = true,
+        GenerateMipmaps = true,
+        Normalize = true,
+        Noise = new FastNoiseLite
+        {
+            NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth,
+            Frequency = 0.02f,
+            FractalOctaves = 2,
+        },
+    };
+
     private readonly IAssetSource _source;
     private readonly Dictionary<int, LiquidTypeRecord> _types;
     private readonly ConcurrentDictionary<int, Lazy<ShaderMaterial?>> _materials = new();
@@ -90,6 +109,10 @@ public sealed class LiquidLibrary
 
         var textured = type.Kind is LiquidKind.Magma or LiquidKind.Slime;
         material.SetShaderParameter("textured", textured);
+        material.SetShaderParameter("paint_noise", PaintNoise);
+
+        // Oceans paint bigger shapes than rivers. Halving keeps them seamless, as a tile is 32 repeats.
+        material.SetShaderParameter("paint_scale", type.Kind == LiquidKind.Ocean ? 0.5f : 1f);
         material.SetShaderParameter("flow", type.Kind switch
         {
             LiquidKind.Magma => MagmaFlow,

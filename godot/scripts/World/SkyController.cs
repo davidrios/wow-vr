@@ -38,6 +38,8 @@ public partial class SkyController : Node
     /// <summary>Multiplies the tables' fog distance. At 1, fog is where the client's tables put it.</summary>
     private const float FogDistanceScale = 1f;
 
+    private const float MoonRoadStrength = 0.35f;
+
     private const string TimeArgument = "--time=";
 
     private static readonly Shader SkyShader = GD.Load<Shader>("res://shaders/sky.gdshader");
@@ -184,8 +186,11 @@ public partial class SkyController : Node
         material.SetShaderParameter("sky_horizon", ToColor(SkyBand.SkyAboveHorizon));
         material.SetShaderParameter("sun_color", ToColor(SkyBand.Sun));
 
+        // At night the water shows a dimmer road of moonlight from the same light.
         var toSun = SunPath.Direction((float)Ticks);
-        material.SetShaderParameter("sun_direction", new Vector3(toSun.X, toSun.Y, toSun.Z));
+        var night = toSun.Y < 0;
+        material.SetShaderParameter("sun_direction", night ? new Vector3(-toSun.X, -toSun.Y, toSun.Z) : new Vector3(toSun.X, toSun.Y, toSun.Z));
+        material.SetShaderParameter("road_strength", night ? MoonRoadStrength : 1f);
         material.SetShaderParameter("texture_light", ToColor(SkyBand.Ambient) + new Color(0.5f, 0.5f, 0.5f));
     }
 

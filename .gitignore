@@ -36,3 +36,6 @@ cache/
 # AzerothCore tables and anything made from them: never commit
 data/
 __pycache__/
+
+# Local notes between sessions
+docs/handoff.md

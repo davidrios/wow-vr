@@ -43,6 +43,124 @@ public class PlacementMathTests
     }
 }
 
+public class WmoFloorLightTests
+{
+    private static ModelSurface Surface(Vector3[] positions, byte[]? colors, int[] indices) => new()
+    {
+        Material = new ModelMaterial("t", ModelBlend.Opaque, false, false, true),
+        Positions = positions,
+        Normals = new Vector3[positions.Length],
+        TexCoords = new Vector2[positions.Length],
+        Colors = colors,
+        Indices = indices,
+    };
+
+    /// <summary>A floor triangle at this height, with a corner of each color: red, green, blue.</summary>
+    private static ModelSurface Floor(float y) => Surface(
+        [new Vector3(0, y, 0), new Vector3(10, y, 0), new Vector3(0, y, 10)],
+        [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255],
+        [0, 1, 2]);
+
+    [Fact]
+    public void BlendsTheCornersOfTheTriangleUnderThePoint()
+    {
+        var light = WmoFloorLight.Build([Floor(0)])!;
+
+        Assert.Equal(new Vector3(1, 0, 0), light.Sample(new Vector3(0, 0, 0))!.Value);
+
+        var middle = light.Sample(new Vector3(5, 0, 0))!.Value;
+        Assert.Equal(0.5f, middle.X, 3);
+        Assert.Equal(0.5f, middle.Y, 3);
+        Assert.Equal(0f, middle.Z, 3);
+    }
+
+    [Fact]
+    public void FindsATriangleCrossingManyCells()
+    {
+        var light = WmoFloorLight.Build([Floor(0)])!;
+
+        Assert.NotNull(light.Sample(new Vector3(1, 0, 8.5f)));
+    }
+
+    [Fact]
+    public void PicksTheStoreyNearestThePoint()
+    {
+        var upstairs = Surface(
+            [new Vector3(0, 5, 0), new Vector3(10, 5, 0), new Vector3(0, 5, 10)],
+            [9, 9, 9, 255, 9, 9, 9, 255, 9, 9, 9, 255],
+            [0, 1, 2]);
+        var light = WmoFloorLight.Build([Floor(0), upstairs])!;
+
+        Assert.Equal(9f / 255f, light.Sample(new Vector3(1, 4.5f, 1))!.Value.X, 3);
+        Assert.True(light.Sample(new Vector3(1, 0.5f, 1))!.Value.X > 0.5f);
+    }
+
+    [Fact]
+    public void ACreatureKeepsOnlyAHintOfAStrongColor()
+    {
+        var floor = new Vector3(1f, 0.5f, 0.15f);
+
+        var light = WmoFloorLight.ForCreature(floor);
+
+        Assert.True(light.X > light.Z);
+        Assert.True(light.X / light.Z < floor.X / floor.Z / 2f);
+    }
+
+    [Fact]
+    public void ACreatureOnADarkFloorStaysVisible()
+    {
+        var light = WmoFloorLight.ForCreature(Vector3.Zero);
+
+        Assert.Equal(0.6f, light.X, 3);
+        Assert.Equal(0.6f, light.Y, 3);
+        Assert.Equal(0.6f, light.Z, 3);
+    }
+
+    [Fact]
+    public void ADoodadIsNeverBlackOrPastWhite()
+    {
+        Assert.Equal(0.35f, WmoFloorLight.ForDoodad(Vector3.Zero).X, 3);
+
+        var bright = WmoFloorLight.ForDoodad(new Vector3(1.13f));
+        Assert.Equal(1f, bright.X, 3);
+        Assert.Equal(1f, bright.Z, 3);
+    }
+
+    [Fact]
+    public void ADoodadKeepsMoreColorThanACreature()
+    {
+        var blue = new Vector3(0.28f, 0.31f, 0.71f);
+
+        var doodad = WmoFloorLight.ForDoodad(blue);
+        var creature = WmoFloorLight.ForCreature(blue);
+
+        Assert.True(doodad.Z / doodad.X < blue.Z / blue.X);
+        Assert.True(doodad.Z / doodad.X > creature.Z / creature.X);
+    }
+
+    [Fact]
+    public void HasNoAnswerAwayFromAnyFloor()
+    {
+        var light = WmoFloorLight.Build([Floor(0)])!;
+
+        Assert.Null(light.Sample(new Vector3(9, 0, 9)));
+        Assert.Null(light.Sample(new Vector3(1, 3, 1)));
+        Assert.Null(light.Sample(new Vector3(-50, 0, 1)));
+    }
+
+    [Fact]
+    public void WallsAndSurfacesWithoutColorsAreLeftOut()
+    {
+        var wall = Surface(
+            [new Vector3(0, 0, 0), new Vector3(10, 0, 0), new Vector3(0, 10, 0)],
+            [1, 1, 1, 255, 1, 1, 1, 255, 1, 1, 1, 255],
+            [0, 1, 2]);
+        var plain = Surface([new Vector3(0, 0, 0), new Vector3(10, 0, 0), new Vector3(0, 0, 10)], null, [0, 1, 2]);
+
+        Assert.Null(WmoFloorLight.Build([wall, plain]));
+    }
+}
+
 public class WmoPortalTests
 {
     private const uint Exterior = 0x8;

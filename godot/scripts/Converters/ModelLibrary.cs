@@ -40,6 +40,9 @@ public sealed class WmoGroupAsset
 
     public bool Indoor { get; init; }
 
+    /// <summary>The light baked into an indoor group's floor. Null for an outdoor group, or one with no vertex colors.</summary>
+    public WmoFloorLight? FloorLight { get; init; }
+
     public ushort[] DoodadRefs { get; init; } = [];
 
     public uint Flags { get; init; }
@@ -89,6 +92,30 @@ public sealed record WmoAsset(WmoRoot Root, WmoGroupAsset[] Groups)
         return -1;
     }
 
+    /// <summary>
+    /// An indoor doodad's light. With no color of its own it takes the floor's where it stands,
+    /// as the ambient alone is black in WMOs such as Duskwood's crypts. See docs/formats.md.
+    /// </summary>
+    public System.Numerics.Vector3 LightOf(WmoDoodad doodad)
+    {
+        var light = Root.Ambient + doodad.Color;
+        if (doodad.Color == System.Numerics.Vector3.Zero)
+        {
+            foreach (var group in Groups)
+            {
+                if (group.Indoor
+                    && System.Array.IndexOf(group.DoodadRefs, (ushort)doodad.Index) >= 0
+                    && group.FloorLight?.Sample(doodad.Transform.Origin) is { } floor)
+                {
+                    light = floor;
+                    break;
+                }
+            }
+        }
+
+        return WmoFloorLight.ForDoodad(light);
+    }
+
     /// <summary>In the file's axes, as the portals are. The node turns the camera into them.</summary>
     private static WmoPortals? BuildPortals(WmoRoot root, WmoGroupAsset[] groups)
     {
@@ -133,7 +160,11 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
     private readonly ConcurrentDictionary<string, M2Asset?> _m2s = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, WmoAsset?> _wmos = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ImageTexture?> _textures = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<(ModelMaterial Material, bool Indoor), Material?> _materials = new();
+    private readonly ConcurrentDictionary<(ModelMaterial Material, bool Indoor, bool Creature), Material?> _materials = new();
+
+    /// <summary>What a creature's plain batches use, kept so that equal batches share a material.</summary>
+    private static readonly M2Effect PlainOpaque = new() { Combiner = M2Combiners.Opaque, Uv0 = M2UvSource.First, Uv1 = M2UvSource.First };
+    private static readonly M2Effect PlainMod = new() { Combiner = M2Combiners.Mod, Uv0 = M2UvSource.First, Uv1 = M2UvSource.First };
     private readonly ConcurrentDictionary<string, Shader> _effectShaders = new();
     private readonly ConcurrentDictionary<M2BoneBake, ImageTexture> _boneTextures = new();
 
@@ -189,6 +220,22 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
 
     /// <summary>A material shared with everything else that looks the same. Null when its texture can't be read.</summary>
     public Material? MaterialFor(ModelMaterial material) => GetMaterial(material, indoor: false);
+
+    /// <summary>
+    /// A material for a creature, shared in the same way. Each creature tells it how much indoor
+    /// light it stands in, through an instance uniform, so even a plain batch needs the shader.
+    /// </summary>
+    public Material? CreatureMaterialFor(ModelMaterial material)
+    {
+        var key = material.Effect is not null
+            ? material
+            : material with
+            {
+                Effect = material.Blend == ModelBlend.Opaque ? PlainOpaque : PlainMod,
+                Unlit = material.Unlit || material.Blend == ModelBlend.Add,
+            };
+        return _materials.GetOrAdd((key, false, true), k => BuildEffectMaterial(k.Material, k.Material.Effect!, indoor: false, creature: true));
+    }
 
     public M2Asset? GetM2(string path) => _m2s.GetOrAdd(path, LoadM2);
 
@@ -421,6 +468,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             LiquidMesh = group.Liquid is { } liquid ? liquids.BuildMesh([liquid]) : null,
             Center = mesh?.GetAabb().GetCenter() ?? Vector3.Zero,
             Indoor = group.Indoor,
+            FloorLight = group.Indoor ? WmoFloorLight.Build(group.Surfaces) : null,
             DoodadRefs = group.DoodadRefs,
             Flags = group.Flags,
             FileBounds = group.Bounds,
@@ -513,18 +561,23 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
     }
 
     private Material? GetMaterial(ModelMaterial material, bool indoor) =>
-        _materials.GetOrAdd((material, indoor), key => key.Material.Effect is { } effect
-            ? BuildEffectMaterial(key.Material, effect, key.Indoor)
+        _materials.GetOrAdd((material, indoor, false), key => key.Material.Effect is { } effect
+            ? BuildEffectMaterial(key.Material, effect, key.Indoor, creature: false)
             : BuildMaterial(key.Material, key.Indoor));
 
-    private ShaderMaterial? BuildEffectMaterial(ModelMaterial material, M2Effect effect, bool indoor)
+    private ShaderMaterial? BuildEffectMaterial(ModelMaterial material, M2Effect effect, bool indoor, bool creature)
     {
         if (GetTexture(material.Texture) is not { } texture)
         {
             return null;
         }
 
-        var result = new ShaderMaterial { Shader = EffectShader(material, effect, indoor) };
+        var result = new ShaderMaterial { Shader = EffectShader(material, effect, indoor, creature) };
+        if (ReferenceEquals(effect, PlainMod))
+        {
+            result.SetShaderParameter("alpha_key", PlainAlphaKey);
+        }
+
         result.SetShaderParameter("tex0", texture);
         if (effect.HasTwoTextures && material.Texture2 is { } second && GetTexture(second) is { } texture2)
         {
@@ -588,13 +641,17 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         new Vector3(m.X, m.Y, 1));
 
     /// <summary>Render modes and wrap modes are fixed in a shader's code, so each mix gets a shader.</summary>
-    private Shader EffectShader(ModelMaterial material, M2Effect effect, bool indoor)
+    private Shader EffectShader(ModelMaterial material, M2Effect effect, bool indoor, bool creature)
     {
         var modulates = material.Blend == ModelBlend.Modulate;
-        var unshaded = material.Unlit || modulates || effect.Tinted || indoor;
+
+        // An opaque part of a creature, such as an eyelid, is tinted to match a body that's lit.
+        var tintReplacesLight = effect.Tinted && !(creature && material.Blend == ModelBlend.Opaque);
+        var unshaded = material.Unlit || modulates || tintReplacesLight || indoor;
         var blended = material.Blend is ModelBlend.Alpha or ModelBlend.Add || effect.Fades;
         var baked = material.Bake is not null;
-        var key = $"{material.Blend}_{material.TwoSided}_{material.Repeat}_{effect.Repeat2}_{unshaded}_{blended}_{baked}_{material.Billboard}_{indoor}";
+        var floorLit = creature && !unshaded;
+        var key = $"{material.Blend}_{material.TwoSided}_{material.Repeat}_{effect.Repeat2}_{unshaded}_{blended}_{baked}_{material.Billboard}_{indoor}_{floorLit}";
         return _effectShaders.GetOrAdd(key, _ =>
         {
             var modes = new List<string> { material.TwoSided ? "cull_disabled" : "cull_back" };
@@ -640,6 +697,11 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             if (indoor)
             {
                 defines.Add("#define INSTANCE_LIGHT");
+            }
+
+            if (floorLit)
+            {
+                defines.Add("#define FLOOR_LIGHT");
             }
 
             if (material.Billboard)

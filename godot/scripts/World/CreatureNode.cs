@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using WowVR.Converters;
 using WowVR.Formats;
 using Godot;
@@ -18,6 +19,11 @@ public partial class CreatureNode : Node3D
     private const float TurnRate = 8f;
     private const double BlendSeconds = 0.2;
 
+    /// <summary>How quickly light changes between the sky's and a floor's, per second.</summary>
+    private const float LightFadeRate = 2f;
+    private const float LightSettled = 0.002f;
+    private const string LightParameter = "floor_light";
+
     private CreatureAsset _asset = null!;
     private Node3D _body = null!;
     private AnimationPlayer _player = null!;
@@ -28,6 +34,13 @@ public partial class CreatureNode : Node3D
     private string _soundClip = "";
     private double _soundPosition;
     private BillboardBones? _billboards;
+    private readonly List<MeshInstance3D> _meshes = [];
+    private Color _light = new(1f, 1f, 1f, 0f);
+    private Color _lightTarget = new(1f, 1f, 1f, 0f);
+    private bool _lightKnown;
+
+    /// <summary>How far the floor's light has replaced the sky's, from 0 to 1.</summary>
+    public float FloorLightAmount => _light.A;
 
     /// <summary>A clip reached a moment that makes a sound.</summary>
     public event Action<ClipSoundEvent>? SoundEvent;
@@ -59,22 +72,26 @@ public partial class CreatureNode : Node3D
 
         Skeleton.ResetBonePoses();
         _body.AddChild(Skeleton);
-        Skeleton.AddChild(new MeshInstance3D
+        var body = new MeshInstance3D
         {
             Mesh = asset.Mesh,
             Skin = asset.Skeleton.Skin,
             Skeleton = new NodePath(".."),
-        });
+        };
+        Skeleton.AddChild(body);
+        _meshes.Add(body);
 
         foreach (var item in asset.Items)
         {
             var attachment = new BoneAttachment3D { BoneName = item.BoneName };
             Skeleton.AddChild(attachment);
-            attachment.AddChild(new MeshInstance3D
+            var itemMesh = new MeshInstance3D
             {
                 Mesh = item.Mesh,
                 Position = item.Offset,
-            });
+            };
+            attachment.AddChild(itemMesh);
+            _meshes.Add(itemMesh);
         }
 
         if (asset.Skeleton.Billboards.Length > 0)
@@ -117,6 +134,55 @@ public partial class CreatureNode : Node3D
             {
                 _billboards.Active = animated;
             }
+        }
+    }
+
+    /// <summary>What light the ground under the creature gives: a gamma-space color, or null for the sky's.</summary>
+    public void SetGroundLight(System.Numerics.Vector3? light)
+    {
+        // Leaving a building keeps the color, so only the amount fades.
+        _lightTarget = light is { } c ? new Color(c.X, c.Y, c.Z, 1f) : new Color(_lightTarget.R, _lightTarget.G, _lightTarget.B, 0f);
+
+        // Starting to fade from the sky, the color has nothing to fade from.
+        if (_light.A < LightSettled)
+        {
+            _light = new Color(_lightTarget.R, _lightTarget.G, _lightTarget.B, _light.A);
+        }
+
+        // Its first answer isn't a change it could have been seen making.
+        if (!_lightKnown)
+        {
+            _lightKnown = true;
+            _light = _lightTarget;
+            ApplyLight();
+        }
+    }
+
+    /// <summary>Moves the light toward what the ground gives.</summary>
+    public void FadeLight(double delta)
+    {
+        if (_light == _lightTarget)
+        {
+            return;
+        }
+
+        _light = _light.Lerp(_lightTarget, 1f - Mathf.Exp(-LightFadeRate * (float)delta));
+        if (Mathf.Abs(_light.A - _lightTarget.A) < LightSettled
+            && Mathf.Abs(_light.R - _lightTarget.R) < LightSettled
+            && Mathf.Abs(_light.G - _lightTarget.G) < LightSettled
+            && Mathf.Abs(_light.B - _lightTarget.B) < LightSettled)
+        {
+            _light = _lightTarget;
+        }
+
+        ApplyLight();
+    }
+
+    private void ApplyLight()
+    {
+        foreach (var mesh in _meshes)
+        {
+            mesh.SetInstanceShaderParameter(LightParameter, _light);
         }
     }
 

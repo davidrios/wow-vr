@@ -13,6 +13,12 @@ uniform vec3 tint = vec3(1.0);
 uniform float element_alpha = 1.0;
 uniform float alpha_key = 0.878;
 
+#ifdef FLOOR_LIGHT
+// A creature's light from the floor under it, in gamma space, and in alpha how far it's
+// replaced the sky's. Emission isn't lit, so as this rises the sky's light fades out.
+instance uniform vec4 floor_light = vec4(1.0, 1.0, 1.0, 0.0);
+#endif
+
 #ifdef BAKED_BONES
 // See M2BoneBake. CUSTOM0 holds a vertex's 4 bones and CUSTOM1 their weights.
 uniform sampler2D bone_texture : filter_nearest, repeat_disable;
@@ -153,6 +159,11 @@ void fragment() {
 
 #ifdef UNSHADED
 	ALBEDO = to_linear(lit + added);
+#elif defined(FLOOR_LIGHT)
+	ALBEDO = to_linear(lit) * (1.0 - floor_light.a);
+	// Darker facing down, so a body indoors keeps its shape. The amounts are by eye.
+	float facing = dot(NORMAL, normalize(mat3(VIEW_MATRIX) * vec3(0.0, 1.0, 0.0)));
+	EMISSION = to_linear(added) + to_linear(lit * floor_light.rgb * (0.8 + 0.2 * facing)) * floor_light.a;
 #else
 	ALBEDO = to_linear(lit);
 	EMISSION = to_linear(added);

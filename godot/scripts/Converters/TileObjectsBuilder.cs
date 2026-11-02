@@ -70,11 +70,11 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
                         groupCopies[key] = copies = [];
                     }
 
-                    copies.Add((transform.Compose(doodad.Transform), wmo.Root.Ambient + doodad.Color));
+                    copies.Add((transform.Compose(doodad.Transform), wmo.LightOf(doodad)));
                     continue;
                 }
 
-                AddDoodad(cells, doodad.Model, transform.Compose(doodad.Transform), interior, wmo.Root.Ambient + doodad.Color);
+                AddDoodad(cells, doodad.Model, transform.Compose(doodad.Transform), interior, wmo.LightOf(doodad));
             }
 
             var groupDoodads = new Dictionary<int, List<DoodadBatch>>();

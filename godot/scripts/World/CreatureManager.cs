@@ -60,6 +60,19 @@ public partial class CreatureManager : Node
     private const double RaySeconds = 0.2;
     private const float HeightSmoothing = 10f;
 
+    /// <summary>
+    /// How near a creature's light is looked up. A WMO group has collision within 40 yards of
+    /// the player, so a creature this near and standing in one always has it to hit.
+    /// </summary>
+    private const float LightRange = 40f;
+
+    /// <summary>How often a walking creature, then one standing on terrain, asks what it's on. Collision may come later.</summary>
+    private const double WalkingLightSeconds = 0.5;
+    private const double StandingLightSeconds = 2;
+
+    /// <summary>Doodads say nothing about light, so a ray goes through this many to reach the floor.</summary>
+    private const int MaxDoodadsThrough = 3;
+
     private sealed class Entry(CreatureSpawn spawn, (int X, int Y) tile)
     {
         public CreatureSpawn Spawn { get; } = spawn;
@@ -70,6 +83,8 @@ public partial class CreatureManager : Node
         public float Height { get; set; } = spawn.Z;
         public bool HasHeight { get; set; }
         public double NextRay { get; set; }
+        public double NextLightRay { get; set; }
+        public bool LightFound { get; set; }
         public CreatureSoundSet? Sounds { get; set; }
         public double NextFidget { get; set; }
     }
@@ -414,6 +429,58 @@ public partial class CreatureManager : Node
         var height = HeightOf(entry, state, motion, delta);
         var position = WowCoords.TileLocal(motion.X, motion.Y, height, entry.Tile.X, entry.Tile.Y);
         entry.Node!.Move(new Vector3(position.X, position.Y, position.Z), motion.Facing, motion.Moving, entry.Spawn.WalkSpeed, entry.Distance, delta);
+        UpdateLight(entry, state, motion, new Vector3(position.X, position.Y, position.Z));
+        entry.Node.FadeLight(delta);
+    }
+
+    /// <summary>Asks what the creature stands on. One that's standing on a WMO needn't ask again until it moves.</summary>
+    private void UpdateLight(Entry entry, TileState state, CreatureMotionState motion, Vector3 local)
+    {
+        if (motion.Moving)
+        {
+            entry.LightFound = false;
+        }
+
+        if (entry.LightFound || entry.Distance >= LightRange || _clock < entry.NextLightRay)
+        {
+            return;
+        }
+
+        entry.NextLightRay = _clock + (motion.Moving ? WalkingLightSeconds : StandingLightSeconds);
+
+        var from = state.Node.Position + local + Vector3.Up * RayAbove;
+        var query = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (RayAbove + RayBelow), TileManager.TerrainLayer);
+        var space = _world.GetViewport().FindWorld3D().DirectSpaceState;
+        for (var through = 0; through <= MaxDoodadsThrough; through++)
+        {
+            var hit = space.IntersectRay(query);
+            if (hit.Count == 0)
+            {
+                // Keeps what it had, since this says nothing about where it is.
+                return;
+            }
+
+            var collider = hit["collider"].AsGodotObject();
+            if (collider is Node node && node.IsInGroup(TileObjectsNode.DoodadCollisionGroup))
+            {
+                var exclude = query.Exclude;
+                exclude.Add(hit["rid"].AsRid());
+                query.Exclude = exclude;
+                continue;
+            }
+
+            if (collider is WmoGroupBody group)
+            {
+                entry.Node!.SetGroundLight(group.CreatureLightAt(hit["position"].AsVector3()));
+                entry.LightFound = !motion.Moving;
+            }
+            else
+            {
+                entry.Node!.SetGroundLight(null);
+            }
+
+            return;
+        }
     }
 
     private float HeightOf(Entry entry, TileState state, CreatureMotionState motion, double delta)

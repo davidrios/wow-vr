@@ -413,7 +413,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         var remap = new int[data.Positions.Length];
         foreach (var (key, parts) in byMaterial)
         {
-            if (models.MaterialFor(key) is not { } material)
+            if (models.CreatureMaterialFor(key) is not { } material)
             {
                 continue;
             }

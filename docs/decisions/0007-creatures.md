@@ -41,6 +41,6 @@
 - Global sequences repeat through each clip rather than running on their own clock, so a tail or wing can jump when a clip restarts.
 - Creatures hold a pose past the animation cap, and can slide while doing so until they rank in the nearest 60.
 - Not drawn: particles, display alpha (ghosts) and `CreatureGeosetData`, so non-character models show all their geosets.
-- Creatures are lit by the sky even inside buildings, because a spawn doesn't say which WMO group it's in.
+- A spawn doesn't say which WMO group it's in, so within 40 yards of the player a ray finds what a creature stands on. On an indoor group it takes the `MOCV` of the drawn triangle under it, with most of the color removed, and fades over about a second. Further away, or until a ray has hit a group, it's lit by the sky. How much color it keeps is by eye, and nothing confirms the client does this.
 - Creatures don't collide with anything, and never block the player.
 - On this PC's RTX 3090 on desktop, with no vsync: 12 sample creatures run at 344 FPS, and a crowd of 400 spawns, giving 151 nodes with 60 animated, at 107 FPS. That crowd is 6.4 ms over the 12's, which is too much of VR's 11.1 ms, so a real town's numbers need checking in the headset. If they're too slow, lower `MaxNodes` and `MaxAnimated` first.

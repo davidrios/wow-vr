@@ -38,7 +38,7 @@ public partial class TileObjectsNode : Node3D
     /// <summary>The group the check finds doodad bodies by.</summary>
     public const string DoodadCollisionGroup = "doodad_collision";
 
-    private readonly record struct CollisionGroup(Node3D Wmo, WmoGroupAsset Group);
+    private readonly record struct CollisionGroup(Node3D Wmo, WmoGroupAsset Group, System.Numerics.Vector3 Ambient);
 
     /// <summary>The copies of a model in one cell, with bounds around them to skip the whole cell quickly.</summary>
     private sealed record DoodadCell(M2Asset Model, Transform3D[] Transforms, Aabb Bounds);
@@ -63,7 +63,7 @@ public partial class TileObjectsNode : Node3D
     private readonly List<PortalWmo> _portalWmos = [];
     private readonly List<PendingItem> _pending = [];
     private readonly List<CollisionGroup> _collision = [];
-    private readonly Dictionary<CollisionGroup, StaticBody3D> _bodies = [];
+    private readonly Dictionary<CollisionGroup, WmoGroupBody> _bodies = [];
     private Vector3 _sortedFor;
     private bool _sorted;
 
@@ -134,7 +134,7 @@ public partial class TileObjectsNode : Node3D
                 var group = wmo.Asset.Groups[groupIndex];
                 if (group.Shape is not null)
                 {
-                    _collision.Add(new CollisionGroup(node, group));
+                    _collision.Add(new CollisionGroup(node, group, wmo.Asset.Root.Ambient));
                 }
 
                 if (group.Mesh is { } mesh)
@@ -325,7 +325,7 @@ public partial class TileObjectsNode : Node3D
             var has = _bodies.TryGetValue(entry, out var body);
             if (!has && added < MaxNewBodiesPerFrame && entry.Group.Bounds.Grow(CollisionRange).HasPoint(local))
             {
-                body = new StaticBody3D();
+                body = new WmoGroupBody { Group = entry.Group, Ambient = entry.Ambient };
                 body.AddChild(new CollisionShape3D { Shape = entry.Group.Shape });
                 entry.Wmo.AddChild(body);
                 _bodies[entry] = body;

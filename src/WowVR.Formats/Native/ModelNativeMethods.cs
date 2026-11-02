@@ -81,6 +81,17 @@ internal struct WaGpuTexture
     public uint MipCount;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct WaWmoLiquid
+{
+    public uint VerticesX;
+    public uint VerticesY;
+    public fixed float Corner[3];
+    public float* Heights;
+    public byte* Cells;
+    public uint LiquidType;
+}
+
 internal static unsafe partial class ModelNativeMethods
 {
     private const string Library = "wow_alchemy_ffi";
@@ -164,6 +175,12 @@ internal static unsafe partial class ModelNativeMethods
 
     [LibraryImport(Library, EntryPoint = "wa_wmo_group_flags")]
     internal static partial uint WmoGroupFlags(nint group);
+
+    [LibraryImport(Library, EntryPoint = "wa_wmo_flags")]
+    internal static partial uint WmoFlags(nint wmo);
+
+    [LibraryImport(Library, EntryPoint = "wa_wmo_group_liquid")]
+    internal static partial WaStatus WmoGroupLiquid(nint group, uint rootFlags, out WaWmoLiquid liquid);
 
     [LibraryImport(Library, EntryPoint = "wa_blp_to_gpu")]
     internal static partial WaStatus BlpToGpu(byte* data, nuint length, out WaGpuTexture texture);

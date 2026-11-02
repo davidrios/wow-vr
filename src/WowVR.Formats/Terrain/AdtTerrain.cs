@@ -69,6 +69,9 @@ public sealed class AdtTerrain
     /// <summary>The tile's WMO placements.</summary>
     public IReadOnlyList<ModelPlacement> Wmos { get; private init; } = [];
 
+    /// <summary>The tile's liquid, chunk by chunk.</summary>
+    public IReadOnlyList<LiquidLayer> Liquids { get; private init; } = [];
+
     public IReadOnlyList<string> TextureNames { get; }
 
     /// <summary>256 chunks, ordered by <see cref="TerrainChunk.Iy"/> then <see cref="TerrainChunk.Ix"/>.</summary>
@@ -117,7 +120,32 @@ public sealed class AdtTerrain
         {
             Doodads = ReadPlacements(handle, wmo: false),
             Wmos = ReadPlacements(handle, wmo: true),
+            Liquids = ReadLiquids(handle),
         };
+    }
+
+    private static unsafe LiquidLayer[] ReadLiquids(AdtHandle handle)
+    {
+        var layers = new LiquidLayer[TerrainNativeMethods.AdtLiquidCount(handle)];
+        for (var i = 0; i < layers.Length; i++)
+        {
+            if (TerrainNativeMethods.AdtLiquid(handle, (uint)i, out var layer) != WaStatus.Ok)
+            {
+                throw new WowAlchemyException($"Tile is missing liquid layer {i}.");
+            }
+
+            layers[i] = new LiquidLayer
+            {
+                ChunkIx = (int)layer.Chunk % ChunksPerSide,
+                ChunkIy = (int)layer.Chunk / ChunksPerSide,
+                LiquidType = (int)layer.LiquidType,
+                Cells = layer.Cells,
+                Heights = new ReadOnlySpan<float>(layer.Heights, LiquidLayer.VertexCount).ToArray(),
+                Depths = new ReadOnlySpan<byte>(layer.Depths, LiquidLayer.VertexCount).ToArray(),
+            };
+        }
+
+        return layers;
     }
 
     private static unsafe ModelPlacement[] ReadPlacements(AdtHandle handle, bool wmo)

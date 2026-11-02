@@ -227,6 +227,9 @@ public sealed class WmoRoot
 
     public required int GroupCount { get; init; }
 
+    /// <summary>MOHD flags, which decide how its groups' liquids read.</summary>
+    public required uint Flags { get; init; }
+
     /// <summary>The corners of the WMO's bounding box in its own space, Z up, as stored.</summary>
     public required (Vector3 Min, Vector3 Max) Bounds { get; init; }
 
@@ -309,6 +312,7 @@ public sealed class WmoRoot
             return new WmoRoot
             {
                 GroupCount = (int)ModelNativeMethods.WmoGroupCount(wmo),
+                Flags = ModelNativeMethods.WmoFlags(wmo),
                 Bounds = (new Vector3(bounds[0], bounds[1], bounds[2]), new Vector3(bounds[3], bounds[4], bounds[5])),
                 Materials = materials,
                 DoodadSets = sets,
@@ -341,6 +345,27 @@ public sealed class WmoGroup
 
     /// <summary>Three corners per triangle in Godot axes, wound like the surfaces.</summary>
     public required Vector3[] CollisionFaces { get; init; }
+
+    /// <summary>Null when the group has no liquid.</summary>
+    public Terrain.LiquidSurface? Liquid { get; init; }
+
+    private static unsafe Terrain.LiquidSurface? ReadLiquid(nint group, uint rootFlags)
+    {
+        if (ModelNativeMethods.WmoGroupLiquid(group, rootFlags, out var liquid) != WaStatus.Ok)
+        {
+            return null;
+        }
+
+        var (x, y) = (checked((int)liquid.VerticesX), checked((int)liquid.VerticesY));
+        var surface = Terrain.LiquidSurface.FromGrid(
+            (int)liquid.LiquidType,
+            x,
+            y,
+            new Vector3(liquid.Corner[0], liquid.Corner[1], liquid.Corner[2]),
+            new ReadOnlySpan<float>(liquid.Heights, x * y),
+            new ReadOnlySpan<byte>(liquid.Cells, Math.Max(x - 1, 0) * Math.Max(y - 1, 0)));
+        return surface.Indices.Length > 0 ? surface : null;
+    }
 
     public static unsafe WmoGroup Parse(ReadOnlySpan<byte> data, WmoRoot root)
     {
@@ -375,6 +400,7 @@ public sealed class WmoGroup
                 Indoor = (ModelNativeMethods.WmoGroupFlags(group) & FlagIndoor) != 0,
                 Surfaces = MeshReader.Surfaces(mesh, m => m < root.Materials.Count ? root.Materials[(int)m] : null),
                 CollisionFaces = faces,
+                Liquid = ReadLiquid(group, root.Flags),
             };
         }
         finally

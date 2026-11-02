@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using WowVR.Formats.World;
+using WowVR.World;
 using Godot;
 
 namespace WowVR.Ui;
@@ -15,6 +16,9 @@ public partial class WorldMenu : PanelContainer
 
     private GridContainer _landmarks = null!;
     private CheckButton _fly = null!;
+    private HSlider _time = null!;
+    private CheckButton _timePasses = null!;
+    private SkyController? _sky;
 
     public IPlayer? Player { get; set; }
 
@@ -85,6 +89,40 @@ public partial class WorldMenu : PanelContainer
         vignette.ValueChanged += value => AppSettings.VignetteSize = (float)value;
         rows.AddChild(vignette);
 
+        rows.AddChild(new HSeparator());
+
+        rows.AddChild(new Label { Text = "Time of day" });
+        _time = new HSlider { MinValue = 0, MaxValue = LightTable.TicksPerDay - 1, Step = 10 };
+        _time.ValueChanged += value =>
+        {
+            if (_sky is not null)
+            {
+                _sky.Ticks = value;
+                _sky.Refresh();
+            }
+        };
+        rows.AddChild(_time);
+
+        _timePasses = new CheckButton { Text = "Time passes", ButtonPressed = true };
+        _timePasses.Toggled += on =>
+        {
+            if (_sky is not null)
+            {
+                _sky.TimePasses = on;
+            }
+        };
+        rows.AddChild(_timePasses);
+
+        rows.AddChild(new Label { Text = "Music volume" });
+        var music = new HSlider { MinValue = 0, MaxValue = 1, Step = 0.05, Value = AppSettings.MusicVolume };
+        music.ValueChanged += value => AppSettings.MusicVolume = (float)value;
+        rows.AddChild(music);
+
+        rows.AddChild(new Label { Text = "Ambient sound volume" });
+        var ambience = new HSlider { MinValue = 0, MaxValue = 1, Step = 0.05, Value = AppSettings.AmbienceVolume };
+        ambience.ValueChanged += value => AppSettings.AmbienceVolume = (float)value;
+        rows.AddChild(ambience);
+
         var close = new Button { Text = "Close" };
         close.Pressed += () => CloseRequested?.Invoke();
         rows.AddChild(close);
@@ -102,6 +140,12 @@ public partial class WorldMenu : PanelContainer
         };
         button.Pressed += () => AppSettings.Scale = value;
         return button;
+    }
+
+    public void SetSky(SkyController sky)
+    {
+        _sky = sky;
+        _timePasses.SetPressedNoSignal(sky.TimePasses);
     }
 
     public void SetLandmarks(IEnumerable<Landmark> landmarks, Action<Landmark> teleport)
@@ -129,6 +173,11 @@ public partial class WorldMenu : PanelContainer
         if (Player is not null)
         {
             _fly.SetPressedNoSignal(Player.Flying);
+        }
+
+        if (_sky is not null)
+        {
+            _time.SetValueNoSignal(_sky.Ticks);
         }
     }
 }

@@ -29,6 +29,10 @@ public sealed record M2Asset(ArrayMesh Mesh, float Radius, Vector3[] CollisionFa
 public sealed class WmoGroupAsset
 {
     public ArrayMesh? Mesh { get; init; }
+
+    /// <summary>Null when the group has no liquid.</summary>
+    public ArrayMesh? LiquidMesh { get; init; }
+
     public bool Indoor { get; init; }
 
     /// <summary>Null when the group has nothing to collide with.</summary>
@@ -48,7 +52,7 @@ public sealed record WmoAsset(WmoRoot Root, WmoGroupAsset[] Groups);
 /// Loads models once and shares them between tiles. Runs off the main thread. Files that
 /// can't be read are remembered as missing, so they're only reported once.
 /// </summary>
-public sealed class ModelLibrary(IAssetSource source)
+public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
 {
     private const int MaxCachedModels = 1500;
     private const int MaxCachedTextures = 1500;
@@ -143,6 +147,7 @@ public sealed class ModelLibrary(IAssetSource source)
         return new WmoGroupAsset
         {
             Mesh = mesh,
+            LiquidMesh = group.Liquid is { } liquid ? liquids.BuildMesh([liquid]) : null,
             Center = mesh?.GetAabb().GetCenter() ?? Vector3.Zero,
             Indoor = group.Indoor,
             Shape = faces.Length > 0 ? new ConcavePolygonShape3D { Data = faces } : null,

@@ -17,6 +17,7 @@ const string Usage = """
       wmos <map> <tile x> <tile y> Print a tile's WMO placements, with WoW positions.
       extract <file> <out>        Copy a file out of the client. Don't commit the output.
       check-models [text]         Parse every M2 and WMO, optionally only those containing text.
+      sky <map id> <x> <y> <hour> Print the sky colors and fog at a WoW position and time.
     """;
 
 if (args.Length == 0)
@@ -54,6 +55,8 @@ try
             return PrintDbc(source, file, int.Parse(maxRows));
         case ["wmos", var map, var tileX, var tileY]:
             return PrintWmos(source, map, int.Parse(tileX), int.Parse(tileY));
+        case ["sky", var mapId, var skyX, var skyY, var hour]:
+            return PrintSky(source, int.Parse(mapId), float.Parse(skyX), float.Parse(skyY), float.Parse(hour));
         case ["extract", var file, var output]:
             File.WriteAllBytes(output, source.Read(file) ?? throw new IOException($"Not in the client: {file}"));
             return 0;
@@ -196,6 +199,22 @@ static int ExportBlp(MpqAssetSource source, string file, string output, int mip)
     var texture = BlpDecoder.Decode(data, mip);
     PngWriter.WriteRgba8(output, texture.Rgba8, texture.Width, texture.Height);
     Console.WriteLine($"{output}: {texture.Width}x{texture.Height}, mip {mip} of {texture.MipCount}");
+    return 0;
+}
+
+static int PrintSky(MpqAssetSource source, int mapId, float x, float y, float hour)
+{
+    var sky = new WowVR.Formats.World.SkyState();
+    var position = new System.Numerics.Vector3((float)WowCoords.MapOrigin - y, 0, (float)WowCoords.MapOrigin - x);
+    WowVR.Formats.World.LightTable.Read(source).Sample(mapId, position, hour * 120f, sky);
+    foreach (var band in Enum.GetValues<WowVR.Formats.World.SkyBand>())
+    {
+        var c = sky[band] * 255f;
+        Console.WriteLine($"{band,-16} {c.X,4:F0} {c.Y,4:F0} {c.Z,4:F0}");
+    }
+
+    Console.WriteLine($"Fog {sky.FogStart:F2} to {sky.FogEnd:F0} yards");
+    Console.WriteLine($"River alpha {sky.RiverShallowAlpha:F2} to {sky.RiverDeepAlpha:F2}, ocean {sky.OceanShallowAlpha:F2} to {sky.OceanDeepAlpha:F2}");
     return 0;
 }
 

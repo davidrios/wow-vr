@@ -43,13 +43,15 @@ public sealed record MapRecord(int Id, string Directory, string Name)
 }
 
 /// <summary>A row of DBFilesClient\AreaTable.dbc.</summary>
-public sealed record AreaTableRecord(int Id, int MapId, int ParentAreaId, string Name)
+public sealed record AreaTableRecord(int Id, int MapId, int ParentAreaId, string Name, int AmbienceId = 0, int ZoneMusicId = 0)
 {
     public const string FilePath = @"DBFilesClient\AreaTable.dbc";
 
     private const int IdField = 0;
     private const int MapIdField = 1;
     private const int ParentAreaIdField = 2;
+    private const int AmbienceIdField = 7;
+    private const int ZoneMusicIdField = 8;
     private const int NameField = 11;
 
     public static IReadOnlyList<AreaTableRecord> ReadAll(DbcFile dbc, string locale)
@@ -60,12 +62,98 @@ public sealed record AreaTableRecord(int Id, int MapId, int ParentAreaId, string
                 dbc.GetInt32(i, IdField),
                 dbc.GetInt32(i, MapIdField),
                 dbc.GetInt32(i, ParentAreaIdField),
-                dbc.GetString(i, NameField + slot)))
+                dbc.GetString(i, NameField + slot),
+                dbc.GetInt32(i, AmbienceIdField),
+                dbc.GetInt32(i, ZoneMusicIdField)))
             .ToList();
     }
 
     public static IReadOnlyList<AreaTableRecord> ReadAll(MpqAssetSource source) =>
         DbcTables.Read(source, FilePath, dbc => ReadAll(dbc, source.Locale));
+}
+
+/// <summary>The basic kinds of liquid, from LiquidType's type field.</summary>
+public enum LiquidKind
+{
+    Water = 0,
+    Ocean = 1,
+    Magma = 2,
+    Slime = 3,
+}
+
+/// <summary>A row of DBFilesClient\LiquidType.dbc.</summary>
+public sealed record LiquidTypeRecord(int Id, string Name, LiquidKind Kind, string TexturePattern)
+{
+    public const string FilePath = @"DBFilesClient\LiquidType.dbc";
+
+    private const int NameField = 1;
+    private const int KindField = 3;
+    private const int ShaderField = 14;
+    private const int TextureField = 15;
+
+    /// <summary>This shader names procedural textures rather than frames, so Noggit draws lake water instead.</summary>
+    private const int ProceduralShader = 3;
+    private const string ProceduralFallback = @"XTextures\river\lake_a.%d.blp";
+
+    public static IReadOnlyList<LiquidTypeRecord> ReadAll(DbcFile dbc) =>
+        Enumerable.Range(0, dbc.RecordCount)
+            .Select(i => new LiquidTypeRecord(
+                dbc.GetInt32(i, 0),
+                dbc.GetString(i, NameField),
+                (LiquidKind)dbc.GetInt32(i, KindField),
+                dbc.GetInt32(i, ShaderField) == ProceduralShader ? ProceduralFallback : dbc.GetString(i, TextureField)))
+            .ToList();
+
+    public static IReadOnlyList<LiquidTypeRecord> ReadAll(IAssetSource source) =>
+        DbcTables.Read(source, FilePath, ReadAll);
+}
+
+/// <summary>A row of DBFilesClient\ZoneMusic.dbc.</summary>
+public sealed record ZoneMusicRecord(int Id, int SilenceMinMs, int SilenceMaxMs, int DaySoundId, int NightSoundId)
+{
+    public static IReadOnlyList<ZoneMusicRecord> ReadAll(IAssetSource source) =>
+        DbcTables.Read<IReadOnlyList<ZoneMusicRecord>>(source, @"DBFilesClient\ZoneMusic.dbc", dbc =>
+            Enumerable.Range(0, dbc.RecordCount)
+                .Select(i => new ZoneMusicRecord(
+                    dbc.GetInt32(i, 0),
+                    dbc.GetInt32(i, 2),
+                    dbc.GetInt32(i, 4),
+                    dbc.GetInt32(i, 6),
+                    dbc.GetInt32(i, 7)))
+                .ToList());
+}
+
+/// <summary>A row of DBFilesClient\SoundAmbience.dbc.</summary>
+public sealed record SoundAmbienceRecord(int Id, int DaySoundId, int NightSoundId)
+{
+    public static IReadOnlyList<SoundAmbienceRecord> ReadAll(IAssetSource source) =>
+        DbcTables.Read<IReadOnlyList<SoundAmbienceRecord>>(source, @"DBFilesClient\SoundAmbience.dbc", dbc =>
+            Enumerable.Range(0, dbc.RecordCount)
+                .Select(i => new SoundAmbienceRecord(dbc.GetInt32(i, 0), dbc.GetInt32(i, 1), dbc.GetInt32(i, 2)))
+                .ToList());
+}
+
+/// <summary>A row of DBFilesClient\SoundEntries.dbc. A sound picks one of its files by weight.</summary>
+public sealed record SoundEntryRecord(int Id, IReadOnlyList<(string Name, int Weight)> Files, string Directory, float Volume)
+{
+    private const int FileField = 3;
+    private const int WeightField = 13;
+    private const int MaxFiles = 10;
+    private const int DirectoryField = 23;
+    private const int VolumeField = 24;
+
+    public static IReadOnlyList<SoundEntryRecord> ReadAll(IAssetSource source) =>
+        DbcTables.Read<IReadOnlyList<SoundEntryRecord>>(source, @"DBFilesClient\SoundEntries.dbc", dbc =>
+            Enumerable.Range(0, dbc.RecordCount)
+                .Select(i => new SoundEntryRecord(
+                    dbc.GetInt32(i, 0),
+                    Enumerable.Range(0, MaxFiles)
+                        .Select(f => (Name: dbc.GetString(i, FileField + f), Weight: dbc.GetInt32(i, WeightField + f)))
+                        .Where(f => f.Name.Length > 0)
+                        .ToList(),
+                    dbc.GetString(i, DirectoryField),
+                    dbc.GetSingle(i, VolumeField)))
+                .ToList());
 }
 
 internal static class DbcTables

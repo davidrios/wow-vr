@@ -102,6 +102,16 @@ public partial class TileObjectsNode : Node3D
                         VisibilityRangeEnd = group.Indoor ? mesh.GetAabb().Size.Length() + IndoorVisibleMargin : 0f,
                     })));
                 }
+
+                if (group.LiquidMesh is { } liquid)
+                {
+                    var center = wmo.Transform * liquid.GetAabb().GetCenter();
+                    _pending.Add(new PendingItem(center, () => node.AddChild(new MeshInstance3D
+                    {
+                        Mesh = liquid,
+                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    })));
+                }
             }
         }
     }

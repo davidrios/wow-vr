@@ -169,7 +169,7 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - Desktop: walk with terrain collision, plus the same fly mode and menu actions as VR.
 - Teleport, smooth locomotion, snap/smooth turn, comfort vignette (XR Tools).
 - Fly mode with configurable speed (Azeroth is big).
-- Scale setting: "player-sized" vs "true scale". WoW proportions often feel off at 1:1, so playtest.
+- Scale setting: "player-sized" vs "true scale". Playtesting found true scale correct and player-sized too big, so true scale is the default.
 - Wrist menu: teleport to landmarks, toggle fly, settings.
 
 **Done when:** a 15-minute session in Elwynn feels comfortable and holds framerate. Passed on 2026-11-01 after a long headset session. Desktop also passes `--movement-check` and `--tour=walk` (worst frame 7.7 ms uncapped). `docs/decisions/0004-terrain-collision.md` covers collision.
@@ -188,7 +188,7 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - Zone detection via `AreaTable`; zone music and ambient sound from the client's files.
 - Zone name pop-up when crossing borders.
 
-**Done when:** sunset at Crystal Lake, with the right music, is genuinely nice.
+**Done when:** sunset at Crystal Lake, with the right music, is genuinely nice. Built and checked on desktop on 2026-11-01, waiting for hands-on listening and a headset session. See `docs/decisions/0006-liquids-sky-zones.md`.
 
 ### M6 — Creatures and NPCs
 - `tools/spawn-exporter`: connect to a locally imported AzerothCore world DB and export per-tile JSON:

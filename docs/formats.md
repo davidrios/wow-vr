@@ -45,6 +45,36 @@ Reached through `wa_adt_open`, which gives `AdtTerrain`. `TerrainMeshData` turns
 - **Vertex colors:** MCNK flag `0x40` means an MCCV subchunk of 145 colors, and every Northrend chunk has it. 127 is neutral, and the color multiplies the texture. The byte order is BGRA, confirmed by eye in Northrend with the F4 debug view. WoWModelViewer's notes say RGBA, but its code never uses these values.
 - **Alpha map edges:** without MCNK flag `0x8000`, 4-bit maps repeat their second-to-last row and column in the last. WoWModelViewer differs: it always repeats the row, including for big alpha maps, ignores the flag, and its column fix never runs because it tests the wrong loop variable. wow.export does neither. This code hasn't been checked against the wiki or Noggit, so it's worth checking if chunk seams look wrong.
 
+## Liquids
+
+`AdtTerrain.Liquids` comes from `MH2O` through `wa_adt_liquid`, and `WmoGroup.Liquid` from `MLIQ` through `wa_wmo_group_liquid`. `LiquidSurface` turns either into mesh data. See `decisions/0006-liquids-sky-zones.md`.
+
+- **MH2O offsets** count from the start of the chunk's data, and instances are 24 bytes. The crate's older `mh2o` module gets both wrong, so use `read_liquid_layers`.
+- **Grid:** columns run east and rows run south, like terrain. A test finds water above its lakebed at Crystal Lake only with this order.
+- **Vertex formats:** 0 is heights and depths, 1 heights and texture coordinates, 2 depths, 3 all three. With no vertex data, or format 2, the layer sits flat at its minimum height, as in Noggit. The wiki says format 2 is always at height 0, which this code doesn't check.
+- **Exists bits** run through the layer's area with no padding between rows.
+- **Heights** can be garbage on vertices no cell uses, so they're limited to the layer's stated range, as Noggit does.
+- **MLIQ** is a 30-byte header, 8 bytes per vertex with the height last, then a byte per cell, where a low nibble of `0xF` means no liquid. It can have no cells at all.
+- **Liquid type in WMOs** depends on the root's flag `0x4` and the group's flag `0x80000`. `RenderLiquid::liquid_type` follows the wiki and AzerothCore's extractor.
+- **LiquidType.dbc:** field 3 is the kind, 14 the shader and 15 the texture pattern, with `%d` for the frame. Shader 3 is procedural, so it draws `lake_a` instead, as Noggit does.
+
+## Sky
+
+`LightTable` reads `Light`, `LightParams`, `LightIntBand` and `LightFloatBand`.
+
+- **Light positions** are stored 36 times larger than yards, as east, up and south from the map's north-west corner. All of `0,0,0` means the map's global light.
+- **Bands:** a params row owns 18 `LightIntBand` rows from `id * 18 - 17` and 6 `LightFloatBand` rows from `id * 6 - 5`. `SkyBand` names the int bands. Float band 0 is fog distance, times 36, and band 1 is the fraction of it where fog starts.
+- **Colors** are `0xRRGGBB`, and times are half minutes since midnight. Curves wrap around midnight.
+- **Direct light isn't usable whole.** Elwynn's noon is `(255, 136, 0)`, which adds to a blue ambient to give warm white. Its midnight is a strong blue.
+- **Duskwood** differs from Elwynn mainly in fog, at 181 yards against 500.
+
+## Zone sound
+
+- **AreaTable:** field 7 is the `SoundAmbience` row and 8 the `ZoneMusic` row. Subzones often leave them at 0 and use their parent's.
+- **ZoneMusic:** fields 2 and 3 are the shortest silences for day and night, 4 and 5 the longest, and 6 and 7 the sounds.
+- **SoundEntries:** fields 3 to 12 are file names, 13 to 22 their weights, 23 the directory and 24 the volume.
+- Music is MP3 and ambience is WAV.
+
 ## Rendering terrain
 
 - One draw call per tile: a BC1 `Texture2DArray` of the textures the tile draws, a 1024x1024 alpha atlas, and each chunk's 4 texture indexes in `CUSTOM0`.
@@ -85,5 +115,6 @@ Reached through `wa_wmo_open` and `wa_wmo_group_open`, which use `wow_alchemy_wm
 
 - Fields are 32 bits. `DbcFile` reads them untyped, and the record classes give them meaning.
 - `Map` and `AreaTable` have 66 and 36 fields on build 12340, checked against the client by tests.
+- The wiki at wowdev.wiki blocks scripts, so it needs a real browser. Its pages on `DB/Light`, `DB/LightIntBand`, `ADT/v18` and `WMO` confirmed what's written here.
 - Localized strings take 16 slots plus a flags field. A client only fills in its own slot, and enGB uses the enUS slot, so typed records need the source's locale.
 - String offsets can point into the middle of a string, so the FFI reads the string block directly rather than using `WdbFile::get_string_by_offset`, which only finds whole strings.

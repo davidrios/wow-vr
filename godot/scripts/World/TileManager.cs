@@ -47,7 +47,7 @@ public partial class TileManager : Node3D
 
     private readonly Dictionary<(int X, int Y), MeshInstance3D?> _tiles = [];
     private readonly HashSet<(int X, int Y)> _failedTiles = [];
-    private readonly ConcurrentQueue<((int X, int Y) Tile, ArrayMesh? Mesh, TerrainCollisionData? Collision, AdtTerrain? Terrain)> _built = new();
+    private readonly ConcurrentQueue<((int X, int Y) Tile, ArrayMesh? Mesh, TerrainCollisionData? Collision, AdtTerrain? Terrain, ArrayMesh? Liquid)> _built = new();
     private readonly ConcurrentQueue<((int X, int Y) Tile, TileObjects? Objects)> _builtObjects = new();
 
     /// <summary>Parsed tiles waiting for their models to load.</summary>
@@ -55,10 +55,14 @@ public partial class TileManager : Node3D
 
     private readonly Dictionary<(int X, int Y), TileObjectsNode> _objects = [];
 
+    /// <summary>Each loaded tile's area ids, by chunk.</summary>
+    private readonly Dictionary<(int X, int Y), int[]> _areas = [];
+
     private IAssetSource _source = null!;
     private WdtMap _map = null!;
     private TerrainBuilder _builder = null!;
     private TileObjectsBuilder _objectsBuilder = null!;
+    private LiquidLibrary _liquids = null!;
     private bool _buildingObjects;
     private IPlayer _player = null!;
     private TerrainCollision _collision = null!;
@@ -73,8 +77,35 @@ public partial class TileManager : Node3D
 
     public bool IsBuilding => _building;
 
+    /// <summary>Anything still loading or waiting to join the scene.</summary>
+    public bool IsBusy => _building || _buildingObjects || !_built.IsEmpty || !_builtObjects.IsEmpty
+        || _objectsToBuild.Count > 0 || _objects.Values.Any(o => !o.Finished);
+
+    /// <summary>The player's feet in Godot's axes, relative to the middle of the map.</summary>
+    public (double X, double Y, double Z) PlayerWorldPosition
+    {
+        get
+        {
+            var feet = _player.Feet;
+            return (feet.X + _originX, feet.Y, feet.Z + _originZ);
+        }
+    }
+
+    /// <summary>The area under the player, or null where no tile has loaded.</summary>
+    public int? AreaAtPlayer()
+    {
+        var chunk = ChunkAt(_player.Feet);
+        var tile = (X: chunk.X / WowCoords.ChunksPerTile, Y: chunk.Z / WowCoords.ChunksPerTile);
+        if (chunk.X < 0 || chunk.Z < 0 || !_areas.TryGetValue(tile, out var areas))
+        {
+            return null;
+        }
+
+        return areas[chunk.Z % WowCoords.ChunksPerTile * WowCoords.ChunksPerTile + chunk.X % WowCoords.ChunksPerTile];
+    }
+
     /// <summary>Starts streaming with the given Godot world position at the local origin.</summary>
-    public void Start(IAssetSource source, WdtMap map, IPlayer player, double originX, double originZ)
+    public void Start(IAssetSource source, WdtMap map, LiquidLibrary liquids, IPlayer player, double originX, double originZ)
     {
         _collision = new TerrainCollision { Name = "Collision" };
         AddChild(_collision);
@@ -87,7 +118,8 @@ public partial class TileManager : Node3D
         _originX = originX;
         _originZ = originZ;
         _builder = new TerrainBuilder(source, map);
-        _objectsBuilder = new TileObjectsBuilder(new ModelLibrary(source), map);
+        _liquids = liquids;
+        _objectsBuilder = new TileObjectsBuilder(new ModelLibrary(source, liquids), map);
         TerrainBuilder.LoadShared();
     }
 
@@ -296,6 +328,17 @@ public partial class TileManager : Node3D
         };
         ApplyDebugView(node);
         AddChild(node);
+        if (built.Liquid is not null)
+        {
+            node.AddChild(new MeshInstance3D
+            {
+                Name = "Liquid",
+                Mesh = built.Liquid,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            });
+        }
+
+        _areas[built.Tile] = built.Terrain.Chunks.Select(c => c.AreaId).ToArray();
         _tiles[built.Tile] = node;
         _collision.AddTile(built.Tile, node, built.Collision);
         _objectsToBuild[built.Tile] = built.Terrain!;
@@ -308,6 +351,7 @@ public partial class TileManager : Node3D
             _collision.RemoveTile(tile);
             _objectsToBuild.Remove(tile);
             _objects.Remove(tile);
+            _areas.Remove(tile);
             _tiles[tile]?.QueueFree();
             _tiles.Remove(tile);
             _failedTiles.Remove(tile);
@@ -351,10 +395,12 @@ public partial class TileManager : Node3D
         ArrayMesh? mesh = null;
         TerrainCollisionData? collision = null;
         AdtTerrain? terrain = null;
+        ArrayMesh? liquid = null;
         try
         {
             var stopwatch = Stopwatch.StartNew();
             (mesh, collision, terrain) = _builder.Build(tile.X, tile.Y);
+            liquid = _liquids.BuildMesh(LiquidSurface.FromTile(terrain.Liquids));
             GD.Print($"Tile {tile.X}_{tile.Y} built in {stopwatch.ElapsedMilliseconds} ms");
         }
         catch (Exception e)
@@ -362,7 +408,7 @@ public partial class TileManager : Node3D
             GD.PushError($"Could not build tile {tile.X}_{tile.Y}: {e.Message}");
         }
 
-        _built.Enqueue((tile, mesh, collision, terrain));
+        _built.Enqueue((tile, mesh, collision, terrain, liquid));
     }
 
     /// <summary>Models load one tile at a time, nearest first, without holding up terrain.</summary>

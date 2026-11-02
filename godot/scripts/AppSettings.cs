@@ -21,6 +21,7 @@ public static class AppSettings
     private const string FilePath = "user://settings.cfg";
     private const string ClientSection = "client";
     private const string MovementSection = "movement";
+    private const string AudioSection = "audio";
     private const string PathKey = "path";
     private const string EnvironmentVariable = "WOWVR_CLIENT_PATH";
 
@@ -62,7 +63,7 @@ public static class AppSettings
 
     public static PlayerScale Scale
     {
-        get => (PlayerScale)Read(MovementSection, "scale", (int)PlayerScale.PlayerSized).AsInt32();
+        get => (PlayerScale)Read(MovementSection, "scale", (int)PlayerScale.TrueScale).AsInt32();
         set => WriteMovement("scale", (int)value);
     }
 
@@ -77,6 +78,31 @@ public static class AppSettings
     {
         get => Read(MovementSection, "vignette_size", 0.65f).AsSingle();
         set => WriteMovement("vignette_size", Mathf.Clamp(value, 0f, 1f));
+    }
+
+    private static float? _musicVolume;
+    private static float? _ambienceVolume;
+
+    /// <summary>From 0 to 1. Kept in memory because sound fades read it every frame.</summary>
+    public static float MusicVolume
+    {
+        get => _musicVolume ??= Read(AudioSection, "music", 0.6f).AsSingle();
+        set
+        {
+            _musicVolume = Mathf.Clamp(value, 0f, 1f);
+            Write(AudioSection, "music", _musicVolume.Value);
+        }
+    }
+
+    /// <summary>From 0 to 1. Kept in memory because sound fades read it every frame.</summary>
+    public static float AmbienceVolume
+    {
+        get => _ambienceVolume ??= Read(AudioSection, "ambience", 0.8f).AsSingle();
+        set
+        {
+            _ambienceVolume = Mathf.Clamp(value, 0f, 1f);
+            Write(AudioSection, "ambience", _ambienceVolume.Value);
+        }
     }
 
     /// <summary>World units per real meter, for the current scale.</summary>

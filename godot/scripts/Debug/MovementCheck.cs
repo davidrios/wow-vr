@@ -119,7 +119,8 @@ public partial class MovementCheck : Node
             await Seconds(0.3);
             var moved = new Vector2(Player.Feet.X - start.X, Player.Feet.Z - start.Z).Length();
             aims++;
-            landed += can && moved > 2f ? 1 : 0;
+            // In real meters, because the same aim covers more yards at a larger scale.
+            landed += can && moved / AppSettings.WorldScale > MinTeleportMeters ? 1 : 0;
             GD.Print($"  aimed at {pitch} degrees: moved {moved:F1} yards");
         }
 
@@ -248,6 +249,8 @@ public partial class MovementCheck : Node
 
         slider.Value = saved;
     }
+
+    private const float MinTeleportMeters = 1.3f;
 
     private void ScaleButtonsWork()
     {

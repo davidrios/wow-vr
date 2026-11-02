@@ -1,10 +1,13 @@
 using System;
 using System.Globalization;
+using System.Linq;
 using System.Threading.Tasks;
+using WowVR.Converters;
 using WowVR.Debug;
 using WowVR.Desktop;
 using WowVR.Formats;
 using WowVR.Formats.Assets;
+using WowVR.Formats.Database;
 using WowVR.Formats.Terrain;
 using WowVR.Formats.World;
 using WowVR.World;
@@ -21,6 +24,7 @@ public partial class Main : Node3D
     private const string MovementCheckArgument = "--movement-check";
     private const string OpenMenuArgument = "--open-menu";
     private const string StartArgument = "--start=";
+    private const string ScreenshotArgument = "--screenshot=";
 
     private Node3D _player = null!;
 
@@ -70,10 +74,12 @@ public partial class Main : Node3D
         try
         {
             var (startMap, startPosition, startPitch, startYaw, explicitStart) = ReadStart();
-            var (source, map) = await Task.Run(() =>
+            var (source, map, lights, zones, liquids, mapId) = await Task.Run(() =>
             {
                 var opened = MpqAssetSource.Open(clientPath);
-                return (opened, WdtMap.Read(opened, startMap));
+                var id = MapRecord.ReadAll(opened)
+                    .First(m => m.Directory.Equals(startMap, StringComparison.OrdinalIgnoreCase)).Id;
+                return (opened, WdtMap.Read(opened, startMap), LightTable.Read(opened), ZoneTable.Read(opened), new LiquidLibrary(opened), id);
             });
             GD.Print($"Client opened: {map.TileCountWithData} tiles in {startMap}");
 
@@ -89,8 +95,18 @@ public partial class Main : Node3D
             }
 
             var tiles = new TileManager { Name = "Tiles" };
+            var sky = new SkyController { Name = "Sky" };
+            AddChild(sky);
+            sky.Start(lights, tiles, GetNode<WorldEnvironment>("WorldEnvironment").Environment, GetNode<DirectionalLight3D>("Sun"), mapId, liquids);
+
             AddChild(tiles);
-            tiles.Start(source, map, player, start.X, start.Z);
+            tiles.Start(source, map, liquids, player, start.X, start.Z);
+
+            var ambience = new ZoneAmbience { Name = "ZoneAmbience" };
+            AddChild(ambience);
+            ambience.Start(source, zones, tiles, sky);
+
+            player.Menu.SetSky(sky);
 
             player.Menu.SetLandmarks(Landmarks.On(startMap), l => tiles.TeleportTo(l.WowX, l.WowY));
 
@@ -114,6 +130,14 @@ public partial class Main : Node3D
             if (Array.IndexOf(arguments, MovementCheckArgument) >= 0)
             {
                 AddChild(new MovementCheck { Tiles = tiles, Player = player });
+            }
+
+            foreach (var argument in arguments)
+            {
+                if (argument.StartsWith(ScreenshotArgument))
+                {
+                    AddChild(new ScreenshotTaker { Tiles = tiles, Path = argument[ScreenshotArgument.Length..] });
+                }
             }
 
             if (walkTour || flyTour)

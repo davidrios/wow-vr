@@ -20,6 +20,16 @@ internal unsafe struct WaTerrainChunk
     public byte* VertexColors;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct WaLiquidLayer
+{
+    public uint Chunk;
+    public uint LiquidType;
+    public ulong Cells;
+    public float* Heights;
+    public byte* Depths;
+}
+
 internal static unsafe partial class TerrainNativeMethods
 {
     private const string Library = "wow_alchemy_ffi";
@@ -38,6 +48,12 @@ internal static unsafe partial class TerrainNativeMethods
 
     [LibraryImport(Library, EntryPoint = "wa_adt_texture_name")]
     internal static partial WaStatus AdtTextureName(AdtHandle adt, uint index, out byte* text, out nuint length);
+
+    [LibraryImport(Library, EntryPoint = "wa_adt_liquid_count")]
+    internal static partial uint AdtLiquidCount(AdtHandle adt);
+
+    [LibraryImport(Library, EntryPoint = "wa_adt_liquid")]
+    internal static partial WaStatus AdtLiquid(AdtHandle adt, uint index, out WaLiquidLayer layer);
 
     [LibraryImport(Library, EntryPoint = "wa_adt_chunk")]
     internal static partial WaStatus AdtChunk(AdtHandle adt, uint index, out WaTerrainChunk chunk);

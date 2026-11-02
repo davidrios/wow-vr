@@ -39,6 +39,8 @@ Set `WOWVR_CLIENT_PATH`, then:
 dotnet run --project tools/inspect -- list elwynn
 dotnet run --project tools/inspect -- dbc DBFilesClient\Map.dbc
 dotnet run --project tools/inspect -- blp Tileset\Elwynn\ElwynnGrassBase.blp grass.png
+dotnet run --project tools/inspect -- wmos Azeroth 31 49
+dotnet run --project tools/inspect -- check-models
 ```
 
 Exported files come from your client, so don't commit or share them.

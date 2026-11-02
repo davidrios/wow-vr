@@ -1,5 +1,6 @@
 using WowVR.Formats;
 using WowVR.Formats.Assets;
+using WowVR.Formats.Models;
 using WowVR.Formats.Database;
 using WowVR.Formats.Terrain;
 using WowVR.Formats.Textures;
@@ -13,6 +14,9 @@ const string Usage = """
       blp <file> <out.png> [mip]  Export a BLP texture to PNG. Don't commit the output.
       dbc <file> [max rows]       Print rows of a DBC file. Map and AreaTable are typed.
       area <map> <name>           Print the center of an area's terrain, for picking landmarks.
+      wmos <map> <tile x> <tile y> Print a tile's WMO placements, with WoW positions.
+      extract <file> <out>        Copy a file out of the client. Don't commit the output.
+      check-models [text]         Parse every M2 and WMO, optionally only those containing text.
     """;
 
 if (args.Length == 0)
@@ -48,6 +52,15 @@ try
             return PrintDbc(source, file, 50);
         case ["dbc", var file, var maxRows]:
             return PrintDbc(source, file, int.Parse(maxRows));
+        case ["wmos", var map, var tileX, var tileY]:
+            return PrintWmos(source, map, int.Parse(tileX), int.Parse(tileY));
+        case ["extract", var file, var output]:
+            File.WriteAllBytes(output, source.Read(file) ?? throw new IOException($"Not in the client: {file}"));
+            return 0;
+        case ["check-models"]:
+            return CheckModels(source, "");
+        case ["check-models", var text]:
+            return CheckModels(source, text);
         case ["area", var map, var name]:
             return PrintArea(source, map, name);
         default:
@@ -59,6 +72,68 @@ catch (Exception e) when (e is IOException or WowVR.Formats.WowAlchemyException 
 {
     Console.Error.WriteLine(e.Message);
     return 1;
+}
+
+static int PrintWmos(MpqAssetSource source, string mapName, int tileX, int tileY)
+{
+    var map = WdtMap.Read(source, mapName);
+    foreach (var wmo in AdtTerrain.Parse(source.Read(map.TilePath(tileX, tileY))!, map.BigAlpha).Wmos)
+    {
+        var (wowX, wowY) = (WowCoords.MapOrigin - wmo.Position.Z, WowCoords.MapOrigin - wmo.Position.X);
+        Console.WriteLine($"{wowX:F0},{wowY:F0},{wmo.Position.Y:F0} yaw {wmo.Rotation.Y:F0} {wmo.Model}");
+    }
+
+    return 0;
+}
+
+static int CheckModels(MpqAssetSource source, string text)
+{
+    var files = source.List().Where(f => f.Contains(text, StringComparison.OrdinalIgnoreCase)).ToList();
+    var (passed, failed) = (0, 0);
+
+    void Check(string file, Action parse)
+    {
+        try
+        {
+            parse();
+            passed++;
+        }
+        catch (Exception e) when (e is WowVR.Formats.WowAlchemyException or InvalidOperationException)
+        {
+            failed++;
+            Console.WriteLine($"{file}: {e.Message}");
+        }
+    }
+
+    foreach (var file in files.Where(f => f.EndsWith(".m2", StringComparison.OrdinalIgnoreCase)))
+    {
+        var skin = source.Read(M2Model.SkinPath(file));
+        if (skin is not null)
+        {
+            Check(file, () => M2Model.Parse(source.Read(file)!, skin));
+        }
+    }
+
+    foreach (var file in files.Where(f => f.EndsWith(".wmo", StringComparison.OrdinalIgnoreCase) && !IsWmoGroup(f)))
+    {
+        Check(file, () =>
+        {
+            var root = WmoRoot.Parse(source.Read(file)!);
+            for (var i = 0; i < root.GroupCount; i++)
+            {
+                WmoGroup.Parse(source.Read(WmoRoot.GroupPath(file, i)) ?? throw new InvalidOperationException($"Group {i} is missing."), root);
+            }
+        });
+    }
+
+    Console.WriteLine($"{passed} parsed, {failed} failed");
+    return failed == 0 ? 0 : 1;
+}
+
+static bool IsWmoGroup(string file)
+{
+    var name = Path.GetFileNameWithoutExtension(file);
+    return name.Length > 4 && name[^4] == '_' && name[^3..].All(char.IsAsciiDigit);
 }
 
 static int PrintArea(MpqAssetSource source, string mapName, string areaName)

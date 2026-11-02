@@ -19,6 +19,12 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     private const float GroundSnapLength = 1f;
     private const float Gravity = 19f;
 
+    /// <summary>How high a step can be, in yards. A capsule can't climb one by itself.</summary>
+    private const float StepHeight = 1.2f;
+
+    /// <summary>How far ahead to look for a step, in yards.</summary>
+    private const float StepProbe = 0.3f;
+
     private Camera3D _camera = null!;
     private CapsuleShape3D _capsule = null!;
     private CollisionShape3D _shape = null!;
@@ -142,6 +148,7 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         else
         {
             Walk((float)delta);
+            TryStepUp();
         }
 
         MoveAndSlide();
@@ -166,6 +173,41 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
             direction.X * speed,
             IsOnFloor() ? 0 : Velocity.Y - Gravity * delta,
             direction.Z * speed);
+    }
+
+    /// <summary>Lifts the player onto a step just ahead. Matches movement_step.gd.</summary>
+    private void TryStepUp()
+    {
+        var direction = new Vector3(Velocity.X, 0, Velocity.Z);
+        if (!IsOnFloor() || direction.Length() < 0.1f)
+        {
+            return;
+        }
+
+        var start = GlobalTransform;
+        var ahead = direction.Normalized() * StepProbe;
+        var up = Vector3.Up * StepHeight;
+
+        // Only a face too steep to walk up is a step. Slopes look the same to this test, and
+        // lifting the player on those would make them faster uphill.
+        var blocker = new KinematicCollision3D();
+        if (!TestMove(start, ahead, blocker) || blocker.GetAngle(0, Vector3.Up) <= FloorMaxAngle || TestMove(start, up))
+        {
+            return;
+        }
+
+        var raised = start.Translated(up);
+        if (TestMove(raised, ahead))
+        {
+            return;
+        }
+
+        var over = raised.Translated(ahead);
+        var landing = new KinematicCollision3D();
+        if (TestMove(over, Vector3.Down * StepHeight, landing) && landing.GetAngle(0, Vector3.Up) <= FloorMaxAngle)
+        {
+            GlobalPosition = over.Origin + landing.GetTravel();
+        }
     }
 
     private Vector3 WalkInput()

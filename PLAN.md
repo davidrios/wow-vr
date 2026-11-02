@@ -180,7 +180,7 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - WMO: root + groups, materials, vertex colors, collision. Place via ADT MODF.
 - Distance culling and simple LOD (drop small doodads first).
 
-**Done when:** Goldshire and Stormwind's gates look right, and you can walk into the Lion's Pride Inn.
+**Done when:** Goldshire and Stormwind's gates look right, and you can walk into the Lion's Pride Inn. Passed on 2026-11-01: it looks right and holds 90 FPS in the headset, and `--movement-check` walks into the inn in both modes. See `docs/decisions/0005-doodads-and-wmos.md`.
 
 ### M5 — Water, sky, ambience
 - Liquids (MH2O in ADTs, MLIQ in WMOs): water/lava/slime with a simple animated shader.

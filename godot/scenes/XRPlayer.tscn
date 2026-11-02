@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://scripts/Xr/XrPlayer.cs" id="1_player"]
 [ext_resource type="PackedScene" path="res://addons/godot-xr-tools/hands/scenes/lowpoly/left_hand_low.tscn" id="2_left"]
@@ -12,6 +12,7 @@
 [ext_resource type="PackedScene" path="res://addons/godot-xr-tools/objects/viewport_2d_in_3d.tscn" id="10_viewport"]
 [ext_resource type="PackedScene" path="res://scenes/WorldMenu.tscn" id="11_menu"]
 [ext_resource type="Script" path="res://scripts/Xr/movement_fly.gd" id="12_fly"]
+[ext_resource type="Script" path="res://scripts/Xr/movement_step.gd" id="13_step"]
 
 [node name="XRPlayer" type="XROrigin3D"]
 script = ExtResource("1_player")
@@ -57,5 +58,8 @@ suppress_mask = 0
 
 [node name="MovementFly" type="Node3D" parent="." groups=["movement_providers"]]
 script = ExtResource("12_fly")
+
+[node name="MovementStep" type="Node3D" parent="." groups=["movement_providers"]]
+script = ExtResource("13_step")
 
 [node name="PlayerBody" parent="." instance=ExtResource("4_body")]

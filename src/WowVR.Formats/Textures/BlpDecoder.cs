@@ -5,8 +5,39 @@ namespace WowVR.Formats.Textures;
 /// <summary>A decoded texture: 4 bytes per pixel, RGBA, top row first.</summary>
 public sealed record DecodedTexture(byte[] Rgba8, int Width, int Height, int MipCount);
 
+public enum GpuTextureFormat
+{
+    /// <summary>One level, with no mipmaps yet.</summary>
+    Rgba8 = 0,
+    Dxt1 = 1,
+    Dxt3 = 3,
+    Dxt5 = 5,
+}
+
+/// <summary>Pixels ready for upload. Compressed formats hold a chain down to 1 pixel.</summary>
+public sealed record GpuTexture(byte[] Pixels, GpuTextureFormat Format, int Width, int Height, int MipCount);
+
 public static class BlpDecoder
 {
+    /// <summary>The file's own compressed mipmaps when a GPU can use them, or else RGBA8.</summary>
+    public static unsafe GpuTexture ConvertToGpu(ReadOnlySpan<byte> blp)
+    {
+        fixed (byte* data = blp)
+        {
+            if (ModelNativeMethods.BlpToGpu(data, (nuint)blp.Length, out var texture) != WaStatus.Ok)
+            {
+                throw new WowAlchemyException(NativeMethods.LastErrorMessage());
+            }
+
+            return new GpuTexture(
+                NativeMethods.TakeBuffer(texture.Pixels),
+                (GpuTextureFormat)texture.Format,
+                checked((int)texture.Width),
+                checked((int)texture.Height),
+                checked((int)texture.MipCount));
+        }
+    }
+
     public static unsafe DecodedTexture Decode(ReadOnlySpan<byte> blp, int mipLevel = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(mipLevel);

@@ -4,6 +4,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using WowVR.Formats;
 using WowVR.Ui;
 using WowVR.World;
 using Godot;
@@ -19,6 +20,9 @@ public partial class MovementCheck : Node
 {
     private const int SecondsToLoad = 15;
     private const float StandTolerance = 0.5f;
+
+    /// <summary>A little over walking speed, because stepping onto something moves the player slightly.</summary>
+    private const float MaxWalkedInASecond = AppSettings.WalkSpeed * 1.15f;
 
     public required TileManager Tiles { get; init; }
     public required IPlayer Player { get; init; }
@@ -50,10 +54,14 @@ public partial class MovementCheck : Node
         Tiles.PlacePlayerOnSurface();
         await StandsOnTheGround("After flying");
 
-        foreach (var landmark in new[] { "Northshire", "Booty Bay", "Brill", "Goldshire" })
+        foreach (var landmark in new[] { "Northshire", "Stormwind", "Booty Bay", "Brill", "Goldshire" })
         {
             PressMenuButton(landmark);
             await StandsOnTheGround($"Teleported to {landmark}");
+            if (landmark == "Stormwind")
+            {
+                await ReportFrameCost(landmark);
+            }
         }
 
         var surface = Player.Feet;
@@ -91,9 +99,18 @@ public partial class MovementCheck : Node
 
         // Teleport: hold the trigger to aim, release to go. A natural aim is close to level.
         var teleport = xr.GetNode<Node3D>("LeftController/FunctionTeleport");
-        foreach (var pitch in new[] { -45f, -25f, -10f, 0f, 10f })
+        var aimFrom = Player.Feet;
+        // XR Tools' arc has narrow blind spots, about 2.5 degrees wide, where it finds no target
+        // on flat ground, so this expects most angles to work rather than all of them.
+        var (aims, landed) = (0, 0);
+        foreach (var pitch in new[] { -60f, -50f, -40f, -30f, -25f, -20f, -10f, -5f, 0f, 5f })
         {
+            // From the same spot each time, on a road, so trees don't get in the way of the arc.
+            Player.PlaceAt(aimFrom + Vector3.Up);
+            Tiles.PlacePlayerOnSurface();
+            await StandsOnTheGround($"Ready to aim {pitch} degrees");
             SetPose(left, new Vector3(-0.2f, 1.1f, -0.3f), pitch);
+            await Seconds(0.1);
             var start = Player.Feet;
             left.SetInput("trigger_click", true);
             await Seconds(0.3);
@@ -101,9 +118,12 @@ public partial class MovementCheck : Node
             left.SetInput("trigger_click", false);
             await Seconds(0.3);
             var moved = new Vector2(Player.Feet.X - start.X, Player.Feet.Z - start.Z).Length();
-            Check($"Teleport aimed at {pitch} degrees", can && moved > 2f, $"moved {moved:F1} yards");
+            aims++;
+            landed += can && moved > 2f ? 1 : 0;
+            GD.Print($"  aimed at {pitch} degrees: moved {moved:F1} yards");
         }
 
+        Check("Teleport lands at most aim angles", landed * 5 >= aims * 4, $"{landed} of {aims}");
         SetPose(left, new Vector3(-0.2f, 1.1f, -0.3f), -25f);
         await Seconds(0.3);
 
@@ -115,7 +135,7 @@ public partial class MovementCheck : Node
         await Seconds(1);
         left.SetInput("primary", Vector2.Zero);
         var walked = new Vector2(Player.Feet.X - before.X, Player.Feet.Z - before.Z).Length();
-        Check("Left stick walks", walked > 3f, $"moved {walked:F1} yards in a second");
+        Check("Left stick walks at walking speed", walked > 3f && walked < MaxWalkedInASecond, $"moved {walked:F1} yards in a second");
         await Seconds(0.5);
 
         // Turning.
@@ -141,6 +161,22 @@ public partial class MovementCheck : Node
 
         Tiles.PlacePlayerOnSurface();
         await StandsOnTheGround("Back on the ground");
+
+        // Up the inn's step and through its door, with the stick.
+        const float doorOffset = -4f, startEast = 12f, innWallEast = 23f;
+        var center = WowCoords.ToGodot(new System.Numerics.Vector3(-9464f, 62f, 57f));
+        var goldshire = Tiles.WorldToLocal(center.X, center.Y, center.Z);
+        Player.PlaceAt(goldshire + new Vector3(startEast, 2f, doorOffset));
+        Tiles.PlacePlayerOnSurface();
+        await StandsOnTheGround("In front of the door, in VR");
+        xr.GlobalBasis = Basis.Identity.Rotated(Vector3.Up, -Mathf.Pi / 2);
+        await Seconds(0.2);
+        left.SetInput("primary", new Vector2(0, 1));
+        await Seconds(2.5);
+        left.SetInput("primary", Vector2.Zero);
+        await Seconds(0.3);
+        var east = Player.Feet.X - goldshire.X;
+        Check("VR walks into the inn", east > innWallEast && Player.OnGround, $"{east:F1} yards east of the center, wall at {innWallEast}");
 
         // Clicking in the menu isn't covered: the simulated pointer's ray doesn't reach it.
         left.SetInput("ax_button", true);
@@ -230,21 +266,96 @@ public partial class MovementCheck : Node
             return;
         }
 
+        var before = Player.Feet;
         desktop.ScriptedWalk = Vector3.Forward;
         await Seconds(5);
         desktop.ScriptedWalk = null;
+        var walked = new Vector2(Player.Feet.X - before.X, Player.Feet.Z - before.Z).Length() / 5f;
+        Check("Walks at walking speed", walked < MaxWalkedInASecond, $"{walked:F1} yards per second");
         await StandsOnTheGround("After walking 35 yards");
 
-        // There's a hole in the terrain east of Goldshire's center, until M4 adds what's in it.
-        var before = Player.Feet.Y;
-        desktop.PlaceAt(new Vector3(0, before, 0));
+        await WalksIntoTheInn(desktop);
+        await DoodadsBlockThePlayer(desktop);
+    }
+
+    /// <summary>Finds the inn's door with rays, so this doesn't depend on measured positions.</summary>
+    private async Task WalksIntoTheInn(Desktop.DesktopPlayer desktop)
+    {
+        var center = WowCoords.ToGodot(new System.Numerics.Vector3(-9464f, 62f, 57f));
+        var start = Tiles.WorldToLocal(center.X, center.Y, center.Z);
+        desktop.PlaceAt(start);
         Tiles.PlacePlayerOnSurface();
-        await StandsOnTheGround("Back at the center");
+        await StandsOnTheGround("Back at Goldshire's center");
+
+        var height = Player.Feet.Y + 2f;
+        // A solid wall, beside the door, stops the player.
+        const float innWallEast = 23f, wallOffset = 8f, doorOffset = -4f, startEast = 12f;
+        desktop.PlaceAt(start + new Vector3(startEast, 2f, wallOffset));
+        Tiles.PlacePlayerOnSurface();
+        await StandsOnTheGround("In front of the inn");
         desktop.ScriptedWalk = Vector3.Right;
-        await Seconds(5);
+        await Seconds(4);
         desktop.ScriptedWalk = null;
-        await Seconds(1);
-        Check("A hole can't be fallen through", Player.Feet.Y > before - 20f && Player.OnGround, $"at {Player.Feet}");
+        Check("A wall stops the player", Player.Feet.X - start.X < innWallEast, $"{innWallEast - (Player.Feet.X - start.X):F1} yards short of the wall");
+
+        // Through the door, measured with rays: a roof overhead and a floor underfoot.
+        desktop.PlaceAt(start + new Vector3(startEast, 2f, doorOffset));
+        Tiles.PlacePlayerOnSurface();
+        await StandsOnTheGround("In front of the door");
+        desktop.ScriptedWalk = Vector3.Right;
+        await Seconds(2.5);
+        desktop.ScriptedWalk = null;
+        await Seconds(0.3);
+        var feet = Player.Feet;
+        var roof = Ray(feet + Vector3.Up * 3f, feet + Vector3.Up * 30f);
+        var east = feet.X - start.X;
+        Check("Walks into the inn", east > innWallEast && roof is not null && Player.OnGround, $"{east:F1} yards east of the center, wall at {innWallEast}, roof {(roof is { } r ? r.Y - feet.Y : -1):F1} above");
+    }
+
+    /// <summary>Walks at the tallest doodad nearby, which should stop the player before its middle.</summary>
+    private async Task DoodadsBlockThePlayer(Desktop.DesktopPlayer desktop)
+    {
+        await Seconds(1.5);
+
+        var bodies = GetTree().GetNodesInGroup(TileObjectsNode.DoodadCollisionGroup).OfType<StaticBody3D>().ToList();
+        Check("Doodads near the player have collision", bodies.Count > 0, $"{bodies.Count} bodies");
+        if (bodies.Count == 0)
+        {
+            return;
+        }
+
+        var doodad = bodies.MaxBy(b => b.GetChild<CollisionShape3D>(0).Shape is ConcavePolygonShape3D s ? s.Data.Max(p => p.Y) : 0f)!;
+        var center = doodad.GlobalPosition;
+        const float approach = 8f;
+        var from = center + Vector3.Back * approach;
+
+        desktop.PlaceAt(new Vector3(from.X, Player.Feet.Y + 5f, from.Z));
+        Tiles.PlacePlayerOnSurface();
+        await StandsOnTheGround("In front of a doodad");
+        desktop.ScriptedWalk = Vector3.Forward;
+        await Seconds(approach / AppSettings.WalkSpeed + 1.5);
+        desktop.ScriptedWalk = null;
+
+        var left = Player.Feet.Z - center.Z;
+        Check("A doodad blocks the player", left > 0f, $"stopped {left:F1} yards short of its middle");
+    }
+
+    private async Task ReportFrameCost(string place)
+    {
+        await Seconds(3);
+        var frames = Engine.GetFramesDrawn();
+        var started = Time.GetTicksMsec();
+        await Seconds(2);
+        var milliseconds = (Time.GetTicksMsec() - started) / (double)Mathf.Max(Engine.GetFramesDrawn() - frames, 1);
+        var draws = RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TotalDrawCallsInFrame);
+        GD.Print($"  {place}: {milliseconds:F1} ms per frame, {draws} draw calls");
+    }
+
+    private Vector3? Ray(Vector3 from, Vector3 to)
+    {
+        var query = PhysicsRayQueryParameters3D.Create(from, to, TileManager.TerrainLayer);
+        var hit = GetViewport().FindWorld3D().DirectSpaceState.IntersectRay(query);
+        return hit.Count > 0 ? hit["position"].AsVector3() : null;
     }
 
     private async Task StandsOnTheGround(string when)

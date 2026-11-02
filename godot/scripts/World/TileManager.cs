@@ -39,16 +39,27 @@ public partial class TileManager : Node3D
     /// <summary>How far the camera may go before the world re-centers, in yards.</summary>
     private const float RecenterDistance = 512f;
 
+    /// <summary>Doodad batches and WMO groups to add per frame, across all tiles.</summary>
+    private const int MaxObjectItemsPerFrame = 8;
+
     /// <summary>The physics layer terrain is on.</summary>
     public const uint TerrainLayer = 1;
 
     private readonly Dictionary<(int X, int Y), MeshInstance3D?> _tiles = [];
     private readonly HashSet<(int X, int Y)> _failedTiles = [];
-    private readonly ConcurrentQueue<((int X, int Y) Tile, ArrayMesh? Mesh, TerrainCollisionData? Collision)> _built = new();
+    private readonly ConcurrentQueue<((int X, int Y) Tile, ArrayMesh? Mesh, TerrainCollisionData? Collision, AdtTerrain? Terrain)> _built = new();
+    private readonly ConcurrentQueue<((int X, int Y) Tile, TileObjects? Objects)> _builtObjects = new();
+
+    /// <summary>Parsed tiles waiting for their models to load.</summary>
+    private readonly Dictionary<(int X, int Y), AdtTerrain> _objectsToBuild = [];
+
+    private readonly Dictionary<(int X, int Y), TileObjectsNode> _objects = [];
 
     private IAssetSource _source = null!;
     private WdtMap _map = null!;
     private TerrainBuilder _builder = null!;
+    private TileObjectsBuilder _objectsBuilder = null!;
+    private bool _buildingObjects;
     private IPlayer _player = null!;
     private TerrainCollision _collision = null!;
     private GroundGuard _guard = null!;
@@ -76,6 +87,7 @@ public partial class TileManager : Node3D
         _originX = originX;
         _originZ = originZ;
         _builder = new TerrainBuilder(source, map);
+        _objectsBuilder = new TileObjectsBuilder(new ModelLibrary(source), map);
         TerrainBuilder.LoadShared();
     }
 
@@ -95,7 +107,9 @@ public partial class TileManager : Node3D
             return GroundState.NoTerrain;
         }
 
-        return _collision.HasChunk(chunk) ? GroundState.Ready : GroundState.Loading;
+        // A tile's buildings can have floors above its terrain, so they count as ground.
+        var objectsDone = _objects.TryGetValue(tile, out var objects) && objects.Finished;
+        return objectsDone && _collision.HasChunk(chunk) ? GroundState.Ready : GroundState.Loading;
     }
 
     /// <summary>Jumps to a landmark, moving the origin there so nothing is ever far from zero.</summary>
@@ -139,8 +153,11 @@ public partial class TileManager : Node3D
         var center = WowCoords.TileAt(wow.X, wow.Y);
 
         CommitOneBuiltTile();
+        CommitBuiltObjects();
+        AddNearestObjects();
         UnloadFarTiles(center);
         StartNextBuild(center);
+        StartNextObjectsBuild(center);
         _collision.Update(ChunkAt(_player.Feet));
     }
 
@@ -266,7 +283,7 @@ public partial class TileManager : Node3D
             _failedTiles.Add(built.Tile);
         }
 
-        if (built.Mesh is null || built.Collision is null || !_tiles.ContainsKey(built.Tile))
+        if (built.Mesh is null || built.Collision is null || built.Terrain is null || !_tiles.ContainsKey(built.Tile))
         {
             return;
         }
@@ -281,6 +298,7 @@ public partial class TileManager : Node3D
         AddChild(node);
         _tiles[built.Tile] = node;
         _collision.AddTile(built.Tile, node, built.Collision);
+        _objectsToBuild[built.Tile] = built.Terrain!;
     }
 
     private void UnloadFarTiles((int X, int Y) center)
@@ -288,6 +306,8 @@ public partial class TileManager : Node3D
         foreach (var tile in _tiles.Keys.Where(t => Distance(t, center) > UnloadRadius).ToList())
         {
             _collision.RemoveTile(tile);
+            _objectsToBuild.Remove(tile);
+            _objects.Remove(tile);
             _tiles[tile]?.QueueFree();
             _tiles.Remove(tile);
             _failedTiles.Remove(tile);
@@ -307,8 +327,7 @@ public partial class TileManager : Node3D
         {
             for (var x = center.X - TileRadius; x <= center.X + TileRadius; x++)
             {
-                double dx = x - center.X, dy = y - center.Y;
-                var distance = dx * dx + dy * dy;
+                var distance = TileDistanceFromPlayer((x, y));
                 if (distance < best && _map.HasTile(x, y) && !_tiles.ContainsKey((x, y)))
                 {
                     next = (x, y);
@@ -331,10 +350,11 @@ public partial class TileManager : Node3D
     {
         ArrayMesh? mesh = null;
         TerrainCollisionData? collision = null;
+        AdtTerrain? terrain = null;
         try
         {
             var stopwatch = Stopwatch.StartNew();
-            (mesh, collision) = _builder.Build(tile.X, tile.Y);
+            (mesh, collision, terrain) = _builder.Build(tile.X, tile.Y);
             GD.Print($"Tile {tile.X}_{tile.Y} built in {stopwatch.ElapsedMilliseconds} ms");
         }
         catch (Exception e)
@@ -342,7 +362,95 @@ public partial class TileManager : Node3D
             GD.PushError($"Could not build tile {tile.X}_{tile.Y}: {e.Message}");
         }
 
-        _built.Enqueue((tile, mesh, collision));
+        _built.Enqueue((tile, mesh, collision, terrain));
+    }
+
+    /// <summary>Models load one tile at a time, nearest first, without holding up terrain.</summary>
+    private void StartNextObjectsBuild((int X, int Y) center)
+    {
+        if (_buildingObjects || _objectsToBuild.Count == 0)
+        {
+            return;
+        }
+
+        var tile = _objectsToBuild.Keys.MinBy(TileDistanceFromPlayer);
+        var terrain = _objectsToBuild[tile];
+        _objectsToBuild.Remove(tile);
+        _buildingObjects = true;
+        Task.Run(() => BuildObjects(tile, terrain));
+    }
+
+    private void BuildObjects((int X, int Y) tile, AdtTerrain terrain)
+    {
+        TileObjects? objects = null;
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            objects = _objectsBuilder.Build(terrain, tile.X, tile.Y);
+            GD.Print($"Tile {tile.X}_{tile.Y} objects built in {stopwatch.ElapsedMilliseconds} ms: {objects.Doodads.Count} doodad batches, {objects.Wmos.Count} WMOs");
+        }
+        catch (Exception e)
+        {
+            GD.PushError($"Could not build the objects of tile {tile.X}_{tile.Y}: {e.Message}");
+        }
+
+        _builtObjects.Enqueue((tile, objects));
+    }
+
+    /// <summary>Whatever is closest goes first, whichever tile it's on, so the world fills in as a circle.</summary>
+    private void AddNearestObjects()
+    {
+        var feet = _player.Feet;
+        for (var added = 0; added < MaxObjectItemsPerFrame; added++)
+        {
+            TileObjectsNode? nearest = null;
+            var best = float.PositiveInfinity;
+            foreach (var objects in _objects.Values)
+            {
+                var distance = objects.NextItemDistance(feet);
+                if (distance < best)
+                {
+                    (nearest, best) = (objects, distance);
+                }
+            }
+
+            if (nearest is null)
+            {
+                return;
+            }
+
+            nearest.AddNextItem();
+        }
+    }
+
+    /// <summary>From the player to the tile's middle, so tiles load in order of real distance.</summary>
+    private double TileDistanceFromPlayer((int X, int Y) tile)
+    {
+        var (x, z) = WowCoords.TileOriginGodot(tile.X, tile.Y);
+        var feet = _player.Feet;
+        var dx = x + WowCoords.TileSize / 2 - (feet.X + _originX);
+        var dz = z + WowCoords.TileSize / 2 - (feet.Z + _originZ);
+        return dx * dx + dz * dz;
+    }
+
+    private void CommitBuiltObjects()
+    {
+        if (!_builtObjects.TryDequeue(out var built))
+        {
+            return;
+        }
+
+        _buildingObjects = false;
+
+        if (!_tiles.TryGetValue(built.Tile, out var node) || node is null)
+        {
+            return;
+        }
+
+        var objects = new TileObjectsNode { Name = "Objects", Player = _player };
+        objects.Fill(built.Objects ?? new TileObjects([], []));
+        node.AddChild(objects);
+        _objects[built.Tile] = objects;
     }
 
     private static int Distance((int X, int Y) a, (int X, int Y) b) =>

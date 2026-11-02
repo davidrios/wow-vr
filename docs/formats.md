@@ -53,6 +53,34 @@ Reached through `wa_adt_open`, which gives `AdtTerrain`. `TerrainMeshData` turns
 - Textures repeat 8 times per chunk.
 - **Big alpha maps are weights.** In Northrend, neighbouring chunks stack the same textures in different orders, yet each texture's alpha matches across the shared edge and the alphas sum to about 1. So the base layer gets `1 - sum`, and layer order doesn't matter. Painting layers in order gives a visible seam. Older maps can sum past 2 and are still painted in order, as WoWModelViewer's shaders do. The switch is keyed on the WDT's big alpha flag, which is an inference from this data and not something a reference states.
 
+## M2
+
+Reached through `wa_m2_open` with the model and its `<name>00.skin`, which gives `M2Model`.
+
+- **Paths:** placements often say `.mdx`, from before the format was renamed. The file is `.m2`.
+- **Axes:** vertices are X forward, Y left, Z up. `WowCoords.ModelToGodot` gives `(x, z, -y)`, as WoWModelViewer does.
+- **Winding:** the files wind the other way from Godot, so `MeshReader` reverses each triangle.
+- **Collision:** `bounding_vertices` and `bounding_triangles` are a separate simplified mesh, in the same axes as the model. Models without one, such as grass, are walked through.
+- **Submeshes:** `level` holds the high bits of `triangle_start`, for models too big for 16 bits.
+- **Particle emitters** are 476 bytes on this client. Their "fake" animation blocks hold 2 arrays, not 3. Reading 3 made 6,365 models fail to parse, because the emitters come last.
+- **Empty files:** 63 M2s or their skins are empty in this client. `inspect check-models` reports them, and the game skips them.
+
+## WMO
+
+Reached through `wa_wmo_open` and `wa_wmo_group_open`, which use `wow_alchemy_wmo::render`. The crate's older `parser` and `group_parser` don't match 3.3.5a files: they read materials as 40 bytes where they're 64, use the wrong `MOGP` header and `MOBA` layouts, and test the wrong flag bits. They still serve its editing tools, and should move to `render`'s records.
+
+- **Group files** are `<root>_NNN.wmo`. `MOGP` wraps all the other chunks, after a 68-byte header.
+- **Names:** materials and doodads hold offsets into `MOTX` and `MODN`, which can have gaps, so names must be read by offset. The top byte of a doodad's name offset is flags.
+- **Collision:** a triangle collides if its `MOPY` flags have `0x08`, or `0x20` without `0x04`. Material `0xFF` means collision only.
+- **Vertex colors:** `MOCV` is BGRA. Only indoor groups (`MOGP` flag `0x2000`) use them, as WoWModelViewer does.
+- **Doodad sets:** a placement shows set 0 and its own set.
+
+## Placing models
+
+`MDDF` and `MODF` positions run east, up and south from the map's north-west corner, so they're Godot's axes with the origin moved. `MDDF` scale is a `u16` of 1024ths.
+
+`WowCoords.TilePlacement` rotates around Y by `rot.y - 90`, Z by `-rot.x`, then X by `rot.z`, as WoWModelViewer does. `MODF` stores each WMO's world bounds, and a test compares them with the transformed root bounds: the median error is about 0.002 yards on all four continents, including tilted buildings, and at least 96% are within a yard. The exceptions, up to 79 yards off, are specific buildings such as `OILPLATFORMSMALL`, whose stored bounds look stale rather than the rotation being wrong, since others with the same rotations match.
+
 ## DBC
 
 - Fields are 32 bits. `DbcFile` reads them untyped, and the record classes give them meaning.

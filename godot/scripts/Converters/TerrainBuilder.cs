@@ -24,7 +24,7 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
 
     public static void LoadShared() => _ = TerrainShader;
 
-    public (ArrayMesh Mesh, TerrainCollisionData Collision) Build(int tileX, int tileY)
+    public (ArrayMesh Mesh, TerrainCollisionData Collision, AdtTerrain Terrain) Build(int tileX, int tileY)
     {
         var path = map.TilePath(tileX, tileY);
         var data = source.Read(path) ?? throw new System.IO.FileNotFoundException("Not in the client.", path);
@@ -33,7 +33,7 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
 
         var result = BuildMesh(mesh);
         result.SurfaceSetMaterial(0, BuildMaterial(mesh));
-        return (result, mesh.Collision);
+        return (result, mesh.Collision, terrain);
     }
 
     private static ArrayMesh BuildMesh(TerrainMeshData data)

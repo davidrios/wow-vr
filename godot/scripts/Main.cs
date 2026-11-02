@@ -25,10 +25,11 @@ public partial class Main : Node3D
     private Node3D _player = null!;
 
     /// <summary>
-    /// Standing in Goldshire, unless <c>--start=map,x,y,z[,pitch]</c> gives another map, WoW
-    /// position and camera pitch in degrees, which starts flying so the view stays put.
+    /// Standing in Goldshire, unless <c>--start=map,x,y,z[,pitch[,yaw]]</c> gives another map,
+    /// WoW position and view in degrees, which starts flying so the view stays put. Yaw turns
+    /// left from north.
     /// </summary>
-    private static (string Map, System.Numerics.Vector3 Position, float Pitch, bool Explicit) ReadStart()
+    private static (string Map, System.Numerics.Vector3 Position, float Pitch, float Yaw, bool Explicit) ReadStart()
     {
         foreach (var argument in OS.GetCmdlineUserArgs())
         {
@@ -40,11 +41,12 @@ public partial class Main : Node3D
                     float.Parse(parts[2], CultureInfo.InvariantCulture),
                     float.Parse(parts[3], CultureInfo.InvariantCulture)),
                     parts.Length > 4 ? float.Parse(parts[4], CultureInfo.InvariantCulture) : 0f,
+                    parts.Length > 5 ? float.Parse(parts[5], CultureInfo.InvariantCulture) : 0f,
                     true);
             }
         }
 
-        return ("Azeroth", new System.Numerics.Vector3(-9464f, 62f, 57f), 0f, false);
+        return ("Azeroth", new System.Numerics.Vector3(-9464f, 62f, 57f), 0f, 0f, false);
     }
 
     public override void _Ready()
@@ -67,7 +69,7 @@ public partial class Main : Node3D
     {
         try
         {
-            var (startMap, startPosition, startPitch, explicitStart) = ReadStart();
+            var (startMap, startPosition, startPitch, startYaw, explicitStart) = ReadStart();
             var (source, map) = await Task.Run(() =>
             {
                 var opened = MpqAssetSource.Open(clientPath);
@@ -83,6 +85,7 @@ public partial class Main : Node3D
             if (_player is DesktopPlayer desktop)
             {
                 desktop.PitchDegrees = startPitch;
+                desktop.RotationDegrees = new Vector3(0, startYaw, 0);
             }
 
             var tiles = new TileManager { Name = "Tiles" };

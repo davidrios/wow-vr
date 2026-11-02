@@ -25,7 +25,7 @@ VR exploration of the WotLK WoW world in Godot 4 (.NET / C#), reading the player
 - Desktop keys: WASD walks, Shift goes faster, F toggles flying, Q/E go down/up while flying, Tab opens the menu (or start with `-- --open-menu`)
 - VR controls: left stick moves, left Y toggles flying, left stick click boosts flight, left trigger teleports, left X opens the wrist menu, right stick turns, right trigger clicks in the menu
 - Debug keys: F2 prints the location and textures under the camera; F3 toggles a checkerboard of vertex-color-only chunks (or start with `-- --checkerboard`); F4 swaps vertex colors between BGRA and RGBA (or `-- --swap-vertex-colors`)
-- Start elsewhere: `godot --path godot -- --start=Northrend,5800,650,650` (map, then WoW X, Y, Z; starts flying)
+- Start elsewhere: `godot --path godot -- --start=Northrend,5800,650,650` (map, then WoW X, Y, Z, and optionally pitch and yaw; starts flying)
 - Texture viewer: `godot --path godot res://scenes/debug/TextureViewer.tscn -- --texture=<file>`
 - Inspect tool: `dotnet run --project tools/inspect -- <command> <args>`
 - Run the game (desktop): open `godot/project.godot` in Godot 4 (.NET), or `godot --path godot`

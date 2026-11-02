@@ -38,10 +38,36 @@ public sealed class TerrainChunk
     public required byte[] VertexColors { get; init; }
 }
 
+/// <summary>
+/// A model placed on a tile. Position and bounds run east, up and south from the map's
+/// north-west corner. Rotation is in degrees. Tiles a model overlaps all list it.
+/// </summary>
+public sealed record ModelPlacement(
+    string Model,
+    uint UniqueId,
+    System.Numerics.Vector3 Position,
+    System.Numerics.Vector3 Rotation,
+    float Scale,
+    int DoodadSet,
+    System.Numerics.Vector3 BoundsMin,
+    System.Numerics.Vector3 BoundsMax)
+{
+    /// <summary>The tile whose grid square holds the model's origin.</summary>
+    public (int X, int Y) OriginTile => (
+        Math.Clamp((int)Math.Floor(Position.X / WowCoords.TileSize), 0, WowCoords.TilesPerSide - 1),
+        Math.Clamp((int)Math.Floor(Position.Z / WowCoords.TileSize), 0, WowCoords.TilesPerSide - 1));
+}
+
 /// <summary>The terrain of one ADT tile.</summary>
 public sealed class AdtTerrain
 {
     public const int ChunksPerSide = 16;
+
+    /// <summary>The tile's M2 placements.</summary>
+    public IReadOnlyList<ModelPlacement> Doodads { get; private init; } = [];
+
+    /// <summary>The tile's WMO placements.</summary>
+    public IReadOnlyList<ModelPlacement> Wmos { get; private init; } = [];
 
     public IReadOnlyList<string> TextureNames { get; }
 
@@ -87,7 +113,56 @@ public sealed class AdtTerrain
             chunks[i] = Copy(chunk);
         }
 
-        return new AdtTerrain(names, chunks);
+        return new AdtTerrain(names, chunks)
+        {
+            Doodads = ReadPlacements(handle, wmo: false),
+            Wmos = ReadPlacements(handle, wmo: true),
+        };
+    }
+
+    private static unsafe ModelPlacement[] ReadPlacements(AdtHandle handle, bool wmo)
+    {
+        WaPlacement* placements;
+        nuint count;
+        if (wmo)
+        {
+            ModelNativeMethods.AdtWmos(handle, out placements, out count);
+        }
+        else
+        {
+            ModelNativeMethods.AdtDoodads(handle, out placements, out count);
+        }
+
+        var names = new Dictionary<uint, string>();
+        var result = new ModelPlacement[(int)count];
+        for (var i = 0; i < result.Length; i++)
+        {
+            ref readonly var p = ref placements[i];
+            if (!names.TryGetValue(p.Name, out var name))
+            {
+                var status = wmo
+                    ? ModelNativeMethods.AdtWmoName(handle, p.Name, out var text, out var length)
+                    : ModelNativeMethods.AdtModelName(handle, p.Name, out text, out length);
+                if (status != WaStatus.Ok)
+                {
+                    throw new WowAlchemyException($"A placement names missing model {p.Name}.");
+                }
+
+                names[p.Name] = name = Encoding.UTF8.GetString(text, checked((int)length));
+            }
+
+            result[i] = new ModelPlacement(
+                wmo ? name : Models.M2Model.NormalizePath(name),
+                p.UniqueId,
+                new System.Numerics.Vector3(p.Position[0], p.Position[1], p.Position[2]),
+                new System.Numerics.Vector3(p.Rotation[0], p.Rotation[1], p.Rotation[2]),
+                p.Scale,
+                (int)p.DoodadSet,
+                new System.Numerics.Vector3(p.BoundsMin[0], p.BoundsMin[1], p.BoundsMin[2]),
+                new System.Numerics.Vector3(p.BoundsMax[0], p.BoundsMax[1], p.BoundsMax[2]));
+        }
+
+        return result;
     }
 
     private static unsafe TerrainChunk Copy(in WaTerrainChunk chunk)

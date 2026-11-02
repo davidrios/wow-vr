@@ -19,8 +19,16 @@ public partial class WorldTour : Node
     private const float FlightHeight = 110f;
     private const int TilesBeforeStart = 9;
     private const double StuckSeconds = 10;
+    private const float WalkArrivalDistance = 15f;
 
     private static readonly System.Numerics.Vector3 Northshire = new(-8914f, -133f, FlightHeight);
+
+    /// <summary>Walking goes straight through the gate, because the valley's walls stop a direct line.</summary>
+    private static readonly System.Numerics.Vector3[] WalkRoute =
+    [
+        new(-9090f, -44f, FlightHeight),
+        new(-9030f, -44f, FlightHeight),
+    ];
 
     private readonly List<double> _frames = [];
 
@@ -29,6 +37,7 @@ public partial class WorldTour : Node
     public bool Walk { get; init; }
 
     private bool _started;
+    private int _waypoint;
     private double _sinceProgress;
     private float _closest = float.MaxValue;
 
@@ -47,11 +56,20 @@ public partial class WorldTour : Node
 
         _frames.Add(delta * 1000);
 
-        var wow = WowCoords.ToGodot(Northshire);
+        var wow = WowCoords.ToGodot(Walk && _waypoint < WalkRoute.Length ? WalkRoute[_waypoint] : Northshire);
         var target = Tiles.WorldToLocal(wow.X, wow.Y, wow.Z);
         var feet = Player.Feet;
         var offset = new Vector3(target.X - feet.X, 0, target.Z - feet.Z);
-        if (offset.Length() < 5f)
+        if (Walk && _waypoint < WalkRoute.Length && offset.Length() < 5f)
+        {
+            _waypoint++;
+            _closest = float.MaxValue;
+            _sinceProgress = 0;
+            return;
+        }
+
+        // The marker itself is beside a wall, which walking can't always get past.
+        if (offset.Length() < (Walk ? WalkArrivalDistance : 5f))
         {
             Report();
             GetTree().Quit();

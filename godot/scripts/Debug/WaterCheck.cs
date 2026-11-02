@@ -24,7 +24,7 @@ public partial class WaterCheck : Node
 
     private async Task RunAsync()
     {
-        while (Tiles.LoadedTileCount == 0 || Tiles.IsBusy)
+        while (Tiles.LoadedTileCount == 0 || Tiles.IsBusy || Tiles.PlacingPlayer)
         {
             await Seconds(0.5);
         }

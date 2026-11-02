@@ -89,6 +89,7 @@ public partial class TileObjectsNode : Node3D
     private readonly Dictionary<CollisionGroup, WmoGroupBody> _bodies = [];
     private Vector3 _sortedFor;
     private bool _sorted;
+    private int _pendingAtStart;
 
     public IPlayer Player { get; set; } = null!;
 
@@ -133,7 +134,16 @@ public partial class TileObjectsNode : Node3D
     /// <summary>Everything is in the scene.</summary>
     public bool Finished => _pending.Count == 0;
 
+    /// <summary>How much of what was waiting is in the scene, from 0 to 1.</summary>
+    public float FinishedFraction => _pendingAtStart == 0 ? 1f : 1f - (float)_pending.Count / _pendingAtStart;
+
     public void Fill(TileObjects objects)
+    {
+        FillPending(objects);
+        _pendingAtStart = _pending.Count;
+    }
+
+    private void FillPending(TileObjects objects)
     {
         foreach (var batch in objects.Doodads)
         {
@@ -320,6 +330,7 @@ public partial class TileObjectsNode : Node3D
             var cameraLocal = wmo.Node.ToLocal(camera.GlobalPosition);
             var cameraFile = new System.Numerics.Vector3(cameraLocal.X, -cameraLocal.Z, cameraLocal.Y);
             wmo.Portals.Compute(cameraFile, ToClip, wmo.Visible);
+
             for (var group = 0; group < wmo.Visible.Length; group++)
             {
                 if (wmo.Visible[group] != wmo.Shown[group])

@@ -51,6 +51,8 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     private Node3D _vignette = null!;
     private Node3D _wristMenu = null!;
     private bool _boost;
+    private bool _frozen;
+    private bool _held;
     private float _vignetteRadius = 1f;
     private Basis _lastBasis = Basis.Identity;
     private float _lastVignetteSize = -1f;
@@ -85,11 +87,27 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     {
         set
         {
-            var enabled = !value || Flying;
-            if (_body.Get("enabled").AsBool() != enabled)
-            {
-                _body.Set("enabled", enabled);
-            }
+            _frozen = value;
+            ApplyBodyEnabled();
+        }
+    }
+
+    public bool Held
+    {
+        set
+        {
+            _held = value;
+            ApplyBodyEnabled();
+            _teleport.Set("enabled", !value && !_wristMenu.Visible);
+        }
+    }
+
+    private void ApplyBodyEnabled()
+    {
+        var enabled = !_held && (!_frozen || Flying);
+        if (_body.Get("enabled").AsBool() != enabled)
+        {
+            _body.Set("enabled", enabled);
         }
     }
 
@@ -148,7 +166,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _wristMenu.Visible = open;
         _wristMenu.Set("enabled", open);
         _pointer.Set("enabled", open);
-        _teleport.Set("enabled", !open);
+        _teleport.Set("enabled", !open && !_held);
     }
 
     private void ApplySettings()
@@ -196,7 +214,12 @@ public partial class XrPlayer : XROrigin3D, IPlayer
                 Flying = !Flying;
                 break;
             case "ax_button":
-                SetMenuOpen(!_wristMenu.Visible);
+                // It's in the world's layer, so it can't be seen behind the loading screen.
+                if (!_held)
+                {
+                    SetMenuOpen(!_wristMenu.Visible);
+                }
+
                 break;
             case "primary_click":
                 _boost = !_boost;

@@ -19,13 +19,14 @@ public static class DbcLocale
 }
 
 /// <summary>A row of DBFilesClient\Map.dbc.</summary>
-public sealed record MapRecord(int Id, string Directory, string Name)
+public sealed record MapRecord(int Id, string Directory, string Name, int LoadingScreenId = 0)
 {
     public const string FilePath = @"DBFilesClient\Map.dbc";
 
     private const int IdField = 0;
     private const int DirectoryField = 1;
     private const int NameField = 5;
+    private const int LoadingScreenField = 57;
 
     public static IReadOnlyList<MapRecord> ReadAll(DbcFile dbc, string locale)
     {
@@ -34,12 +35,30 @@ public sealed record MapRecord(int Id, string Directory, string Name)
             .Select(i => new MapRecord(
                 dbc.GetInt32(i, IdField),
                 dbc.GetString(i, DirectoryField),
-                dbc.GetString(i, NameField + slot)))
+                dbc.GetString(i, NameField + slot),
+                dbc.GetInt32(i, LoadingScreenField)))
             .ToList();
     }
 
     public static IReadOnlyList<MapRecord> ReadAll(MpqAssetSource source) =>
         DbcTables.Read(source, FilePath, dbc => ReadAll(dbc, source.Locale));
+}
+
+/// <summary>A row of DBFilesClient\LoadingScreens.dbc: the picture a map shows while it loads.</summary>
+public sealed record LoadingScreenRecord(int Id, string Path)
+{
+    public const string FilePath = @"DBFilesClient\LoadingScreens.dbc";
+
+    private const int IdField = 0;
+    private const int PathField = 2;
+
+    public static IReadOnlyList<LoadingScreenRecord> ReadAll(DbcFile dbc) =>
+        Enumerable.Range(0, dbc.RecordCount)
+            .Select(i => new LoadingScreenRecord(dbc.GetInt32(i, IdField), dbc.GetString(i, PathField)))
+            .ToList();
+
+    public static IReadOnlyList<LoadingScreenRecord> ReadAll(MpqAssetSource source) =>
+        DbcTables.Read(source, FilePath, ReadAll);
 }
 
 /// <summary>A row of DBFilesClient\AreaTable.dbc.</summary>

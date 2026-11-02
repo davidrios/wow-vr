@@ -45,6 +45,9 @@ public partial class TileManager : Node3D
     /// <summary>Doodad batches and WMO groups to add per frame, across all tiles.</summary>
     private const int MaxObjectItemsPerFrame = 8;
 
+    /// <summary>The same behind the loading screen, where a slower frame can't be seen in the world.</summary>
+    private const int MaxObjectItemsPerCoveredFrame = 40;
+
     /// <summary>The physics layer terrain is on.</summary>
     public const uint TerrainLayer = 1;
 
@@ -80,6 +83,9 @@ public partial class TileManager : Node3D
     private double _originX;
     private double _originZ;
     private bool _building;
+    private (int X, int Y) _center;
+    private bool _centerKnown;
+    private bool _warped;
     private double _materialClock;
     private bool _checkerboard = Array.IndexOf(OS.GetCmdlineUserArgs(), "--checkerboard") >= 0;
     private bool _swapVertexColors = Array.IndexOf(OS.GetCmdlineUserArgs(), "--swap-vertex-colors") >= 0;
@@ -175,10 +181,75 @@ public partial class TileManager : Node3D
         RepositionTiles();
 
         _player.PlaceAt(new Vector3(0, _player.Feet.Y, 0));
-        _guard.PlaceOnSurfaceWhenLoaded();
+        PlacePlayerOnSurface();
     }
 
-    public bool PlacingPlayer => _guard.Placing;
+    /// <summary>
+    /// Once after each warp, places the player again and says so. The first placement can come
+    /// before the collision near where it lands, which leaves the player under a floor.
+    /// </summary>
+    public bool PlaceAgainAfterWarp()
+    {
+        if (!_warped)
+        {
+            return false;
+        }
+
+        _warped = false;
+        _guard.PlaceOnSurfaceWhenLoaded();
+        return true;
+    }
+
+    /// <summary>The player isn't free to go yet, since the ground or the loading screen is holding them.</summary>
+    public bool PlacingPlayer => _guard.Placing || Covered;
+
+    /// <summary>A placement is still waiting for the ground, whatever the loading screen is doing.</summary>
+    public bool PlacingOnSurface => _guard.Placing;
+
+    /// <summary>The loading screen is up, so things can be added faster.</summary>
+    public bool Covered { get; set; }
+
+    /// <summary>Streaming has run, so the tiles around the camera are known.</summary>
+    public bool HasStarted => _centerKnown;
+
+    /// <summary>
+    /// How much of the tiles around the camera is in the scene, from 0 to 1, with a tile's
+    /// objects as half of it. A tile that failed counts as there.
+    /// </summary>
+    public float LoadedFraction
+    {
+        get
+        {
+            var done = 0f;
+            var total = 0;
+            for (var y = _center.Y - TileRadius; y <= _center.Y + TileRadius; y++)
+            {
+                for (var x = _center.X - TileRadius; x <= _center.X + TileRadius; x++)
+                {
+                    if (!_map.HasTile(x, y))
+                    {
+                        continue;
+                    }
+
+                    total++;
+                    if (_failedTiles.Contains((x, y)))
+                    {
+                        done += 1f;
+                    }
+                    else if (_objects.TryGetValue((x, y), out var objects))
+                    {
+                        done += 0.5f + 0.5f * objects.FinishedFraction;
+                    }
+                    else if (_tiles.TryGetValue((x, y), out var node) && node is not null)
+                    {
+                        done += 0.25f;
+                    }
+                }
+            }
+
+            return total == 0 ? 1f : done / total;
+        }
+    }
 
     /// <summary>
     /// The liquid a point in the scene is in or under, as its surface's height and LiquidType
@@ -233,7 +304,11 @@ public partial class TileManager : Node3D
     public bool CollisionSettled => _objects.Values.All(o => o.CollisionSettled);
 
     /// <summary>Waits for the ground, then stands on it.</summary>
-    public void PlacePlayerOnSurface() => _guard.PlaceOnSurfaceWhenLoaded();
+    public void PlacePlayerOnSurface()
+    {
+        _warped = true;
+        _guard.PlaceOnSurfaceWhenLoaded();
+    }
 
     private (int X, int Z) ChunkAt(Vector3 local) =>
         WowCoords.ChunkAtGodot(local.X + _originX, local.Z + _originZ);
@@ -257,6 +332,7 @@ public partial class TileManager : Node3D
         var wow = WowCoords.ToWow(new System.Numerics.Vector3(
             (float)(position.X + _originX), position.Y, (float)(position.Z + _originZ)));
         var center = WowCoords.TileAt(wow.X, wow.Y);
+        (_center, _centerKnown) = (center, true);
 
         _materialClock += delta;
         using (FrameProbe.Time("materials"))
@@ -339,12 +415,15 @@ public partial class TileManager : Node3D
             return;
         }
 
-        var position = GetViewport().GetCamera3D().GlobalPosition;
+        var camera = GetViewport().GetCamera3D();
+        var position = camera.GlobalPosition;
         var (wowX, wowY) = (-(position.Z + _originZ), -(position.X + _originX));
-        Task.Run(() => PrintLocation(wowX, wowY, position.Y));
+        var view = camera.GlobalRotationDegrees;
+        var feet = _player.Feet.Y;
+        Task.Run(() => PrintLocation(wowX, wowY, feet, view.X, view.Y));
     }
 
-    private void PrintLocation(double wowX, double wowY, float wowZ)
+    private void PrintLocation(double wowX, double wowY, float wowZ, float pitch, float yaw)
     {
         try
         {
@@ -354,7 +433,8 @@ public partial class TileManager : Node3D
             var terrain = AdtTerrain.Parse(_source.Read(_map.TilePath(tile.X, tile.Y))!, _map.BigAlpha);
             var chunk = terrain.Chunks[iy * AdtTerrain.ChunksPerSide + ix];
 
-            GD.Print($"--start={_map.Directory},{wowX:F0},{wowY:F0},{wowZ:F0} tile {tile.X}_{tile.Y} chunk ({ix},{iy})");
+            var at = FormattableString.Invariant($"{wowX:F2},{wowY:F2},{wowZ:F2},{pitch:F1},{yaw:F1}");
+            GD.Print($"--start={_map.Directory},{at} tile {tile.X}_{tile.Y} chunk ({ix},{iy})");
             for (var layer = 0; layer < chunk.LayerCount; layer++)
             {
                 GD.Print($"  layer {layer}: {terrain.TextureNames[chunk.TextureIds[layer]]}");
@@ -551,7 +631,8 @@ public partial class TileManager : Node3D
     private void AddNearestObjects()
     {
         var feet = _player.Feet;
-        for (var added = 0; added < MaxObjectItemsPerFrame; added++)
+        var limit = Covered ? MaxObjectItemsPerCoveredFrame : MaxObjectItemsPerFrame;
+        for (var added = 0; added < limit; added++)
         {
             TileObjectsNode? nearest = null;
             var best = float.PositiveInfinity;

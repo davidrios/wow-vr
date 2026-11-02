@@ -1,3 +1,4 @@
+using WowVR.Ui;
 using WowVR.World;
 using Godot;
 
@@ -16,6 +17,7 @@ public partial class ScreenshotTaker : Node
     public required TileManager Tiles { get; init; }
     public required string Path { get; init; }
     public CreatureManager? Creatures { get; init; }
+    public LoadingScreen? Loading { get; init; }
 
     private double _age;
     private double _settled;
@@ -23,7 +25,7 @@ public partial class ScreenshotTaker : Node
     public override void _Process(double delta)
     {
         _age += delta;
-        var ready = Tiles.LoadedTileCount >= TilesBeforeShot && !Tiles.IsBusy && Creatures?.IsBusy != true;
+        var ready = Tiles.LoadedTileCount >= TilesBeforeShot && !Tiles.IsBusy && Creatures?.IsBusy != true && Loading is not { Hold: false, Showing: true };
         _settled = ready ? _settled + delta : 0;
 
         if (_settled < SettleSeconds && _age < GiveUpSeconds)

@@ -9,7 +9,9 @@ using WowVR.Formats;
 using WowVR.Formats.Assets;
 using WowVR.Formats.Database;
 using WowVR.Formats.Terrain;
+using WowVR.Formats.Textures;
 using WowVR.Formats.World;
+using WowVR.Ui;
 using WowVR.World;
 using Godot;
 
@@ -36,6 +38,8 @@ public partial class Main : Node3D
     private const string DefaultSpawnFolder = "user://spawns";
 
     private const string ContinentCheckArgument = "--continent-check";
+    private const string LoadingCheckArgument = "--loading-check";
+    private const string HoldLoadingArgument = "--hold-loading";
 
     /// <summary>Kept open across reloads, because tile and model workers can still be reading when the old world goes.</summary>
     private static MpqAssetSource? _openSource;
@@ -44,6 +48,9 @@ public partial class Main : Node3D
     private static Landmark? _nextStart;
 
     private Node3D _player = null!;
+
+    /// <summary>Null on tours, whose frame times need the world streaming in as it does when walking.</summary>
+    private LoadingScreen? _loading;
 
     /// <summary>
     /// Standing in Goldshire, unless <c>--start=map,x,y,z[,pitch[,yaw]]</c> gives another map,
@@ -89,6 +96,13 @@ public partial class Main : Node3D
 
         if (AppSettings.ClientPath.Length > 0)
         {
+            var arguments = OS.GetCmdlineUserArgs();
+            if (Array.IndexOf(arguments, TourArgument) < 0 && Array.IndexOf(arguments, WalkTourArgument) < 0)
+            {
+                _loading = new LoadingScreen { Name = "LoadingScreen", Hold = Array.IndexOf(arguments, HoldLoadingArgument) >= 0 };
+                AddChild(_loading);
+            }
+
             _ = StartWorldAsync(AppSettings.ClientPath);
         }
     }
@@ -99,13 +113,19 @@ public partial class Main : Node3D
         try
         {
             var (startMap, startPosition, startPitch, startYaw, explicitStart) = ReadStart();
-            var (source, map, lights, zones, liquids, mapId, displays, footsteps) = await Task.Run(() =>
+            var opening = await Task.Run(() =>
             {
                 var opened = _openSource ??= MpqAssetSource.Open(clientPath);
-                var id = MapRecord.ReadAll(opened)
-                    .First(m => m.Directory.Equals(startMap, StringComparison.OrdinalIgnoreCase)).Id;
-                return (opened, WdtMap.Read(opened, startMap), LightTable.Read(opened), ZoneTable.Read(opened), new LiquidLibrary(opened), id, CreatureDisplayTable.Read(opened), FootstepTable.Read(opened));
+                var record = MapRecord.ReadAll(opened)
+                    .First(m => m.Directory.Equals(startMap, StringComparison.OrdinalIgnoreCase));
+                return (Source: opened, Record: record, Picture: ReadLoadingPicture(opened, record));
             });
+            _loading?.SetPlace(opening.Record.Name, opening.Picture is null ? null : ImageTexture.CreateFromImage(opening.Picture));
+
+            var source = opening.Source;
+            var mapId = opening.Record.Id;
+            var (map, lights, zones, liquids, displays, footsteps) = await Task.Run(() =>
+                (WdtMap.Read(source, startMap), LightTable.Read(source), ZoneTable.Read(source), new LiquidLibrary(source), CreatureDisplayTable.Read(source), FootstepTable.Read(source)));
             GD.Print($"Client opened: {map.TileCountWithData} tiles in {startMap}");
 
             GetNode("Floor").QueueFree();
@@ -134,7 +154,7 @@ public partial class Main : Node3D
 
             player.Menu.SetSky(sky);
 
-            player.Menu.SetLandmarks(Landmarks.On(startMap), l => tiles.TeleportTo(l.WowX, l.WowY));
+            player.Menu.SetLandmarks(Landmarks.On(startMap), l => BehindLoadingScreen(l.Name, () => tiles.TeleportTo(l.WowX, l.WowY)));
             player.Menu.SetContinents(startMap, TravelTo);
 
             var arguments = OS.GetCmdlineUserArgs();
@@ -144,6 +164,7 @@ public partial class Main : Node3D
             AddChild(creatureSounds);
             creatureSounds.Start(source);
             creatures.Start(new CreatureLibrary(source, displays, tiles.Models), tiles, ChooseSpawnSource(arguments, displays, mapId, startPosition), creatureSounds, footsteps);
+            _loading?.Watch(tiles, creatures, player);
 
             var groundCover = new GroundCoverManager { Name = "GroundCover" };
             AddChild(groundCover);
@@ -187,8 +208,13 @@ public partial class Main : Node3D
             {
                 if (argument.StartsWith(ScreenshotArgument))
                 {
-                    AddChild(new ScreenshotTaker { Tiles = tiles, Creatures = creatures, Path = argument[ScreenshotArgument.Length..] });
+                    AddChild(new ScreenshotTaker { Tiles = tiles, Creatures = creatures, Loading = _loading, Path = argument[ScreenshotArgument.Length..] });
                 }
+            }
+
+            if (_loading is not null && Array.IndexOf(arguments, LoadingCheckArgument) >= 0)
+            {
+                AddChild(new LoadingCheck { Tiles = tiles, Player = player, Creatures = creatures, Screen = _loading });
             }
 
             if (Array.IndexOf(arguments, CreatureCheckArgument) >= 0)
@@ -204,6 +230,36 @@ public partial class Main : Node3D
         catch (Exception e)
         {
             GD.PushError($"Could not open the client at {clientPath}: {e.Message}");
+            _loading?.Dismiss();
+        }
+    }
+
+    /// <summary>The picture the game itself shows for a map, or null without one.</summary>
+    private static Image? ReadLoadingPicture(MpqAssetSource source, MapRecord map)
+    {
+        try
+        {
+            var path = LoadingScreenRecord.ReadAll(source).FirstOrDefault(s => s.Id == map.LoadingScreenId)?.Path;
+            return path is not null && source.Read(path) is { Length: > 0 } data
+                ? TextureConverter.ToImage(BlpDecoder.Decode(data))
+                : null;
+        }
+        catch (Exception e) when (e is System.IO.IOException or WowAlchemyException)
+        {
+            GD.PushWarning($"No loading picture for {map.Directory}: {e.Message}");
+            return null;
+        }
+    }
+
+    private void BehindLoadingScreen(string title, Action action)
+    {
+        if (_loading is null)
+        {
+            action();
+        }
+        else
+        {
+            _loading.Cover(title, action);
         }
     }
 
@@ -251,7 +307,7 @@ public partial class Main : Node3D
     private void TravelTo(Continent continent)
     {
         _nextStart = Landmarks.On(continent.Map).First();
-        GetTree().CallDeferred(SceneTree.MethodName.ReloadCurrentScene);
+        BehindLoadingScreen(continent.Name, () => GetTree().CallDeferred(SceneTree.MethodName.ReloadCurrentScene));
     }
 
     private static Node3D LoadPlayer()

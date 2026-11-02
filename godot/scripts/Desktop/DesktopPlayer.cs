@@ -51,6 +51,8 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         set => _frozen = value;
     }
 
+    public bool Held { private get; set; }
+
     /// <summary>Used by scripted walks: a world direction that replaces the keyboard.</summary>
     public Vector3? ScriptedWalk { get; set; }
 
@@ -143,7 +145,7 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
 
     public override void _PhysicsProcess(double delta)
     {
-        if (_frozen && !Flying)
+        if (Held || (_frozen && !Flying))
         {
             Velocity = Vector3.Zero;
             return;

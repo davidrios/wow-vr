@@ -17,6 +17,9 @@ public interface IPlayer
     /// <summary>Holds a walking player still, for when the ground hasn't loaded yet.</summary>
     bool Frozen { set; }
 
+    /// <summary>Holds the player still even when flying, while the loading screen is up.</summary>
+    bool Held { set; }
+
     WorldMenu Menu { get; }
 
     /// <summary>Swims rather than walks, floating with the feet at this height when left alone.</summary>

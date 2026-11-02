@@ -61,6 +61,20 @@ public class ClientDataTests(ClientFixture client) : IClassFixture<ClientFixture
         Assert.Equal("Northrend", maps[571].Directory);
     }
 
+    [Theory]
+    [InlineData(0, "EASTERNKINGDOM")]
+    [InlineData(1, "KALIMDOR")]
+    [InlineData(530, "OUTLAND")]
+    [InlineData(571, "NORTHREND")]
+    public void ContinentsNameTheirLoadingScreens(int map, string picture)
+    {
+        var id = MapRecord.ReadAll(Source).First(m => m.Id == map).LoadingScreenId;
+        var path = LoadingScreenRecord.ReadAll(Source).First(s => s.Id == id).Path;
+
+        Assert.Contains(picture, path, StringComparison.OrdinalIgnoreCase);
+        Assert.True(BlpDecoder.Decode(Source.Read(path)!).Width > 0);
+    }
+
     [Fact]
     public void AreaTableHasElwynnForestAndGoldshire()
     {

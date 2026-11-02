@@ -57,6 +57,9 @@ public sealed class WmoGroupAsset
 
     public (System.Numerics.Vector3 Min, System.Numerics.Vector3 Max) FileBounds { get; init; }
 
+    /// <summary>What an indoor group covers from above, to tell its room from its box.</summary>
+    public GroupFootprint? Footprint { get; init; }
+
     public (int Start, int Count) PortalRange { get; init; }
 
     /// <summary>Null when the group has nothing to collide with.</summary>
@@ -148,7 +151,8 @@ public sealed record WmoAsset(WmoRoot Root, WmoGroupAsset[] Groups)
             groups.Select(g => g.FileBounds).ToArray(),
             root.PortalVertices,
             root.Portals,
-            references.ToArray());
+            references.ToArray(),
+            groups.Select(g => g.Footprint).ToArray());
     }
 
     /// <summary>A doodad listed by an indoor group gets its light from there, as the client decides it. See docs/formats.md.</summary>
@@ -487,6 +491,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             DoodadRefs = group.DoodadRefs,
             Flags = group.Flags,
             FileBounds = group.Bounds,
+            Footprint = group.Indoor ? GroupFootprint.Build(group.Surfaces, group.Bounds) : null,
             PortalRange = group.PortalRange,
             Shape = faces.Length > 0 ? new ConcavePolygonShape3D { Data = faces } : null,
             Bounds = BoundsOf(faces),

@@ -330,6 +330,27 @@ public class WmoPortalTests
 
         Assert.Equal([true], Compute(portals, new Vector3(50, 0, 0), p => (0, 0, 1)));
     }
+
+    [Fact]
+    public void ABoxsCornerOutsideTheRoomStillSeesTheOutside()
+    {
+        const uint Exterior = 0x8;
+
+        // A diamond-shaped room, whose box has four empty corners.
+        var (min, max) = (new Vector3(-10, -10, 0), new Vector3(10, 10, 10));
+        var (north, east, south, west) = (new Vector2(0, 10), new Vector2(10, 0), new Vector2(0, -10), new Vector2(-10, 0));
+        var room = GroupFootprint.Build([(north, east, south), (north, south, west)], new Vector2(min.X, min.Y), new Vector2(max.X, max.Y));
+        var portals = new WmoPortals(
+            [Interior, Exterior],
+            [(min, max), (min * 2, max * 2)],
+            [],
+            [],
+            [],
+            [room, null]);
+
+        Assert.Equal([false, true], Compute(portals, new Vector3(9, 9, 5), p => (p.X, p.Y, 1)));
+        Assert.Equal([true, false], Compute(portals, new Vector3(1, 1, 5), p => (p.X, p.Y, 1)));
+    }
 }
 
 public class ClientModelTests(ClientFixture client) : IClassFixture<ClientFixture>

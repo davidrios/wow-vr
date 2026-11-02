@@ -45,6 +45,7 @@ public sealed class WmoPortals
 
     private readonly Link[][] _links;
     private readonly (Vector3 Min, Vector3 Max)[] _bounds;
+    private readonly GroupFootprint?[]? _footprints;
     private readonly bool[] _exterior;
     private readonly bool[] _interior;
     private readonly bool _hasExterior;
@@ -56,14 +57,17 @@ public sealed class WmoPortals
     /// <param name="vertices">MOPV.</param>
     /// <param name="portals">MOPT: the first vertex, how many, and the plane, where dot(normal, point) + offset is 0 on it.</param>
     /// <param name="references">MOPR: which portal, the group it leads to from the group that lists it, and the side it's seen from.</param>
+    /// <param name="footprints">What each group covers from above. Without one, its box decides alone.</param>
     public WmoPortals(
         uint[] flags,
         (Vector3 Min, Vector3 Max)[] bounds,
         Vector3[] vertices,
         (int Start, int Count, Vector3 Normal, float Offset)[] portals,
-        (int Group, int Portal, int Other, int Side)[] references)
+        (int Group, int Portal, int Other, int Side)[] references,
+        GroupFootprint?[]? footprints = null)
     {
         _bounds = bounds;
+        _footprints = footprints;
         _exterior = flags.Select(f => (f & FlagExterior) != 0).ToArray();
         _interior = flags.Select(f => (f & FlagInterior) != 0 && (f & FlagExterior) == 0).ToArray();
         _hasExterior = _exterior.Any(e => e);
@@ -103,7 +107,8 @@ public sealed class WmoPortals
         var inside = false;
         for (var i = 0; i < _bounds.Length; i++)
         {
-            if (_interior[i] && Contains(_bounds[i], camera, InsideMargin))
+            // A box's corner can stick out of the building, and being there isn't being inside.
+            if (_interior[i] && Contains(_bounds[i], camera, InsideMargin) && _footprints?[i]?.Covers(camera.X, camera.Y) != false)
             {
                 inside = true;
                 _stack.Push((i, Screen));

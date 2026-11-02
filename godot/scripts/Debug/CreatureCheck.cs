@@ -38,7 +38,7 @@ public partial class CreatureCheck : Node
         _age += delta;
         if (_watched < 0)
         {
-            var ready = Creatures.Nodes.Any() && !Creatures.IsBusy && !Tiles.IsBusy;
+            var ready = Creatures.Nodes.Any() && !Creatures.IsBusy && !Tiles.IsBusy && !Tiles.Covered;
             _settled = ready ? _settled + delta : 0;
             if (_settled >= SettleSeconds)
             {

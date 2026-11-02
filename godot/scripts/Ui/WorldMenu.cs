@@ -146,7 +146,16 @@ public partial class WorldMenu : PanelContainer
         var timeAndFps = new HBoxContainer();
         timeAndFps.AddChild(_timePasses);
         timeAndFps.AddChild(fps);
+        var occlusion = new CheckButton { Text = "Occlusion", ButtonPressed = AppSettings.AmbientOcclusion, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        occlusion.Toggled += on => AppSettings.AmbientOcclusion = on;
+        timeAndFps.AddChild(occlusion);
         rows.AddChild(timeAndFps);
+
+        // Side by side, because the menu has no room for two more rows.
+        var occlusionSliders = new HBoxContainer();
+        occlusionSliders.AddChild(LabeledSlider("Occlusion strength", 0f, AppSettings.MaxOcclusionStrength, 0.25, AppSettings.OcclusionStrength, value => AppSettings.OcclusionStrength = value));
+        occlusionSliders.AddChild(LabeledSlider("Occlusion size", AppSettings.MinOcclusionSize, AppSettings.MaxOcclusionSize, 0.05, AppSettings.OcclusionSize, value => AppSettings.OcclusionSize = value));
+        rows.AddChild(occlusionSliders);
 
         rows.AddChild(new Label { Text = "Music volume" });
         var music = new HSlider { MinValue = 0, MaxValue = 1, Step = 0.05, Value = AppSettings.MusicVolume };
@@ -175,6 +184,23 @@ public partial class WorldMenu : PanelContainer
         };
         button.Pressed += () => AppSettings.Scale = value;
         return button;
+    }
+
+    /// <summary>A slider that shows its value, for settings tuned by eye.</summary>
+    private static VBoxContainer LabeledSlider(string name, float min, float max, double step, float value, Action<float> changed)
+    {
+        var label = new Label { Text = $"{name}: {value:0.00}" };
+        var slider = new HSlider { MinValue = min, MaxValue = max, Step = step, Value = value };
+        slider.ValueChanged += v =>
+        {
+            label.Text = $"{name}: {v:0.00}";
+            changed((float)v);
+        };
+
+        var box = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        box.AddChild(label);
+        box.AddChild(slider);
+        return box;
     }
 
     public void SetSky(SkyController sky)

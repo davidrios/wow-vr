@@ -28,6 +28,13 @@ enabled=PackedStringArray("res://addons/godot-xr-tools/plugin.cfg")
 
 textures/default_filters/anisotropic_filtering_level=4
 
+[shader_globals]
+
+indoor_ambient={
+"type": "vec3",
+"value": Vector3(1, 1, 1)
+}
+
 [xr]
 
 openxr/enabled=false

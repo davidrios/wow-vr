@@ -151,7 +151,7 @@ public partial class Main : Node3D
 
             var water = new PlayerWater { Name = "PlayerWater" };
             AddChild(water);
-            water.Start(source, tiles, player, sky);
+            water.Start(source, tiles, player, sky, groundCover);
             if (Array.IndexOf(arguments, "--water-check") >= 0)
             {
                 AddChild(new WaterCheck { Tiles = tiles, Player = player, Water = water });

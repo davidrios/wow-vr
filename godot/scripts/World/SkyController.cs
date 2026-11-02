@@ -41,6 +41,7 @@ public partial class SkyController : Node
     private const float MoonRoadStrength = 0.35f;
 
     private const string TimeArgument = "--time=";
+    private const float OcclusionLightAffect = 0.7f;
 
     private Action? _onSettings;
 
@@ -97,7 +98,14 @@ public partial class SkyController : Node
         // For comparing frame times, without touching the player's saved setting.
         var noShadows = System.Array.IndexOf(OS.GetCmdlineUserArgs(), "--no-shadows") >= 0;
         _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
-        _onSettings = () => _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
+        var noOcclusion = System.Array.IndexOf(OS.GetCmdlineUserArgs(), "--no-ao") >= 0;
+        _onSettings = () =>
+        {
+            _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
+            _environment.SsaoEnabled = AppSettings.AmbientOcclusion && !noOcclusion;
+            _environment.SsaoRadius = AppSettings.OcclusionSize;
+            _environment.SsaoIntensity = AppSettings.OcclusionStrength;
+        };
         AppSettings.Changed += _onSettings;
 
         liquids.MaterialCreated += (material, kind) => _newLiquids.Enqueue((material, kind));
@@ -116,6 +124,13 @@ public partial class SkyController : Node
         environment.FogSkyAffect = 0f;
         environment.FogSunScatter = 0f;
         environment.FogLightEnergy = 1f;
+
+        // A bit of contact shadow where things meet. Only lit surfaces take it, and light_affect
+        // lets it show in sunlight too, not just in shade. The amounts are by eye.
+        environment.SsaoRadius = AppSettings.OcclusionSize;
+        environment.SsaoIntensity = AppSettings.OcclusionStrength;
+        environment.SsaoLightAffect = OcclusionLightAffect;
+        environment.SsaoEnabled = AppSettings.AmbientOcclusion && System.Array.IndexOf(OS.GetCmdlineUserArgs(), "--no-ao") < 0;
 
         foreach (var argument in OS.GetCmdlineUserArgs())
         {
@@ -189,6 +204,8 @@ public partial class SkyController : Node
         _sun.LightEnergy = 1f;
 
         _environment.AmbientLightColor = ToColor(SkyBand.Ambient);
+        var ambient = ToColor(SkyBand.Ambient).SrgbToLinear();
+        RenderingServer.GlobalShaderParameterSet("indoor_ambient", new Vector3(ambient.R, ambient.G, ambient.B));
         _environment.FogLightColor = ToColor(SkyBand.Fog);
         var fogEnd = _state.FogEnd * FogDistanceScale;
         _environment.FogDepthBegin = fogEnd * _state.FogStart;

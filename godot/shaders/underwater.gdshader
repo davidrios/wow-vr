@@ -14,9 +14,9 @@ uniform vec3 tint = vec3(0.6, 0.8, 0.9);
 uniform vec3 haze = vec3(0.3, 0.5, 0.55);
 uniform float strength = 0.004;
 
-const float MURK_STRENGTH = 0.14;
+const float MURK_STRENGTH = 0.07;
 const float NEAR_HAZE = 0.08;
-const float CAUSTIC_STRENGTH = 0.05;
+const float CAUSTIC_STRENGTH = 0.025;
 const float CAUSTIC_RANGE = 22.0;
 
 void vertex() {

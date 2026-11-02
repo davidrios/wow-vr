@@ -582,7 +582,11 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
 
                 // Blending needs the shader, to match the client's. See its GAMMA_ADD.
                 ? BuildEffectMaterial(key.Material with { Unlit = key.Material.Unlit || key.Material.Blend == ModelBlend.Add }, PlainMod, key.Indoor, creature: false)
-                : BuildMaterial(key.Material, key.Indoor));
+                : key.Indoor
+
+                    // So does ambient occlusion indoors. See its INDOOR_OCCLUSION.
+                    ? BuildEffectMaterial(key.Material, key.Material.Blend == ModelBlend.Opaque ? PlainOpaque : PlainMod, indoor: true, creature: false)
+                    : BuildMaterial(key.Material, key.Indoor));
 
     private ShaderMaterial? BuildEffectMaterial(ModelMaterial material, M2Effect effect, bool indoor, bool creature)
     {
@@ -670,11 +674,14 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         var blended = material.Blend is ModelBlend.Alpha or ModelBlend.Add || effect.Fades;
         var baked = material.Bake is not null;
         var floorLit = creature && !unshaded;
-        var key = $"{material.Blend}_{material.TwoSided}_{material.Repeat}_{effect.Repeat2}_{unshaded}_{blended}_{baked}_{material.Billboard}_{indoor}_{floorLit}";
+
+        // Blended surfaces don't write depth or take occlusion, and glows shouldn't be dimmed.
+        var indoorOccluded = indoor && !material.Unlit && !modulates && !effect.Tinted && !blended;
+        var key = $"{material.Blend}_{material.TwoSided}_{material.Repeat}_{effect.Repeat2}_{unshaded}_{blended}_{baked}_{material.Billboard}_{indoor}_{floorLit}_{indoorOccluded}";
         return _effectShaders.GetOrAdd(key, _ =>
         {
             var modes = new List<string> { material.TwoSided ? "cull_disabled" : "cull_back" };
-            if (unshaded)
+            if (unshaded && !indoorOccluded)
             {
                 modes.Add("unshaded");
             }
@@ -721,6 +728,11 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             if (floorLit)
             {
                 defines.Add("#define FLOOR_LIGHT");
+            }
+
+            if (indoorOccluded)
+            {
+                defines.Add("#define INDOOR_OCCLUSION");
             }
 
             if (material.Blend == ModelBlend.Add && unshaded)

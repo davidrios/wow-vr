@@ -87,6 +87,29 @@ public static class AppSettings
         set => WriteMovement("shadows", value);
     }
 
+    public const float MaxOcclusionStrength = 16f;
+    public const float MinOcclusionSize = 0.1f;
+    public const float MaxOcclusionSize = 4f;
+
+    public static float OcclusionStrength
+    {
+        get => Read(MovementSection, "occlusion_strength", 4.75f).AsSingle();
+        set => WriteMovement("occlusion_strength", Mathf.Clamp(value, 0f, MaxOcclusionStrength));
+    }
+
+    /// <summary>In yards.</summary>
+    public static float OcclusionSize
+    {
+        get => Read(MovementSection, "occlusion_size", 0.3f).AsSingle();
+        set => WriteMovement("occlusion_size", Mathf.Clamp(value, MinOcclusionSize, MaxOcclusionSize));
+    }
+
+    public static bool AmbientOcclusion
+    {
+        get => Read(MovementSection, "ambient_occlusion", true).AsBool();
+        set => WriteMovement("ambient_occlusion", value);
+    }
+
     public static bool FpsDisplay
     {
         get => Read(MovementSection, "fps_display", true).AsBool();

@@ -13,6 +13,16 @@ uniform vec3 tint = vec3(1.0);
 uniform float element_alpha = 1.0;
 uniform float alpha_key = 0.878;
 
+#ifdef INDOOR_OCCLUSION
+// Baked light already says how an interior looks, but only lit surfaces take ambient occlusion,
+// which only dims their ambient light. So this ignores every other light, and divides by the
+// ambient, for it to be multiplied back. What's left is the baked look, dimmed by occlusion.
+global uniform vec3 indoor_ambient;
+
+void light() {
+}
+#endif
+
 #ifdef FLOOR_LIGHT
 // A creature's light from the floor under it, in gamma space, and in alpha how far it's
 // replaced the sky's. Emission isn't lit, so as this rises the sky's light fades out.
@@ -163,7 +173,9 @@ void fragment() {
 	}
 #endif
 
-#ifdef UNSHADED
+#ifdef INDOOR_OCCLUSION
+	ALBEDO = to_linear(lit + added) / max(indoor_ambient, vec3(0.001));
+#elif defined(UNSHADED)
 	ALBEDO = to_linear(lit + added);
 #elif defined(FLOOR_LIGHT)
 	ALBEDO = to_linear(lit) * (1.0 - floor_light.a);

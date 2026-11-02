@@ -44,6 +44,39 @@ public partial class GroundCoverManager : Node
     private double _timer;
     private int _building;
     private bool _enabled;
+    private bool _underwater;
+
+    /// <summary>
+    /// Fading draws in the transparent pass, after the underwater view has read the screen, so
+    /// a fading blade comes out dark against the fog. Fog hides anything that far away under
+    /// water anyway, so there it can just stop.
+    /// </summary>
+    public bool Underwater
+    {
+        set
+        {
+            if (value == _underwater)
+            {
+                return;
+            }
+
+            _underwater = value;
+            foreach (var node in _chunks.Values)
+            {
+                if (node is not null)
+                {
+                    foreach (var batch in node.GetChildren().OfType<MultiMeshInstance3D>())
+                    {
+                        batch.VisibilityRangeFadeMode = FadeMode;
+                    }
+                }
+            }
+        }
+    }
+
+    private GeometryInstance3D.VisibilityRangeFadeModeEnum FadeMode => _underwater
+        ? GeometryInstance3D.VisibilityRangeFadeModeEnum.Disabled
+        : GeometryInstance3D.VisibilityRangeFadeModeEnum.Self;
 
     public void Start(GroundEffectTable table, TileManager world)
     {
@@ -213,7 +246,7 @@ public partial class GroundCoverManager : Node
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                 VisibilityRangeEnd = VisibleRange,
                 VisibilityRangeEndMargin = FadeMargin,
-                VisibilityRangeFadeMode = GeometryInstance3D.VisibilityRangeFadeModeEnum.Self,
+                VisibilityRangeFadeMode = FadeMode,
             });
         }
 

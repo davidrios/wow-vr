@@ -40,6 +40,7 @@ public partial class PlayerWater : Node
     private TileManager _tiles = null!;
     private IPlayer _player = null!;
     private SkyController _sky = null!;
+    private GroundCoverManager _groundCover = null!;
     private Dictionary<int, LiquidKind> _kinds = [];
     private bool _swimming;
     private bool _feetIn;
@@ -53,11 +54,12 @@ public partial class PlayerWater : Node
     /// <summary>Where the feet rest when floating here.</summary>
     public float FloatHeight { get; private set; }
 
-    public void Start(IAssetSource source, TileManager tiles, IPlayer player, SkyController sky)
+    public void Start(IAssetSource source, TileManager tiles, IPlayer player, SkyController sky, GroundCoverManager groundCover)
     {
         _tiles = tiles;
         _player = player;
         _sky = sky;
+        _groundCover = groundCover;
         _kinds = LiquidTypeRecord.ReadAll(source).ToDictionary(t => t.Id, t => t.Kind);
 
         AddChild(_loop);
@@ -141,6 +143,7 @@ public partial class PlayerWater : Node
         {
             Underwater = under;
             _view.Visible = under;
+            _groundCover.Underwater = under;
             SetMuffled(under);
             if (under && _loop.Stream is not null)
             {

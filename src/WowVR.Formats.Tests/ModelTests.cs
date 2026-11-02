@@ -75,6 +75,15 @@ public class GroundCoverDataTests
     }
 }
 
+public class ContinentTests
+{
+    [Fact]
+    public void EveryContinentHasSomewhereToArrive()
+    {
+        Assert.All(WowVR.Formats.World.Landmarks.Continents, c => Assert.NotEmpty(WowVR.Formats.World.Landmarks.On(c.Map)));
+    }
+}
+
 public class GroundCoverWaterTests
 {
     [Fact]

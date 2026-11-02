@@ -87,6 +87,12 @@ public static class AppSettings
         set => WriteMovement("shadows", value);
     }
 
+    public static bool FpsDisplay
+    {
+        get => Read(MovementSection, "fps_display", true).AsBool();
+        set => WriteMovement("fps_display", value);
+    }
+
     public static bool GroundCover
     {
         get => Read(MovementSection, "ground_cover", true).AsBool();

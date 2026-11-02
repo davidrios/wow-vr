@@ -65,14 +65,18 @@ public partial class GroundCoverManager : Node
                 _chunks.Remove(key);
             }
         };
-        AppSettings.Changed += () =>
+        AppSettings.Changed += ApplySettings;
+    }
+
+    public override void _ExitTree() => AppSettings.Changed -= ApplySettings;
+
+    private void ApplySettings()
+    {
+        _enabled = AppSettings.GroundCover;
+        foreach (var state in _tiles.Values)
         {
-            _enabled = AppSettings.GroundCover;
-            foreach (var state in _tiles.Values)
-            {
-                state.Container.Visible = _enabled;
-            }
-        };
+            state.Container.Visible = _enabled;
+        }
     }
 
     public override void _Process(double delta)

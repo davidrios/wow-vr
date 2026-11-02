@@ -34,6 +34,9 @@ public partial class FpsDisplay : Label3D
 
     public override void _Ready()
     {
+        ApplySettings();
+        AppSettings.Changed += ApplySettings;
+
         Position = new Vector3(-0.25f, -0.3f, -1f);
         PixelSize = 0.001f;
         FontSize = 32;
@@ -57,6 +60,15 @@ public partial class FpsDisplay : Label3D
                 RenderPriority = 98,
             },
         });
+    }
+
+    public override void _ExitTree() => AppSettings.Changed -= ApplySettings;
+
+    /// <summary>Stops measuring as well as drawing, because redrawing the graph has a cost.</summary>
+    private void ApplySettings()
+    {
+        Visible = AppSettings.FpsDisplay;
+        SetProcess(Visible);
     }
 
     public override void _Process(double delta)

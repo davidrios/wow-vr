@@ -35,6 +35,14 @@ public partial class Main : Node3D
     /// <summary>Where a player's exported spawn files go otherwise.</summary>
     private const string DefaultSpawnFolder = "user://spawns";
 
+    private const string ContinentCheckArgument = "--continent-check";
+
+    /// <summary>Kept open across reloads, because tile and model workers can still be reading when the old world goes.</summary>
+    private static MpqAssetSource? _openSource;
+
+    /// <summary>Where the next load of this scene starts, after a continent's button.</summary>
+    private static Landmark? _nextStart;
+
     private Node3D _player = null!;
 
     /// <summary>
@@ -44,6 +52,11 @@ public partial class Main : Node3D
     /// </summary>
     private static (string Map, System.Numerics.Vector3 Position, float Pitch, float Yaw, bool Explicit) ReadStart()
     {
+        if (_nextStart is { } landmark)
+        {
+            return (landmark.Map, new System.Numerics.Vector3(landmark.WowX, landmark.WowY, 0f), 0f, 0f, false);
+        }
+
         foreach (var argument in OS.GetCmdlineUserArgs())
         {
             if (argument.StartsWith(StartArgument))
@@ -88,7 +101,7 @@ public partial class Main : Node3D
             var (startMap, startPosition, startPitch, startYaw, explicitStart) = ReadStart();
             var (source, map, lights, zones, liquids, mapId, displays, footsteps) = await Task.Run(() =>
             {
-                var opened = MpqAssetSource.Open(clientPath);
+                var opened = _openSource ??= MpqAssetSource.Open(clientPath);
                 var id = MapRecord.ReadAll(opened)
                     .First(m => m.Directory.Equals(startMap, StringComparison.OrdinalIgnoreCase)).Id;
                 return (opened, WdtMap.Read(opened, startMap), LightTable.Read(opened), ZoneTable.Read(opened), new LiquidLibrary(opened), id, CreatureDisplayTable.Read(opened), FootstepTable.Read(opened));
@@ -122,6 +135,7 @@ public partial class Main : Node3D
             player.Menu.SetSky(sky);
 
             player.Menu.SetLandmarks(Landmarks.On(startMap), l => tiles.TeleportTo(l.WowX, l.WowY));
+            player.Menu.SetContinents(startMap, TravelTo);
 
             var arguments = OS.GetCmdlineUserArgs();
             var creatures = new CreatureManager { Name = "Creatures" };
@@ -144,6 +158,11 @@ public partial class Main : Node3D
             else
             {
                 tiles.PlacePlayerOnSurface();
+            }
+
+            if (Array.IndexOf(arguments, ContinentCheckArgument) >= 0)
+            {
+                AddChild(new ContinentCheck { Tiles = tiles, Player = player, Map = startMap });
             }
 
             if (Array.IndexOf(arguments, OpenMenuArgument) >= 0)
@@ -218,6 +237,13 @@ public partial class Main : Node3D
 
         var project = ProjectSettings.GlobalizePath(ProjectSpawnFolder);
         return System.IO.Directory.Exists(project) ? project : ProjectSettings.GlobalizePath(DefaultSpawnFolder);
+    }
+
+    /// <summary>Another map needs other tiles, sky and spawns throughout, so the whole world reloads.</summary>
+    private void TravelTo(Continent continent)
+    {
+        _nextStart = Landmarks.On(continent.Map).First();
+        GetTree().CallDeferred(SceneTree.MethodName.ReloadCurrentScene);
     }
 
     private static Node3D LoadPlayer()

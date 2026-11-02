@@ -550,5 +550,4 @@ public partial class TileManager : Node3D
     private static int Distance((int X, int Y) a, (int X, int Y) b) =>
         Math.Max(Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
 
-    public override void _ExitTree() => _source?.Dispose();
 }

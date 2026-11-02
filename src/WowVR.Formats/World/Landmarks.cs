@@ -3,8 +3,19 @@ namespace WowVR.Formats.World;
 /// <summary>A place to teleport to. Height comes from the terrain on arrival.</summary>
 public sealed record Landmark(string Map, string Name, string Area, float WowX, float WowY);
 
+/// <summary>A map to travel to, by its directory in the client and a short name for a button.</summary>
+public sealed record Continent(string Map, string Name);
+
 public static class Landmarks
 {
+    public static readonly IReadOnlyList<Continent> Continents =
+    [
+        new("Azeroth", "E. Kingdoms"),
+        new("Kalimdor", "Kalimdor"),
+        new("Expansion01", "Outland"),
+        new("Northrend", "Northrend"),
+    ];
+
     /// <summary>Positions are the centers of each area's terrain, from <c>inspect area</c>.</summary>
     public static readonly IReadOnlyList<Landmark> All =
     [

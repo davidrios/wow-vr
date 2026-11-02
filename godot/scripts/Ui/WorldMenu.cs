@@ -15,6 +15,7 @@ public partial class WorldMenu : PanelContainer
     public const string VignetteSliderName = "VignetteSize";
 
     private GridContainer _landmarks = null!;
+    private HBoxContainer _continents = null!;
     private CheckButton _fly = null!;
     private HSlider _time = null!;
     private CheckButton _timePasses = null!;
@@ -36,6 +37,9 @@ public partial class WorldMenu : PanelContainer
         var rows = new VBoxContainer();
         rows.AddThemeConstantOverride("separation", 8);
         margin.AddChild(rows);
+
+        _continents = new HBoxContainer();
+        rows.AddChild(_continents);
 
         rows.AddChild(new Label { Text = "Teleport" });
         _landmarks = new GridContainer { Columns = 2, SizeFlagsVertical = SizeFlags.ExpandFill };
@@ -135,7 +139,14 @@ public partial class WorldMenu : PanelContainer
                 _sky.TimePasses = on;
             }
         };
-        rows.AddChild(_timePasses);
+        // Shares a row, because the wrist menu has no room for another.
+        var fps = new CheckButton { Text = "FPS display", ButtonPressed = AppSettings.FpsDisplay, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        fps.Toggled += on => AppSettings.FpsDisplay = on;
+        _timePasses.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        var timeAndFps = new HBoxContainer();
+        timeAndFps.AddChild(_timePasses);
+        timeAndFps.AddChild(fps);
+        rows.AddChild(timeAndFps);
 
         rows.AddChild(new Label { Text = "Music volume" });
         var music = new HSlider { MinValue = 0, MaxValue = 1, Step = 0.05, Value = AppSettings.MusicVolume };
@@ -170,6 +181,22 @@ public partial class WorldMenu : PanelContainer
     {
         _sky = sky;
         _timePasses.SetPressedNoSignal(sky.TimePasses);
+    }
+
+    /// <summary>A button per continent. The one the player's on can't be pressed.</summary>
+    public void SetContinents(string current, Action<Continent> travel)
+    {
+        foreach (var continent in Landmarks.Continents)
+        {
+            var button = new Button
+            {
+                Text = continent.Name,
+                Disabled = continent.Map.Equals(current, StringComparison.OrdinalIgnoreCase),
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            };
+            button.Pressed += () => travel(continent);
+            _continents.AddChild(button);
+        }
     }
 
     public void SetLandmarks(IEnumerable<Landmark> landmarks, Action<Landmark> teleport)

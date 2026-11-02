@@ -42,6 +42,8 @@ public partial class SkyController : Node
 
     private const string TimeArgument = "--time=";
 
+    private Action? _onSettings;
+
     /// <summary>Yards from the camera that shadows reach, which is most of what they cost.</summary>
     private const float ShadowDistance = 150f;
 
@@ -92,7 +94,8 @@ public partial class SkyController : Node
         // For comparing frame times, without touching the player's saved setting.
         var noShadows = System.Array.IndexOf(OS.GetCmdlineUserArgs(), "--no-shadows") >= 0;
         _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
-        AppSettings.Changed += () => _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
+        _onSettings = () => _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
+        AppSettings.Changed += _onSettings;
 
         liquids.MaterialCreated += (material, kind) => _newLiquids.Enqueue((material, kind));
 
@@ -130,6 +133,8 @@ public partial class SkyController : Node
         _skyMaterial.SetShaderParameter("moon_texture", textures.GetTexture(MoonTexture));
         _skyMaterial.SetShaderParameter("moon_glare_texture", textures.GetTexture(MoonGlareTexture));
     }
+
+    public override void _ExitTree() => AppSettings.Changed -= _onSettings;
 
     public override void _Process(double delta)
     {

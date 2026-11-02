@@ -41,6 +41,9 @@ public sealed class ModelSurface
     /// <summary>4 bytes per vertex: red, green, blue, alpha. Null when there are none.</summary>
     public byte[]? Colors { get; init; }
 
+    /// <summary>For a WMO group, which vertices belong to its transition batches. Null when none do.</summary>
+    public bool[]? Transition { get; init; }
+
     /// <summary>Wound the way Godot expects.</summary>
     public required int[] Indices { get; init; }
 }
@@ -50,7 +53,7 @@ internal static unsafe class MeshReader
     public static string Text(byte* text, nuint length) => Encoding.UTF8.GetString(text, checked((int)length));
 
     /// <summary>Splits a mesh by material, merging batches that share one.</summary>
-    public static List<ModelSurface> Surfaces(in WaMesh mesh, Func<uint, ModelMaterial?> materialOf, float* texCoords2 = null)
+    public static List<ModelSurface> Surfaces(in WaMesh mesh, Func<uint, ModelMaterial?> materialOf, float* texCoords2 = null, int transitionEnd = 0)
     {
         var positions = new ReadOnlySpan<float>(mesh.Positions, checked((int)mesh.VertexCount * 3));
         var normals = new ReadOnlySpan<float>(mesh.Normals, checked((int)mesh.VertexCount * 3));
@@ -106,6 +109,7 @@ internal static unsafe class MeshReader
             var outNormals = new Vector3[used.Count];
             var outTexCoords = new Vector2[used.Count];
             var outColors = colors.IsEmpty ? null : new byte[used.Count * 4];
+            var outTransition = transitionEnd > 0 ? new bool[used.Count] : null;
             var outTexCoords2 = texCoords2 is not null && material.Effect?.UsesSecondUv == true ? new Vector2[used.Count] : null;
             for (var i = 0; i < used.Count; i++)
             {
@@ -122,6 +126,11 @@ internal static unsafe class MeshReader
                 {
                     colors.Slice(v * 4, 4).CopyTo(outColors.AsSpan(i * 4));
                 }
+
+                if (outTransition is not null)
+                {
+                    outTransition[i] = v < transitionEnd;
+                }
             }
 
             surfaces.Add(new ModelSurface
@@ -132,6 +141,7 @@ internal static unsafe class MeshReader
                 TexCoords = outTexCoords,
                 TexCoords2 = outTexCoords2,
                 Colors = outColors,
+                Transition = outTransition,
                 Indices = surfaceIndices.ToArray(),
             });
         }
@@ -430,6 +440,37 @@ public sealed class WmoGroup
         return (new Vector3(bounds[0], bounds[1], bounds[2]), new Vector3(bounds[3], bounds[4], bounds[5]));
     }
 
+    /// <summary>The client changes vertex colors as it loads, which needs the whole group's order of vertices.</summary>
+    private static unsafe List<ModelSurface> ReadSurfaces(nint group, in WaMesh mesh, WmoRoot root)
+    {
+        var batches = new ReadOnlySpan<WaBatch>(mesh.Batches, checked((int)mesh.BatchCount));
+        var indices = new ReadOnlySpan<uint>(mesh.Indices, checked((int)mesh.IndexCount));
+        var transitionEnd = 0;
+        var transitionBatches = (int)Math.Min(ModelNativeMethods.WmoGroupTransitionBatchCount(group), mesh.BatchCount);
+        for (var b = 0; b < transitionBatches; b++)
+        {
+            foreach (var vertex in indices.Slice((int)batches[b].IndexStart, (int)batches[b].IndexCount))
+            {
+                transitionEnd = Math.Max(transitionEnd, (int)vertex + 1);
+            }
+        }
+
+        ModelMaterial? MaterialOf(uint m) => m < root.Materials.Count ? root.Materials[(int)m] : null;
+        if (mesh.Colors is null)
+        {
+            return MeshReader.Surfaces(mesh, MaterialOf);
+        }
+
+        var colors = new ReadOnlySpan<byte>(mesh.Colors, checked((int)mesh.VertexCount * 4)).ToArray();
+        WmoVertexLight.Fix(colors, transitionEnd, root.Ambient, root.Flags, ModelNativeMethods.WmoGroupFlags(group));
+        fixed (byte* fixedColors = colors)
+        {
+            var copy = mesh;
+            copy.Colors = fixedColors;
+            return MeshReader.Surfaces(copy, MaterialOf, transitionEnd: transitionEnd);
+        }
+    }
+
     private static (int Start, int Count) ReadPortalRange(nint group)
     {
         ModelNativeMethods.WmoGroupPortalRefs(group, out var start, out var count);
@@ -495,7 +536,7 @@ public sealed class WmoGroup
                 Bounds = ReadBounds(group),
                 PortalRange = ReadPortalRange(group),
                 Flags = ModelNativeMethods.WmoGroupFlags(group),
-                Surfaces = MeshReader.Surfaces(mesh, m => m < root.Materials.Count ? root.Materials[(int)m] : null),
+                Surfaces = ReadSurfaces(group, mesh, root),
                 CollisionFaces = faces,
                 Liquid = ReadLiquid(group, root.Flags),
             };

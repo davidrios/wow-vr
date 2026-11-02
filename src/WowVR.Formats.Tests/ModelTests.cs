@@ -144,11 +144,11 @@ public class WmoFloorLightTests
     {
         var light = WmoFloorLight.Build([Floor(0)])!;
 
-        Assert.Equal(new Vector3(1, 0, 0), light.Sample(new Vector3(0, 0, 0))!.Value);
+        Assert.Equal(new Vector3(2, 0, 0), light.Sample(new Vector3(0, 0, 0))!.Value);
 
         var middle = light.Sample(new Vector3(5, 0, 0))!.Value;
-        Assert.Equal(0.5f, middle.X, 3);
-        Assert.Equal(0.5f, middle.Y, 3);
+        Assert.Equal(1f, middle.X, 3);
+        Assert.Equal(1f, middle.Y, 3);
         Assert.Equal(0f, middle.Z, 3);
     }
 
@@ -169,7 +169,7 @@ public class WmoFloorLightTests
             [0, 1, 2]);
         var light = WmoFloorLight.Build([Floor(0), upstairs])!;
 
-        Assert.Equal(9f / 255f, light.Sample(new Vector3(1, 4.5f, 1))!.Value.X, 3);
+        Assert.Equal(18f / 255f, light.Sample(new Vector3(1, 4.5f, 1))!.Value.X, 3);
         Assert.True(light.Sample(new Vector3(1, 0.5f, 1))!.Value.X > 0.5f);
     }
 
@@ -323,28 +323,65 @@ public class WmoPortalTests
         Assert.Equal([true, true, false], visible);
     }
 
-    [Theory]
-    [InlineData(0f, 255)]
-    [InlineData(3f, 128)]
-    [InlineData(6f, 0)]
-    [InlineData(20f, 0)]
-    public void OutsideLightFadesAwayFromADoorsPlane(float distance, int alpha)
-    {
-        (Vector3, float)[] door = [(Vector3.UnitX, -10f)];
+    private static readonly Vector3 NoAmbient = Vector3.Zero;
 
-        Assert.Equal(alpha, WmoVertexLight.PortalAlpha(new Vector3(10f + distance, 5f, 5f), door));
+    [Theory]
+    [InlineData(100, 0, 0x2000u, 50, 0)]
+    [InlineData(100, 64, 0x2000u, 100, 0)]
+    [InlineData(200, 255, 0x2000u, 255, 0)]
+    [InlineData(100, 0, 0x8u, 50, 255)]
+    public void AnInteriorBatchsColorRisesWithAlphaWhichThenSaysIfItsOutside(int color, int alpha, uint groupFlags, int resultColor, int resultAlpha)
+    {
+        byte[] colors = [(byte)color, (byte)color, (byte)color, (byte)alpha];
+
+        WmoVertexLight.Fix(colors, 0, NoAmbient, 0, groupFlags);
+
+        Assert.Equal(resultColor, colors[0]);
+        Assert.Equal(resultAlpha, colors[3]);
     }
 
     [Fact]
-    public void WithNoDoorOutsideAVertexTakesNoOutsideLight() =>
-        Assert.Equal(0, WmoVertexLight.PortalAlpha(Vector3.Zero, []));
+    public void ATransitionBatchsColorFallsWithAlphaWhichItKeeps()
+    {
+        byte[] colors = [200, 200, 200, 255, 200, 200, 200, 0];
+
+        WmoVertexLight.Fix(colors, 2, NoAmbient, 0, 0x2000);
+
+        Assert.Equal([0, 0, 0, 255, 100, 100, 100, 0], colors);
+    }
+
+    [Fact]
+    public void FlagEightLeavesColorsAloneButNotAlpha()
+    {
+        byte[] colors = [200, 100, 50, 77];
+
+        WmoVertexLight.Fix(colors, 0, NoAmbient, 0x8, 0x2000);
+
+        Assert.Equal([200, 100, 50, 0], colors);
+    }
+
+    private static WmoVertexLight.Portal Door(bool outside) => new(
+        Vector3.UnitX,
+        -10f,
+        [new(10, -1, 0), new(10, 1, 0), new(10, 1, 3), new(10, -1, 3)],
+        1,
+        outside);
 
     [Theory]
-    [InlineData(100, 0, 50)]
-    [InlineData(100, 64, 100)]
-    [InlineData(200, 255, 255)]
-    public void LighteningHalvesAColorUnlessAlphaRaisesIt(int channel, int alpha, int result) =>
-        Assert.Equal(result, WmoVertexLight.Lightened((byte)channel, (byte)alpha));
+    [InlineData(0f, 1f)]
+    [InlineData(3f, 0.5f)]
+    [InlineData(6f, 0f)]
+    [InlineData(20f, 0f)]
+    public void OutsideLightFadesInFrontOfADoor(float distance, float opacity) =>
+        Assert.Equal(opacity, WmoVertexLight.Opacity(new Vector3(10f + distance, 0f, 1f), [Door(true)]), 3);
+
+    [Fact]
+    public void BesideADoorItsDistanceIsFromItsEdges() =>
+        Assert.Equal(0.5f, WmoVertexLight.Opacity(new Vector3(10f, 4f, 1f), [Door(true)]), 3);
+
+    [Fact]
+    public void WithNoDoorOutsideNoOutsideLightComes() =>
+        Assert.Equal(0f, WmoVertexLight.Opacity(new Vector3(11f, 0f, 1f), [Door(false)]));
 
     [Fact]
     public void AWmoWithNoOutsideShowsEverythingFromOutside()

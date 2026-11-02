@@ -72,7 +72,8 @@ public sealed class WmoFloorLight
         Corner CornerOf(int vertex)
         {
             var p = surface.Positions[vertex];
-            var color = new Vector3(colors[vertex * 4], colors[vertex * 4 + 1], colors[vertex * 4 + 2]) / 255f;
+            // Fixed colors are half of what they do. See WmoVertexLight.
+            var color = new Vector3(colors[vertex * 4], colors[vertex * 4 + 1], colors[vertex * 4 + 2]) / 255f * 2f;
             return new Corner(p.X, p.Y, p.Z, color);
         }
 

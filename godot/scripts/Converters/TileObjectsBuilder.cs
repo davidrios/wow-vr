@@ -231,9 +231,10 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
             if (interior)
             {
                 var light = copies[i].Light;
-                buffer[row + 12] = Mathf.Min(light.X, 1f);
-                buffer[row + 13] = Mathf.Min(light.Y, 1f);
-                buffer[row + 14] = Mathf.Min(light.Z, 1f);
+                // The shader doubles this, as it does a WMO's own colors.
+                buffer[row + 12] = Mathf.Min(light.X, 1f) / 2f;
+                buffer[row + 13] = Mathf.Min(light.Y, 1f) / 2f;
+                buffer[row + 14] = Mathf.Min(light.Z, 1f) / 2f;
 
                 // Alpha is how much of the world's light a WMO's vertex takes. A doodad's color is all it has.
                 buffer[row + 15] = 0f;

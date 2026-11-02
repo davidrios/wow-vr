@@ -201,14 +201,16 @@ public partial class SkyController : Node
         _sun.GlobalBasis = Basis.LookingAt(-toLight, Vector3.Forward);
         var diffuse = _state[SkyBand.Diffuse] * DiffuseIntensity;
         _sun.LightColor = new Color(diffuse.X, diffuse.Y, diffuse.Z);
-        RenderingServer.GlobalShaderParameterSet("world_sun", new Vector3(diffuse.X, diffuse.Y, diffuse.Z));
+        var sunLinear = _sun.LightColor.SrgbToLinear();
+        // Inside is always under a roof, so it gets what a surface in shadow gets, like the rooms open to the sky beside it.
+        var shadowed = 1f - ShadowOpacity;
+        RenderingServer.GlobalShaderParameterSet("world_sun", new Vector3(sunLinear.R, sunLinear.G, sunLinear.B) * shadowed);
         RenderingServer.GlobalShaderParameterSet("world_to_sun", toLight);
         _sun.LightEnergy = 1f;
 
         _environment.AmbientLightColor = ToColor(SkyBand.Ambient);
-        var ambientGamma = ToColor(SkyBand.Ambient);
-        RenderingServer.GlobalShaderParameterSet("world_ambient", new Vector3(ambientGamma.R, ambientGamma.G, ambientGamma.B));
         var ambient = ToColor(SkyBand.Ambient).SrgbToLinear();
+        RenderingServer.GlobalShaderParameterSet("world_ambient", new Vector3(ambient.R, ambient.G, ambient.B));
         RenderingServer.GlobalShaderParameterSet("indoor_ambient", new Vector3(ambient.R, ambient.G, ambient.B));
         _environment.FogLightColor = ToColor(SkyBand.Fog);
         var fogEnd = _state.FogEnd * FogDistanceScale;

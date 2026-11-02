@@ -354,6 +354,9 @@ internal static unsafe partial class ModelNativeMethods
     [LibraryImport(Library, EntryPoint = "wa_wmo_group_portal_refs")]
     internal static partial void WmoGroupPortalRefs(nint group, out uint start, out uint count);
 
+    [LibraryImport(Library, EntryPoint = "wa_wmo_group_transition_batch_count")]
+    internal static partial uint WmoGroupTransitionBatchCount(nint group);
+
     [LibraryImport(Library, EntryPoint = "wa_wmo_ambient_color")]
     internal static partial uint WmoAmbientColor(nint wmo);
 

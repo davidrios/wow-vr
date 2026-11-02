@@ -2,7 +2,7 @@
 
 import unittest
 
-from export_spawns import build_rows, tile_of
+from export_spawns import build_object_rows, build_rows, tile_of
 
 
 def creature(**changes):
@@ -106,6 +106,39 @@ class RowTests(unittest.TestCase):
         sets = [{"CreatureID": 1, "ID": 1, "ItemID1": 10, "ItemID2": 0}]
         row = rows([creature()], equipment=sets, items=[{"entry": 10, "displayid": 555}])[0][3]
         self.assertEqual([555, 0], row["weapons"])
+
+
+class ObjectRowsTest(unittest.TestCase):
+    TEMPLATES = [
+        {"entry": 1, "type": 19, "displayId": 7, "name": "Mailbox", "size": 1.5},
+        {"entry": 2, "type": 3, "displayId": 8, "name": "Peacebloom", "size": 1},
+        {"entry": 3, "type": 5, "displayId": 0, "name": "Nothing to see", "size": 1},
+        {"entry": 4, "type": 5, "displayId": 9, "name": "Holiday Lantern", "size": 1},
+        {"entry": 5, "type": 5, "displayId": 10, "name": "Darkmoon Faire Banner", "size": 1},
+    ]
+
+    @staticmethod
+    def spawn(guid, entry, phase=1):
+        return {
+            "guid": guid, "id": entry, "map": 0, "phaseMask": phase, "position_x": -9456.0, "position_y": 46.0, "position_z": 56.0,
+            "orientation": 1.0, "rotation0": 0.0, "rotation1": 0.0, "rotation2": 0.5, "rotation3": 0.8,
+        }
+
+    def rows(self, objects, events=None):
+        return [r[3] for r in build_object_rows(objects, self.TEMPLATES, events)]
+
+    def test_a_kept_object_has_its_look_and_rotation(self):
+        row = self.rows([self.spawn(10, 1)])[0]
+        self.assertEqual((row["name"], row["displayId"], row["scale"]), ("Mailbox", 7, 1.5))
+        self.assertEqual(row["rotation"], [0.0, 0.0, 0.5, 0.8])
+
+    def test_nodes_invisible_holiday_and_other_phase_objects_go(self):
+        objects = [self.spawn(1, 2), self.spawn(2, 3), self.spawn(3, 5), self.spawn(4, 1, phase=2), self.spawn(5, 99)]
+        self.assertEqual(self.rows(objects), [])
+
+    def test_an_object_mostly_in_events_goes_entirely(self):
+        objects = [self.spawn(1, 4), self.spawn(2, 4), self.spawn(3, 1)]
+        self.assertEqual([r["guid"] for r in self.rows(objects, {1})], [3])
 
 
 if __name__ == "__main__":

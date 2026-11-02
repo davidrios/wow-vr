@@ -6,6 +6,51 @@ using Xunit;
 
 namespace WowVR.Formats.Tests;
 
+public class GameObjectPlacementTests
+{
+    private static GameObjectSpawn Spawn(float orientation, params float[] rotation) => new()
+    {
+        Guid = 1,
+        DisplayId = 1,
+        Pos = [-9456f, 46f, 56f],
+        Orientation = orientation,
+        Rotation = rotation,
+    };
+
+    [Fact]
+    public void OrientationPointsTheModelLikeACreature()
+    {
+        const float Orientation = 1.2f;
+        var placement = Spawn(Orientation).Placement(31, 49);
+
+        var yaw = WowCoords.YawFromOrientation(Orientation);
+        Assert.Equal(MathF.Cos(yaw), placement.AxisX.X, 4);
+        Assert.Equal(-MathF.Sin(yaw), placement.AxisX.Z, 4);
+        Assert.Equal(1f, placement.AxisY.Y, 4);
+    }
+
+    [Fact]
+    public void AQuaternionGivesTheSameAsItsOrientation()
+    {
+        const float Orientation = 2.1f;
+        var byAngle = Spawn(Orientation).Placement(31, 49);
+        var byQuaternion = Spawn(0f, 0f, 0f, MathF.Sin(Orientation / 2), MathF.Cos(Orientation / 2)).Placement(31, 49);
+
+        Assert.Equal(byAngle.AxisX.X, byQuaternion.AxisX.X, 4);
+        Assert.Equal(byAngle.AxisX.Z, byQuaternion.AxisX.Z, 4);
+        Assert.Equal(byAngle.AxisZ.X, byQuaternion.AxisZ.X, 4);
+    }
+
+    [Fact]
+    public void AxesKeepHandednessAndTheSpawnsPositionIsOnTheTile()
+    {
+        var placement = Spawn(0.7f, 0.1f, 0.2f, 0.3f, 0.9f).Placement(31, 49);
+
+        Assert.True(System.Numerics.Vector3.Dot(System.Numerics.Vector3.Cross(placement.AxisX, placement.AxisY), placement.AxisZ) > 0.99f);
+        Assert.Equal(WowCoords.TileLocal(-9456f, 46f, 56f, 31, 49), placement.Origin);
+    }
+}
+
 public class CreatureSoundDistanceTests
 {
     [Fact]

@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
 using WowVR.Formats;
+using WowVR.Formats.Models;
 using WowVR.Formats.Terrain;
+using WowVR.Formats.World;
 using Godot;
 
 namespace WowVR.Converters;
@@ -20,7 +22,7 @@ public sealed record TileObjects(List<DoodadBatch> Doodads, List<WmoInstance> Wm
 /// Turns a tile's placements into batches. Runs off the main thread. Tiles a model overlaps
 /// all list it, so each draws only the models whose origin it holds, which a test checks.
 /// </summary>
-public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
+public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameObjectSource gameObjects, GameObjectDisplayTable displays)
 {
     /// <summary>Doodads are grouped into this many cells per side, so far ones can be hidden.</summary>
     private const int CellsPerSide = 4;
@@ -94,6 +96,8 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
             wmos.Add(new WmoInstance(wmo, ToTransform3D(transform), groupDoodads));
         }
 
+        AddGameObjects(cells, wmos, terrain, tileX, tileY);
+
         var batches = new List<DoodadBatch>();
         foreach (var (cell, transforms) in cells)
         {
@@ -104,6 +108,67 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map)
         }
 
         return new TileObjects(batches, wmos);
+    }
+
+    /// <summary>Spawned objects join the tile's doodads, which gives them streaming and collision.</summary>
+    private void AddGameObjects(Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light)>> cells, List<WmoInstance> wmos, AdtTerrain terrain, int tileX, int tileY)
+    {
+        var spawns = gameObjects.Read(tileX, tileY);
+        if (spawns.Count == 0)
+        {
+            return;
+        }
+
+        // Any WMO touching this tile can hold an object, even if another tile draws it.
+        var buildings = new List<(WmoAsset Asset, Transform3D ToLocal)>();
+        foreach (var placement in terrain.Wmos)
+        {
+            if (library.GetWmo(placement.Model) is { } wmo)
+            {
+                buildings.Add((wmo, ToTransform3D(WowCoords.TilePlacement(placement.Position, placement.Rotation, 1f, tileX, tileY)).AffineInverse()));
+            }
+        }
+
+        foreach (var spawn in spawns)
+        {
+            if (displays.ModelOf(spawn.DisplayId) is not { } model)
+            {
+                continue;
+            }
+
+            var transform = spawn.Placement(tileX, tileY);
+            if (model.EndsWith(".wmo", System.StringComparison.OrdinalIgnoreCase))
+            {
+                if (library.GetWmo(model) is { } wmo)
+                {
+                    wmos.Add(new WmoInstance(wmo, ToTransform3D(transform), []));
+                }
+
+                continue;
+            }
+
+            var light = IndoorLightAt(buildings, ToGodot(transform.Origin));
+            AddDoodad(cells, model, transform, light is not null, light ?? default);
+        }
+    }
+
+    /// <summary>The light of the indoor WMO group holding a point on this tile. Null for a point outdoors.</summary>
+    private static System.Numerics.Vector3? IndoorLightAt(List<(WmoAsset Asset, Transform3D ToLocal)> buildings, Vector3 point)
+    {
+        foreach (var (asset, toLocal) in buildings)
+        {
+            var local = toLocal * point;
+            foreach (var group in asset.Groups)
+            {
+                if (group.Indoor && group.Bounds.HasPoint(local))
+                {
+                    var floor = group.FloorLight?.Sample(new System.Numerics.Vector3(local.X, local.Y, local.Z));
+                    return WmoFloorLight.ForDoodad(floor ?? asset.Root.Ambient);
+                }
+            }
+        }
+
+        return null;
     }
 
     private bool OwnedBy(ModelPlacement placement, (int X, int Y) tile)

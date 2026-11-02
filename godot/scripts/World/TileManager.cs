@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using WowVR.Converters;
 using WowVR.Formats;
+using WowVR.Formats.World;
 using WowVR.Formats.Assets;
 using WowVR.Formats.Terrain;
 using Godot;
@@ -118,7 +119,7 @@ public partial class TileManager : Node3D
     }
 
     /// <summary>Starts streaming with the given Godot world position at the local origin.</summary>
-    public void Start(IAssetSource source, WdtMap map, LiquidLibrary liquids, IPlayer player, double originX, double originZ)
+    public void Start(IAssetSource source, WdtMap map, LiquidLibrary liquids, IPlayer player, double originX, double originZ, IGameObjectSource gameObjects)
     {
         _collision = new TerrainCollision { Name = "Collision" };
         AddChild(_collision);
@@ -133,7 +134,7 @@ public partial class TileManager : Node3D
         _builder = new TerrainBuilder(source, map);
         _liquids = liquids;
         Models = new ModelLibrary(source, liquids);
-        _objectsBuilder = new TileObjectsBuilder(Models, map);
+        _objectsBuilder = new TileObjectsBuilder(Models, map, gameObjects, GameObjectDisplayTable.Read(source));
         TerrainBuilder.LoadShared();
     }
 

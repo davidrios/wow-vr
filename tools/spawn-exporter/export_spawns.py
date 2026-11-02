@@ -37,6 +37,13 @@ EVENT_ENTRY_SHARE = 0.5
 # goes if it's this close to an older spawn of another kind.
 STACKED_YARDS = 1.0
 
+# gameobject_template.type: gathering nodes and chests share pools, so a server shows only some
+# of them at once. Then traps, moving transports, and fishing holes, which are pools too.
+SKIPPED_OBJECT_TYPES = {3, 6, 11, 15, 25, 33}
+
+# Invisible helpers and holiday decorations the event table misses.
+SKIPPED_OBJECT_NAMES = ("Collision", "[DND]", "DND", "Darkmoon", "XMas", "Brewfest", "MFF", "G_Pumpkin", "Tonk", "Spirit Candle", "Alliance Bonfire", "Horde Bonfire")
+
 # creature.equipment_id: use a random one of the creature's sets.
 RANDOM_EQUIPMENT = -1
 
@@ -174,6 +181,73 @@ def _build_rows(creatures, templates, waypoints, equipment, items, event_guids, 
         yield creature["map"], tile_x, tile_y, row
 
 
+def object_event_entries(objects, event_guids):
+    """Objects that are mostly event spawns."""
+    spawns = defaultdict(int)
+    events = defaultdict(int)
+    for row in objects:
+        spawns[row["id"]] += 1
+        events[row["id"]] += row["guid"] in event_guids
+    return {entry for entry, count in events.items() if count >= spawns[entry] * EVENT_ENTRY_SHARE and count > 0}
+
+
+def build_object_rows(objects, templates, event_guids=None):
+    """Yields (map, tile x, tile y, row) for each game object worth showing."""
+    event_guids = event_guids or set()
+    templates = {t["entry"]: t for t in templates}
+    event_only = object_event_entries(objects, event_guids)
+    for row in objects:
+        guid = row["guid"]
+        template = templates.get(row["id"])
+        if (
+            template is None
+            or not template["displayId"]
+            or template["type"] in SKIPPED_OBJECT_TYPES
+            or not row["phaseMask"] & PHASE_NORMAL
+            or guid in event_guids
+            or row["id"] in event_only
+            or any(word in template["name"] for word in SKIPPED_OBJECT_NAMES)
+        ):
+            continue
+
+        x, y = row["position_x"], row["position_y"]
+        tile_x, tile_y = tile_of(x, y)
+        yield row["map"], tile_x, tile_y, {
+            "guid": guid,
+            "entry": row["id"],
+            "name": template["name"],
+            "type": template["type"],
+            "displayId": template["displayId"],
+            "pos": [x, y, row["position_z"]],
+            "orientation": row["orientation"],
+            "rotation": [row["rotation0"], row["rotation1"], row["rotation2"], row["rotation3"]],
+            "scale": template["size"] or 1.0,
+        }
+
+
+def write_objects(tables, out):
+    """Writes spawns/<map>/objects/<tile x>_<tile y>.json. Skipped if the tables aren't there."""
+    objects = load_if_present(tables, "gameobject")
+    templates = load_if_present(tables, "gameobject_template")
+    if not objects or not templates:
+        print("No gameobject or gameobject_template table, so no objects.")
+        return
+
+    # A negative event means a regular spawn that hides during it, so those stay.
+    events = {e["guid"] for e in load_if_present(tables, "game_event_gameobject") if e["eventEntry"] > 0}
+    rows = defaultdict(list)
+    for map_id, tile_x, tile_y, row in build_object_rows(objects, templates, events):
+        rows[(map_id, tile_x, tile_y)].append(row)
+
+    for (map_id, tile_x, tile_y), tile_rows in rows.items():
+        folder = out / str(map_id) / "objects"
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(folder / f"{tile_x}_{tile_y}.json", "w", encoding="utf-8") as file:
+            json.dump(tile_rows, file, ensure_ascii=False, separators=(",", ":"))
+
+    print(f"Wrote {sum(len(r) for r in rows.values())} objects in {len(rows)} tiles.")
+
+
 def load(folder, name):
     with open(folder / f"{name}.json", encoding="utf-8") as file:
         return json.load(file)
@@ -210,6 +284,7 @@ def main():
             json.dump(tile_rows, file, ensure_ascii=False, separators=(",", ":"))
 
     print(f"Wrote {sum(len(r) for r in rows.values())} creatures to {len(rows)} tiles in {arguments.out}")
+    write_objects(arguments.tables, arguments.out)
 
 
 if __name__ == "__main__":

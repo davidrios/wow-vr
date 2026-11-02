@@ -27,11 +27,20 @@
 
 `movementType` is 0 to stand, 1 to wander and 2 to follow waypoints, as AzerothCore's `MovementType` is. `scale` multiplies the display's, and `weapons` are the right and left hands' `ItemDisplayInfo` rows. A row's tile is the one holding its position. The example's values are made up.
 
-- **Sources:** `creature`, `creature_template`, `creature_equip_template`, `item_template` and `waypoint_data` come from a 2024 export. `game_event_creature` and `creature_addon` came later, from AzerothCore's `data/sql/base/db_world` on 2026-11-02, so their guids don't all match. `data/azerothcore/` has no converter for these: re-exporting them all from one version would be better.
+- **Sources:** `creature`, `creature_template`, `creature_equip_template`, `item_template` and `waypoint_data` come from a 2024 export. `game_event_creature`, `creature_addon`, `gameobject_template` and `game_event_gameobject` came later, from AzerothCore's `data/sql/base/db_world` on 2026-11-02, so their guids don't all match. `data/azerothcore/` has no converter for these: re-exporting them all from one version would be better.
 - **Paths** come from `creature_addon`, falling back on AzerothCore's convention of the guid times 10. The two disagree for 204 spawns, and either finds a path for about 6,000 of the 6,220 with `MovementType` 2. The rest stand still.
 - **Left out:** triggers (`flags_extra` `0x80`), `[DND]` dummies, and anything not in the normal phase.
 - **Events are skipped.** `game_event_creature` lists them, with a positive event id. Because of the guid drift it only reaches 8,470 of its 10,415 spawns here, and 3,125 of 3,723 Wild Turkeys, so a creature with at least half its spawns listed goes entirely, and so does a spawn within a yard of an older one of another kind. Event spawns the table misses, of creatures it mostly doesn't list, can still appear.
 - **Choices:** a creature with several entries or models picks one by its guid, so it always looks the same. The client's model probabilities aren't in these tables.
+
+## Game objects
+
+The exporter also writes `spawns/<map id>/objects/<tile x>_<tile y>.json`, from `gameobject` and `gameobject_template`. The game adds them to the tile's doodad batches, so they get streaming and collision. One inside an indoor WMO group takes the floor's light.
+
+- **Rotation:** a row's quaternion, in WoW's axes, or its orientation if the quaternion is all zeros.
+- **Left out:** gathering nodes and chests (type 3) and fishing holes, because a server shows only some of a pool at once, so showing them all would be far too many. Also traps, moving transports, invisible helpers, and anything not in the normal phase.
+- **Holidays:** `game_event_gameobject` lists them, with the same guid drift as creatures, so an object with at least half its spawns listed goes entirely. A list of names in the exporter catches what's left, and a holiday object not on it can still appear.
+- **Static:** doors stay as modeled, nothing can be used, and animation is whatever the doodad path gives. Flames are particles, which aren't drawn yet.
 
 ## Consequences
 

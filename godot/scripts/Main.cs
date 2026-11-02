@@ -112,7 +112,7 @@ public partial class Main : Node3D
             sky.Start(lights, tiles, GetNode<WorldEnvironment>("WorldEnvironment").Environment, GetNode<DirectionalLight3D>("Sun"), mapId, liquids);
 
             AddChild(tiles);
-            tiles.Start(source, map, liquids, player, start.X, start.Z);
+            tiles.Start(source, map, liquids, player, start.X, start.Z, ChooseGameObjectSource(OS.GetCmdlineUserArgs(), mapId));
             sky.SetCelestialTextures(tiles.Models);
 
             var ambience = new ZoneAmbience { Name = "ZoneAmbience" };
@@ -197,15 +197,27 @@ public partial class Main : Node3D
             }
         }
 
-        var folder = arguments.FirstOrDefault(a => a.StartsWith(SpawnsArgument))?[SpawnsArgument.Length..];
-        if (folder is null)
-        {
-            var project = ProjectSettings.GlobalizePath(ProjectSpawnFolder);
-            folder = System.IO.Directory.Exists(project) ? project : ProjectSettings.GlobalizePath(DefaultSpawnFolder);
-        }
-
+        var folder = SpawnFolder(arguments);
         GD.Print($"Spawn files: {folder}");
         return new SpawnFiles(folder, mapId);
+    }
+
+    /// <summary>The same files' objects. Sample spawns stand in for creatures alone, so they come without any.</summary>
+    private static IGameObjectSource ChooseGameObjectSource(string[] arguments, int mapId) =>
+        arguments.Any(a => a.StartsWith(SampleSpawnsArgument) || a == CreatureCheckArgument)
+            ? new NoGameObjects()
+            : new GameObjectFiles(SpawnFolder(arguments), mapId);
+
+    private static string SpawnFolder(string[] arguments)
+    {
+        var folder = arguments.FirstOrDefault(a => a.StartsWith(SpawnsArgument))?[SpawnsArgument.Length..];
+        if (folder is not null)
+        {
+            return folder;
+        }
+
+        var project = ProjectSettings.GlobalizePath(ProjectSpawnFolder);
+        return System.IO.Directory.Exists(project) ? project : ProjectSettings.GlobalizePath(DefaultSpawnFolder);
     }
 
     private static Node3D LoadPlayer()

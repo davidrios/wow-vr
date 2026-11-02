@@ -17,6 +17,7 @@ const string Usage = """
       wmos <map> <tile x> <tile y> Print a tile's WMO placements, with WoW positions.
       extract <file> <out>        Copy a file out of the client. Don't commit the output.
       check-models [text]         Parse every M2 and WMO, optionally only those containing text.
+      emitters <m2 or display id>  Print a model's particle emitters.
       sky <map id> <x> <y> <hour> Print the sky colors and fog at a WoW position and time.
     """;
 
@@ -64,6 +65,8 @@ try
             return CheckModels(source, "");
         case ["check-models", var text]:
             return CheckModels(source, text);
+        case ["emitters", var file]:
+            return PrintEmitters(source, file);
         case ["area", var map, var name]:
             return PrintArea(source, map, name);
         default:
@@ -215,6 +218,24 @@ static int PrintSky(MpqAssetSource source, int mapId, float x, float y, float ho
 
     Console.WriteLine($"Fog {sky.FogStart:F2} to {sky.FogEnd:F0} yards");
     Console.WriteLine($"River alpha {sky.RiverShallowAlpha:F2} to {sky.RiverDeepAlpha:F2}, ocean {sky.OceanShallowAlpha:F2} to {sky.OceanDeepAlpha:F2}");
+    return 0;
+}
+
+static int PrintEmitters(MpqAssetSource source, string file)
+{
+    if (int.TryParse(file, out var display))
+    {
+        file = WowVR.Formats.World.CreatureDisplayTable.Read(source).Resolve(display)?.Model ?? throw new IOException($"No display {display}");
+        Console.WriteLine(file);
+    }
+
+    var model = M2Model.Parse(source.Read(file) ?? throw new IOException($"Not in the client: {file}"), source.Read(M2Model.SkinPath(file)));
+    foreach (var e in model.Emitters)
+    {
+        Console.WriteLine($"bone {e.Bone} at {e.Position}: rate {e.Rate:F2}, life {e.Lifespan:F2} +-{e.LifespanVariation:F2}, speed {e.Speed:F2}, area {e.AreaLength:F2}x{e.AreaWidth:F2}, sizes {string.Join('/', e.Sizes.Select(v => v.ToString("F2")))}, blend {e.Blend}, {e.Texture}");
+    }
+
+    Console.WriteLine($"{model.Emitters.Count} emitters");
     return 0;
 }
 

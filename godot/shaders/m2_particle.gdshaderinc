@@ -11,6 +11,9 @@ uniform int cell_count = 0;
 uniform vec4 cell_times = vec4(0.0);
 uniform vec4 cell_values = vec4(0.0);
 
+// How much of a cycle is the particle's life. See ParticleLibrary.
+uniform float life_share = 1.0;
+
 float cell_at(float life) {
 	for (int i = 1; i < cell_count; i++) {
 		if (life <= cell_times[i]) {
@@ -39,7 +42,7 @@ void vertex() {
 	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
 
 	int tiles = rows * columns;
-	float chosen = cell_count > 0 ? cell_at(INSTANCE_CUSTOM.y) : INSTANCE_CUSTOM.z * float(tiles);
+	float chosen = cell_count > 0 ? cell_at(INSTANCE_CUSTOM.y / life_share) : INSTANCE_CUSTOM.z * float(tiles);
 	int tile = clamp(int(chosen), 0, tiles - 1);
 	UV = (UV + vec2(float(tile % columns), float(tile / columns))) / vec2(float(columns), float(rows));
 }

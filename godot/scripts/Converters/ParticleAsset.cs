@@ -12,11 +12,18 @@ public sealed record ParticleAsset(Vector3 Position, int Bone, int Amount, float
     /// <summary>Starts part way through, so a fire is already burning when it comes into range.</summary>
     private const double MaxPreprocessSeconds = 3;
 
+    /// <summary>
+    /// How much each placed emitter's period differs, either way. A creature's emitters all start
+    /// together, so equal ones would fire together, and this lets them drift apart. Godot's own
+    /// randomness doesn't help, since its seed is the same for every node. By eye.
+    /// </summary>
+    private const double PeriodFuzz = 0.1;
+
     public GpuParticles3D NewNode(Vector3 position) => new()
     {
         Position = position,
         Amount = Amount,
-        Lifetime = Lifetime,
+        Lifetime = Lifetime * (1.0 + (Random.Shared.NextDouble() * 2.0 - 1.0) * PeriodFuzz),
         Preprocess = Math.Min(Lifetime, MaxPreprocessSeconds),
         ProcessMaterial = Process,
         DrawPass1 = Quad,
@@ -37,8 +44,11 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
     /// <summary>A quad reaches this far either side of a particle's position, per unit of its size.</summary>
     private const float QuadSize = 2f;
 
+    /// <summary>A particle goes out over this much of its cycle after its life, rather than popping.</summary>
+    private const float HiddenEdge = 0.001f;
+
     private readonly ConcurrentDictionary<bool, Shader> _shaders = new();
-    private readonly ConcurrentDictionary<(string Texture, bool Keyed, int Rows, int Columns, string Cells), ShaderMaterial?> _materials = new();
+    private readonly ConcurrentDictionary<(string Texture, bool Keyed, int Rows, int Columns, string Cells, float Share), ShaderMaterial?> _materials = new();
 
     public ParticleAsset[] Build(System.Collections.Generic.IEnumerable<M2Emitter> emitters) =>
         emitters.Select(Build).OfType<ParticleAsset>().ToArray();
@@ -46,26 +56,32 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
     /// <summary>Null when its texture can't be read.</summary>
     private ParticleAsset? Build(M2Emitter emitter)
     {
-        if (MaterialFor(emitter) is not { } material)
+        var peak = emitter.Sizes.Max();
+        var speed = emitter.Speed * (1f + emitter.SpeedVariation);
+        var longest = emitter.Lifespan + emitter.LifespanVariation;
+
+        // Godot emits Amount per Lifetime, a whole number of them, where the file's rate can be
+        // anything per lifespan. So a cycle is made longer to fit, with a particle showing for
+        // only its real lifespan at the start of its cycle. Dragons' backs have rates of 0.3.
+        var amount = Math.Clamp(Mathf.CeilToInt(emitter.Rate), 1, MaxAmount);
+        var share = Mathf.Min(emitter.Rate / amount, 1f);
+        var reach = Mathf.Abs(speed) * longest + Mathf.Abs(emitter.Gravity) * longest * longest / 2f + peak * QuadSize + Mathf.Max(emitter.AreaLength, emitter.AreaWidth);
+        if (MaterialFor(emitter, share) is not { } material)
         {
             return null;
         }
 
-        var peak = emitter.Sizes.Max();
-        var speed = emitter.Speed * (1f + emitter.SpeedVariation);
-        var longest = emitter.Lifespan + emitter.LifespanVariation;
-        var reach = Mathf.Abs(speed) * longest + Mathf.Abs(emitter.Gravity) * longest * longest / 2f + peak * QuadSize + Mathf.Max(emitter.AreaLength, emitter.AreaWidth);
         return new ParticleAsset(
             new Vector3(emitter.Position.X, emitter.Position.Y, emitter.Position.Z),
             emitter.Bone,
-            Math.Clamp(Mathf.CeilToInt(emitter.Rate), 1, MaxAmount),
-            emitter.Lifespan,
-            ProcessOf(emitter, peak),
+            amount,
+            emitter.Lifespan / share,
+            ProcessOf(emitter, peak, share),
             new QuadMesh { Size = Vector2.One * QuadSize, Material = material },
             new Aabb(-Vector3.One * reach, Vector3.One * reach * 2f));
     }
 
-    private static ParticleProcessMaterial ProcessOf(M2Emitter emitter, float peak)
+    private static ParticleProcessMaterial ProcessOf(M2Emitter emitter, float peak, float share)
     {
         var (low, high) = (emitter.Speed * (1f - emitter.SpeedVariation), emitter.Speed * (1f + emitter.SpeedVariation));
         var process = new ParticleProcessMaterial
@@ -75,11 +91,11 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
             InitialVelocityMin = Mathf.Min(low, high),
             InitialVelocityMax = Mathf.Max(low, high),
             Gravity = Vector3.Down * emitter.Gravity,
-            LifetimeRandomness = Mathf.Clamp(emitter.LifespanVariation / emitter.Lifespan, 0f, 1f),
+            LifetimeRandomness = Mathf.Clamp(emitter.LifespanVariation / emitter.Lifespan * share, 0f, 1f),
             ScaleMin = peak,
             ScaleMax = peak,
-            ScaleCurve = new CurveTexture { Curve = SizeCurve(emitter, peak) },
-            ColorRamp = new GradientTexture1D { Gradient = ColorRamp(emitter) },
+            ScaleCurve = new CurveTexture { Curve = SizeCurve(emitter, peak, share) },
+            ColorRamp = new GradientTexture1D { Gradient = ColorRamp(emitter, share) },
 
             // The shader takes this as which tile of the texture a particle shows.
             AnimOffsetMin = 0f,
@@ -100,26 +116,42 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
         return process;
     }
 
-    private static Curve SizeCurve(M2Emitter emitter, float peak)
+    private static Curve SizeCurve(M2Emitter emitter, float peak, float share)
     {
         var curve = new Curve();
         curve.AddPoint(new Vector2(0f, emitter.Sizes[0] / peak));
-        curve.AddPoint(new Vector2(emitter.Mid, emitter.Sizes[1] / peak));
-        curve.AddPoint(new Vector2(1f, emitter.Sizes[2] / peak));
+        curve.AddPoint(new Vector2(emitter.Mid * share, emitter.Sizes[1] / peak));
+        curve.AddPoint(new Vector2(share, emitter.Sizes[2] / peak));
+        if (share < 1f)
+        {
+            curve.AddPoint(new Vector2(1f, emitter.Sizes[2] / peak));
+        }
+
         return curve;
     }
 
-    private static Gradient ColorRamp(M2Emitter emitter) => new()
+    /// <summary>Past its share of the cycle, a particle can't be seen.</summary>
+    private static Gradient ColorRamp(M2Emitter emitter, float share)
     {
-        Offsets = [0f, emitter.Mid, 1f],
-        Colors = emitter.Colors.Select(c => new Color(c.X, c.Y, c.Z, c.W)).ToArray(),
-    };
+        var colors = emitter.Colors.Select(c => new Color(c.X, c.Y, c.Z, c.W)).ToList();
+        var offsets = new System.Collections.Generic.List<float> { 0f, emitter.Mid * share, share };
+        if (share < 1f)
+        {
+            var last = colors[^1];
+            offsets.Add(Mathf.Min(share + HiddenEdge, 1f));
+            colors.Add(last with { A = 0f });
+            offsets.Add(1f);
+            colors.Add(last with { A = 0f });
+        }
 
-    private ShaderMaterial? MaterialFor(M2Emitter emitter)
+        return new Gradient { Offsets = offsets.ToArray(), Colors = colors.ToArray() };
+    }
+
+    private ShaderMaterial? MaterialFor(M2Emitter emitter, float share)
     {
         var keyed = emitter.Blend == BlendAlphaKey;
         var cells = string.Join(',', emitter.CellTimes.Concat(emitter.CellValues));
-        return _materials.GetOrAdd((emitter.Texture, keyed, emitter.Rows, emitter.Columns, cells), key =>
+        return _materials.GetOrAdd((emitter.Texture, keyed, emitter.Rows, emitter.Columns, cells, emitter.CellTimes.Length > 0 ? share : 1f), key =>
         {
             if (textures(key.Texture) is not { } texture)
             {
@@ -131,6 +163,7 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
             material.SetShaderParameter("rows", key.Rows);
             material.SetShaderParameter("columns", key.Columns);
             material.SetShaderParameter("cell_count", emitter.CellTimes.Length);
+            material.SetShaderParameter("life_share", key.Share);
             material.SetShaderParameter("cell_times", Keys(emitter.CellTimes));
             material.SetShaderParameter("cell_values", Keys(emitter.CellValues));
             return material;

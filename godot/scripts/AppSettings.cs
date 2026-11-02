@@ -81,6 +81,12 @@ public static class AppSettings
         set => WriteMovement("vignette_size", Mathf.Clamp(value, 0f, 1f));
     }
 
+    public static bool Shadows
+    {
+        get => Read(MovementSection, "shadows", true).AsBool();
+        set => WriteMovement("shadows", value);
+    }
+
     private static bool? _namePlates;
 
     /// <summary>Kept in memory because creatures read it every frame.</summary>

@@ -64,7 +64,6 @@ public partial class CreatureNode : Node3D
             Mesh = asset.Mesh,
             Skin = asset.Skeleton.Skin,
             Skeleton = new NodePath(".."),
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
         });
 
         foreach (var item in asset.Items)
@@ -75,7 +74,6 @@ public partial class CreatureNode : Node3D
             {
                 Mesh = item.Mesh,
                 Position = item.Offset,
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             });
         }
 

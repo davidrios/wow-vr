@@ -82,7 +82,6 @@ public partial class TileObjectsNode : Node3D
             {
                 Multimesh = batch.MultiMesh,
                 VisibilityRangeEnd = batch.VisibleRange,
-                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             })));
         }
 
@@ -146,7 +145,6 @@ public partial class TileObjectsNode : Node3D
                         var item = new MeshInstance3D
                         {
                             Mesh = mesh,
-                            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                             VisibilityRangeEnd = group.Indoor ? mesh.GetAabb().Size.Length() + IndoorVisibleMargin : 0f,
                         };
                         node.AddChild(item);

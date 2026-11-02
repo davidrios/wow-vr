@@ -20,6 +20,8 @@ Gotchas:
 
 ## BLP
 
+An uncompressed BLP2 can have an alpha type byte of 2, as `textures\SunGlare.blp` does, with an alpha depth of 136. Its pixels hold their own alpha, so neither matters.
+
 `BlpDecoder.Decode` gives RGBA8 for one mipmap level. Terrain uses `ConvertToBc1` instead, which gives a whole BC1 chain for the GPU:
 
 - A BC2 or BC3 block holds 8 bytes of alpha, then a color block that always has 4 colors. Terrain ignores alpha, so the color block alone makes a BC1 block, with no quality loss.

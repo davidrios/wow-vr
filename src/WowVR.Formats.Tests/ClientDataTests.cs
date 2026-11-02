@@ -37,6 +37,18 @@ public class ClientDataTests(ClientFixture client) : IClassFixture<ClientFixture
         }
     }
 
+    [Theory]
+    [InlineData(@"textures\SunCenter.blp")]
+    [InlineData(@"textures\SunGlare.blp")]
+    [InlineData(@"textures\moon.blp")]
+    [InlineData(@"textures\moonglare.blp")]
+    public void ReadsTheSunAndMoon(string path)
+    {
+        var texture = BlpDecoder.ConvertToGpu(Source.Read(path)!);
+
+        Assert.True(texture.Width > 0 && texture.Height > 0);
+    }
+
     [Fact]
     public void MapTableHasTheContinents()
     {

@@ -88,7 +88,15 @@ public partial class WorldMenu : PanelContainer
 
         var smoothTurn = new CheckButton { Text = "Smooth turning (VR)", ButtonPressed = AppSettings.SmoothTurn };
         smoothTurn.Toggled += on => AppSettings.SmoothTurn = on;
-        rows.AddChild(smoothTurn);
+        smoothTurn.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+
+        // Shares a row, because the wrist menu has no room for another.
+        var shadows = new CheckButton { Text = "Shadows", ButtonPressed = AppSettings.Shadows, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        shadows.Toggled += on => AppSettings.Shadows = on;
+        var graphics = new HBoxContainer();
+        graphics.AddChild(smoothTurn);
+        graphics.AddChild(shadows);
+        rows.AddChild(graphics);
 
         rows.AddChild(new Label { Text = "Comfort vignette size, left is off (VR)" });
         var vignette = new HSlider

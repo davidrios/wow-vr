@@ -12,16 +12,25 @@ uniform vec3 fog_color : source_color;
 uniform vec3 sun_color : source_color;
 uniform vec3 halo_color : source_color;
 uniform vec3 sun_direction = vec3(0.0, 1.0, 0.0);
+uniform vec3 moon_direction = vec3(0.0, -1.0, 0.0);
 // 0 by day, 1 when the stars are fully out.
 uniform float star_brightness = 0.0;
+// The client's own: textures\\SunCenter, SunGlare, moon and moonglare.
+uniform sampler2D sun_texture : source_color, filter_linear, repeat_disable, hint_default_black;
+uniform sampler2D sun_glare_texture : source_color, filter_linear, repeat_disable, hint_default_black;
+uniform sampler2D moon_texture : source_color, filter_linear, repeat_disable, hint_default_black;
+uniform sampler2D moon_glare_texture : source_color, filter_linear, repeat_disable, hint_default_black;
 
 // In degrees above the horizon, as in Noggit's sky dome.
 const float MIDDLE_ANGLE = 30.0;
 const float LOW_ANGLE = 15.0;
 const float ABOVE_HORIZON_ANGLE = 5.0;
 
-const float SUN_SIZE = 0.9994;
-const float SUN_EDGE = 0.9990;
+// Half the width of each quad, as the tangent of its angle. Picked by eye.
+const float SUN_SIZE = 0.06;
+const float SUN_GLARE_SIZE = 0.45;
+const float MOON_SIZE = 0.05;
+const float MOON_GLARE_SIZE = 0.2;
 const float STAR_CELLS = 220.0;
 
 float random(vec3 cell) {
@@ -44,6 +53,23 @@ vec3 sky_gradient(float angle) {
 	return mix(horizon_color, fog_color, clamp(-angle / 10.0, 0.0, 1.0));
 }
 
+// Samples a texture on a quad that always faces the viewer, centered on a direction in the sky.
+vec4 on_quad(sampler2D quad, vec3 eye, vec3 center, float size) {
+	float ahead = dot(eye, center);
+	if (ahead <= 0.0) {
+		return vec4(0.0);
+	}
+
+	vec3 right = normalize(cross(vec3(0.0, 1.0, 0.001), center));
+	vec3 up = cross(center, right);
+	vec2 uv = vec2(dot(eye, right), dot(eye, up)) / ahead / size * 0.5 + vec2(0.5);
+	if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
+		return vec4(0.0);
+	}
+
+	return texture(quad, uv);
+}
+
 void sky() {
 	float angle = degrees(asin(clamp(EYEDIR.y, -1.0, 1.0)));
 	vec3 color = sky_gradient(angle);
@@ -52,13 +78,23 @@ void sky() {
 		float to_sun = dot(EYEDIR, sun_direction);
 		if (sun_direction.y > -0.1) {
 			color += halo_color * 0.35 * pow(max(to_sun, 0.0), 64.0);
-			color = mix(color, sun_color * 2.0, smoothstep(SUN_EDGE, SUN_SIZE, to_sun));
+			vec4 glare = on_quad(sun_glare_texture, EYEDIR, sun_direction, SUN_GLARE_SIZE);
+			color += glare.rgb * glare.a * sun_color;
+			vec4 center = on_quad(sun_texture, EYEDIR, sun_direction, SUN_SIZE);
+			color += center.rgb * center.a * 2.0;
 		}
 
 		if (star_brightness > 0.0 && EYEDIR.y > 0.0) {
 			vec3 cell = floor(EYEDIR * STAR_CELLS);
 			float star = step(0.9975, random(cell));
 			color += vec3(star * random(cell + 1.0) * star_brightness);
+		}
+
+		if (moon_direction.y > -0.1) {
+			vec4 glare = on_quad(moon_glare_texture, EYEDIR, moon_direction, MOON_GLARE_SIZE);
+			color += glare.rgb * glare.a * 0.15;
+			vec4 moon = on_quad(moon_texture, EYEDIR, moon_direction, MOON_SIZE);
+			color = mix(color, moon.rgb, moon.a);
 		}
 	}
 

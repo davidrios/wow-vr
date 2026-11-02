@@ -42,6 +42,17 @@ public partial class SkyController : Node
 
     private const string TimeArgument = "--time=";
 
+    /// <summary>Yards from the camera that shadows reach, which is most of what they cost.</summary>
+    private const float ShadowDistance = 150f;
+
+    /// <summary>The tables' ambient is blue, so full shadow turns the ground blue. Picked by eye.</summary>
+    private const float ShadowOpacity = 0.75f;
+
+    private const string SunTexture = @"textures\SunCenter.blp";
+    private const string SunGlareTexture = @"textures\SunGlare.blp";
+    private const string MoonTexture = @"textures\moon.blp";
+    private const string MoonGlareTexture = @"textures\moonglare.blp";
+
     private static readonly Shader SkyShader = GD.Load<Shader>("res://shaders/sky.gdshader");
 
     private readonly SkyState _state = new();
@@ -75,6 +86,12 @@ public partial class SkyController : Node
         _sun = sun;
         _mapId = mapId;
 
+        _sun.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel2Splits;
+        _sun.DirectionalShadowMaxDistance = ShadowDistance;
+        _sun.ShadowOpacity = ShadowOpacity;
+        _sun.ShadowEnabled = AppSettings.Shadows;
+        AppSettings.Changed += () => _sun.ShadowEnabled = AppSettings.Shadows;
+
         liquids.MaterialCreated += (material, kind) => _newLiquids.Enqueue((material, kind));
 
         // Ambient comes from the tables, and no reflections means the sky's cubemap costs little.
@@ -101,6 +118,15 @@ public partial class SkyController : Node
                 TimePasses = false;
             }
         }
+    }
+
+    /// <summary>Sets the client's sun and moon on the sky.</summary>
+    public void SetCelestialTextures(ModelLibrary textures)
+    {
+        _skyMaterial.SetShaderParameter("sun_texture", textures.GetTexture(SunTexture));
+        _skyMaterial.SetShaderParameter("sun_glare_texture", textures.GetTexture(SunGlareTexture));
+        _skyMaterial.SetShaderParameter("moon_texture", textures.GetTexture(MoonTexture));
+        _skyMaterial.SetShaderParameter("moon_glare_texture", textures.GetTexture(MoonGlareTexture));
     }
 
     public override void _Process(double delta)
@@ -167,6 +193,7 @@ public partial class SkyController : Node
         _skyMaterial.SetShaderParameter("sun_color", ToColor(SkyBand.Sun));
         _skyMaterial.SetShaderParameter("halo_color", ToColor(SkyBand.SunHalo));
         _skyMaterial.SetShaderParameter("sun_direction", sunDirection);
+        _skyMaterial.SetShaderParameter("moon_direction", new Vector3(-sunDirection.X, -sunDirection.Y, sunDirection.Z));
         _skyMaterial.SetShaderParameter("star_brightness", Mathf.Clamp(sunDirection.Y / FullStarsSunHeight, 0f, 1f));
 
         foreach (var (material, kind) in _liquids)

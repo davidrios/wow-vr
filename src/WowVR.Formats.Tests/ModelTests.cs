@@ -118,6 +118,16 @@ public class WmoPortalTests
     }
 
     [Fact]
+    public void JustAboveARoomsBoxShowsBothTheRoomAndTheOutside()
+    {
+        var camera = new Vector3(15, 0, 6.5f);
+
+        var visible = Compute(House(), camera, p => (p.Y - camera.Y, p.Z - camera.Z, camera.X - p.X));
+
+        Assert.Equal([true, true, false], visible);
+    }
+
+    [Fact]
     public void AWmoWithNoOutsideShowsEverythingFromOutside()
     {
         var portals = new WmoPortals([Interior], [(Vector3.Zero, Vector3.One)], [], [], []);

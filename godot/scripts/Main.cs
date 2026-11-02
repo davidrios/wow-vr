@@ -110,6 +110,7 @@ public partial class Main : Node3D
 
             AddChild(tiles);
             tiles.Start(source, map, liquids, player, start.X, start.Z);
+            sky.SetCelestialTextures(tiles.Models);
 
             var ambience = new ZoneAmbience { Name = "ZoneAmbience" };
             AddChild(ambience);

@@ -15,6 +15,13 @@ public sealed class WmoPortals
     private const float InsideMargin = 0.5f;
     private const float PlaneMargin = 1f;
 
+    /// <summary>
+    /// Within this of an indoor group's box, the camera may be in the gaps between rooms that
+    /// no box covers, where the outer walls can't be seen from inside. So that group and the
+    /// outside both start, which shows too much rather than leaving holes.
+    /// </summary>
+    private const float NearMargin = 2f;
+
     /// <summary>How far past the screen's edge counts, as a share of it, for the frame's lag and a headset's other eye.</summary>
     private const float ScreenMargin = 0.2f;
     private const float NearClip = 0.05f;
@@ -96,10 +103,21 @@ public sealed class WmoPortals
         var inside = false;
         for (var i = 0; i < _bounds.Length; i++)
         {
-            if (_interior[i] && Contains(_bounds[i], camera))
+            if (_interior[i] && Contains(_bounds[i], camera, InsideMargin))
             {
                 inside = true;
                 _stack.Push((i, Screen));
+            }
+        }
+
+        if (!inside)
+        {
+            for (var i = 0; i < _bounds.Length; i++)
+            {
+                if (_interior[i] && Contains(_bounds[i], camera, NearMargin))
+                {
+                    _stack.Push((i, Screen));
+                }
             }
         }
 
@@ -148,9 +166,9 @@ public sealed class WmoPortals
         }
     }
 
-    private static bool Contains(in (Vector3 Min, Vector3 Max) box, Vector3 point) =>
-        point.X >= box.Min.X - InsideMargin && point.Y >= box.Min.Y - InsideMargin && point.Z >= box.Min.Z - InsideMargin
-        && point.X <= box.Max.X + InsideMargin && point.Y <= box.Max.Y + InsideMargin && point.Z <= box.Max.Z + InsideMargin;
+    private static bool Contains(in (Vector3 Min, Vector3 Max) box, Vector3 point, float margin) =>
+        point.X >= box.Min.X - margin && point.Y >= box.Min.Y - margin && point.Z >= box.Min.Z - margin
+        && point.X <= box.Max.X + margin && point.Y <= box.Max.Y + margin && point.Z <= box.Max.Z + margin;
 
     /// <summary>The part of the screen a portal covers. One crossing the camera's plane could cover anything, and one wholly behind it nothing.</summary>
     private static Rect Project(Vector3[] corners, Func<Vector3, (float X, float Y, float W)> toClip)

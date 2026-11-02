@@ -701,7 +701,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         return result;
     }
 
-    private ImageTexture? GetTexture(string path) => _textures.GetOrAdd(path, LoadTexture);
+    public ImageTexture? GetTexture(string path) => _textures.GetOrAdd(path, LoadTexture);
 
     private ImageTexture? LoadTexture(string path)
     {

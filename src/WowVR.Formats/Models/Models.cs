@@ -134,6 +134,8 @@ public sealed class M2Model
 {
     public required IReadOnlyList<ModelSurface> Surfaces { get; init; }
 
+    public IReadOnlyList<M2Emitter> Emitters { get; init; } = [];
+
     /// <summary>The distance of the furthest vertex from the model's origin.</summary>
     public required float Radius { get; init; }
 
@@ -181,6 +183,7 @@ public sealed class M2Model
             {
                 Surfaces = MeshReader.Surfaces(mesh, MaterialOf, ModelNativeMethods.M2TexCoords2(model)),
                 Radius = ModelNativeMethods.M2BoundingRadius(model),
+                Emitters = M2Emitter.ReadAll(model),
                 CollisionFaces = ReadCollision(model),
             };
         }

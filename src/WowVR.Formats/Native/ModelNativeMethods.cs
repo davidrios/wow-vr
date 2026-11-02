@@ -1,3 +1,4 @@
+using WowVR.Formats.Models;
 using System.Runtime.InteropServices;
 
 namespace WowVR.Formats.Native;
@@ -231,6 +232,12 @@ internal static unsafe partial class ModelNativeMethods
 
     [LibraryImport(Library, EntryPoint = "wa_m2_global_sequences")]
     internal static partial void M2GlobalSequences(nint model, out uint* lengths, out uint count);
+
+    [LibraryImport(Library, EntryPoint = "wa_m2_emitter_count")]
+    internal static partial uint M2EmitterCount(nint model);
+
+    [LibraryImport(Library, EntryPoint = "wa_m2_emitter")]
+    internal static partial WaStatus M2Emitter(nint model, uint index, out WaM2Emitter emitter);
 
     [LibraryImport(Library, EntryPoint = "wa_m2_attachment_count")]
     internal static partial uint M2AttachmentCount(nint model);

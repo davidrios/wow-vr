@@ -92,6 +92,17 @@ public partial class CreatureNode : Node3D
             };
             attachment.AddChild(itemMesh);
             _meshes.Add(itemMesh);
+            foreach (var particle in item.Particles)
+            {
+                itemMesh.AddChild(particle.NewNode(particle.Position));
+            }
+        }
+
+        foreach (var particle in asset.Particles)
+        {
+            var attachment = new BoneAttachment3D { BoneName = particle.BoneName };
+            Skeleton.AddChild(attachment);
+            attachment.AddChild(particle.Particle.NewNode(particle.Offset));
         }
 
         if (asset.Skeleton.Billboards.Length > 0)

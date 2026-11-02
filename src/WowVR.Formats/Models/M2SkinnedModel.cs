@@ -108,6 +108,8 @@ public sealed class M2SkinnedModel
     public required M2Bone[] Bones { get; init; }
     public required IReadOnlyList<M2Sequence> Sequences { get; init; }
     public required IReadOnlyList<M2Attachment> Attachments { get; init; }
+
+    public IReadOnlyList<M2Emitter> Emitters { get; init; } = [];
     public required IReadOnlyList<M2EventInfo> Events { get; init; }
 
     /// <summary>Each global sequence's length in seconds. These run on their own clock, whatever else plays.</summary>
@@ -211,6 +213,7 @@ public sealed class M2SkinnedModel
                 Bones = bones,
                 Sequences = sequences,
                 Attachments = attachments,
+                Emitters = M2Emitter.ReadAll(model),
                 Events = events,
                 GlobalSequences = globalSequences,
                 Clips = clips,

@@ -37,6 +37,11 @@ public partial class TileObjectsNode : Node3D
     private const float DoodadCollisionKeepRange = 40f;
     private const int MaxNewDoodadBodiesPerFrame = 2;
 
+    /// <summary>A doodad's particles run this far away, in yards, and each one costs the GPU, so not all of them do.</summary>
+    private const float ParticleRange = 80f;
+    private const float ParticleKeepRange = 100f;
+    private const int MaxNewParticlesPerFrame = 2;
+
     /// <summary>The group the check finds doodad bodies by.</summary>
     public const string DoodadCollisionGroup = "doodad_collision";
 
@@ -60,6 +65,7 @@ public partial class TileObjectsNode : Node3D
 
     private readonly List<DoodadCell> _doodadCells = [];
     private readonly Dictionary<(DoodadCell Cell, int Copy), StaticBody3D> _doodadBodies = [];
+    private readonly Dictionary<(DoodadCell Cell, int Copy), Node3D> _doodadParticles = [];
 
     /// <summary>Something waiting to enter the scene, at a position relative to this node.</summary>
     private readonly record struct PendingItem(Vector3 Center, Action Add);
@@ -305,6 +311,51 @@ public partial class TileObjectsNode : Node3D
         using (FrameProbe.Time("doodad collision"))
         {
             UpdateDoodadCollision();
+        }
+
+        using (FrameProbe.Time("doodad particles"))
+        {
+            UpdateDoodadParticles();
+        }
+    }
+
+    private void UpdateDoodadParticles()
+    {
+        var local = ToLocal(Player.Feet);
+        var added = 0;
+        foreach (var cell in _doodadCells)
+        {
+            if (cell.Model.Particles.Length == 0 || added == MaxNewParticlesPerFrame || !cell.Bounds.Grow(ParticleRange).HasPoint(local))
+            {
+                continue;
+            }
+
+            for (var copy = 0; copy < cell.Transforms.Length && added < MaxNewParticlesPerFrame; copy++)
+            {
+                var transform = cell.Transforms[copy];
+                if (transform.Origin.DistanceTo(local) < ParticleRange && !_doodadParticles.ContainsKey((cell, copy)))
+                {
+                    var holder = new Node3D { Transform = transform };
+                    foreach (var particle in cell.Model.Particles)
+                    {
+                        holder.AddChild(particle.NewNode(particle.Position));
+                    }
+
+                    AddChild(holder);
+                    _doodadParticles[(cell, copy)] = holder;
+                    added++;
+                    _collisionWaiting |= added == MaxNewParticlesPerFrame;
+                }
+            }
+        }
+
+        foreach (var (key, holder) in _doodadParticles)
+        {
+            if (key.Cell.Transforms[key.Copy].Origin.DistanceTo(local) > ParticleKeepRange)
+            {
+                holder.QueueFree();
+                _doodadParticles.Remove(key);
+            }
         }
     }
 

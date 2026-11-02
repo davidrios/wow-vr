@@ -12,7 +12,10 @@ using Godot;
 namespace WowVR.Converters;
 
 /// <summary>A worn item's mesh and where it goes, in its bone's space.</summary>
-public sealed record CreatureItemAsset(string BoneName, Vector3 Offset, ArrayMesh Mesh);
+public sealed record CreatureItemAsset(string BoneName, Vector3 Offset, ArrayMesh Mesh, ParticleAsset[] Particles);
+
+/// <summary>An emitter on a bone, at a position in that bone's space.</summary>
+public sealed record CreatureParticle(string BoneName, Vector3 Offset, ParticleAsset Particle);
 
 /// <summary>A moment in a clip that makes a sound.</summary>
 public readonly record struct ClipSoundEvent(float Time, CreatureSoundKind Kind, int Index);
@@ -39,7 +42,7 @@ public sealed class CreatureSkeletonAsset
 }
 
 /// <summary>A display ready to place. Each placed creature gets its own skeleton.</summary>
-public sealed record CreatureAsset(CreatureSkeletonAsset Skeleton, ArrayMesh Mesh, float Scale, IReadOnlyList<CreatureItemAsset> Items, CreatureSoundSet? Sounds);
+public sealed record CreatureAsset(CreatureSkeletonAsset Skeleton, ArrayMesh Mesh, float Scale, IReadOnlyList<CreatureItemAsset> Items, CreatureSoundSet? Sounds, IReadOnlyList<CreatureParticle> Particles);
 
 /// <summary>Builds creatures off the main thread, once per display and skeleton per model.</summary>
 public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable displays, ModelLibrary models)
@@ -54,7 +57,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
     private const int MaxIdleClips = 4;
 
     private readonly ConcurrentDictionary<string, (M2SkinnedModel Data, CreatureSkeletonAsset Skeleton)?> _models = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<(string Model, string? Texture), ArrayMesh?> _items = new();
+    private readonly ConcurrentDictionary<(string Model, string? Texture), (ArrayMesh Mesh, ParticleAsset[] Particles)?> _items = new();
 
     /// <summary>Null for a display that's unknown or can't be read.</summary>
     public CreatureAsset? Build(int displayId, int[] weapons)
@@ -88,11 +91,15 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                     && _items.GetOrAdd((item.Model, item.Texture), LoadItem) is { } itemMesh)
                 {
                     var offset = attachment.Position - model.Data.Bones[attachment.Bone].Pivot;
-                    items.Add(new CreatureItemAsset(BoneName(attachment.Bone), new Vector3(offset.X, offset.Y, offset.Z), itemMesh));
+                    items.Add(new CreatureItemAsset(BoneName(attachment.Bone), new Vector3(offset.X, offset.Y, offset.Z), itemMesh.Mesh, itemMesh.Particles));
                 }
             }
 
-            return new CreatureAsset(model.Skeleton, mesh, look.Scale, items, look.Sounds);
+            var particles = models.Particles.Build(model.Data.Emitters)
+                .Where(p => p.Bone >= 0 && p.Bone < model.Data.Bones.Length)
+                .Select(p => new CreatureParticle(BoneName(p.Bone), p.Position - ToGodot(model.Data.Bones[p.Bone].Pivot), p))
+                .ToList();
+            return new CreatureAsset(model.Skeleton, mesh, look.Scale, items, look.Sounds, particles);
         }
         catch (WowAlchemyException e)
         {
@@ -353,7 +360,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         }
     }
 
-    private ArrayMesh? LoadItem((string Model, string? Texture) item)
+    private (ArrayMesh Mesh, ParticleAsset[] Particles)? LoadItem((string Model, string? Texture) item)
     {
         try
         {
@@ -365,14 +372,18 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                 return null;
             }
 
-            var data = M2SkinnedModel.Parse(m2, skin, _ => false, _ => null);
+            // An item has no skeleton, so what moves in it, like a torch's glow, is baked for its vertex shader.
+            var data = M2SkinnedModel.Parse(m2, skin, s => s.Id == M2SequenceIds.Stand && s.Variation == 0, s => source.Read(s.AnimPath(item.Model)));
+            var bake = data.Clips.Count > 0 ? M2BoneBake.TryCreate(data, data.Clips[0]) : null;
             var textures = new Dictionary<int, string>();
             if (item.Texture is not null)
             {
                 textures[M2TextureTypes.Item] = item.Texture;
             }
 
-            return BuildMesh(data, new CreatureLook(item.Model, 1f, textures, null, []), skinned: false, BoundsOfVertices(data));
+            return BuildMesh(data, new CreatureLook(item.Model, 1f, textures, null, []), skinned: false, BoundsOfVertices(data), bake) is { } mesh
+                ? (mesh, models.Particles.Build(data.Emitters))
+                : null;
         }
         catch (WowAlchemyException e)
         {
@@ -381,7 +392,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         }
     }
 
-    private ArrayMesh? BuildMesh(M2SkinnedModel data, CreatureLook look, bool skinned, Aabb bounds)
+    private ArrayMesh? BuildMesh(M2SkinnedModel data, CreatureLook look, bool skinned, Aabb bounds, M2BoneBake? bake = null)
     {
         var byMaterial = new Dictionary<ModelMaterial, List<int[]>>();
         foreach (var batch in data.Batches)
@@ -403,7 +414,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             
             // A creature's skeleton turns its own billboards, and an item has no skeleton to do it.
             var billboard = !skinned && batch.Indices.Any(v => ModelLibrary.VertexBillboard(data, v).Kind != M2BillboardKind.None);
-            var material = new ModelMaterial(texture, batch.Blend, batch.Unlit, batch.TwoSided, batch.Repeat, batch.Effect, texture2, Billboard: billboard);
+            var material = new ModelMaterial(texture, batch.Blend, batch.Unlit, batch.TwoSided, batch.Repeat, batch.Effect, texture2, bake, billboard);
             if (!byMaterial.TryGetValue(material, out var parts))
             {
                 byMaterial[material] = parts = [];
@@ -422,7 +433,14 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             }
 
             mesh ??= new ArrayMesh { CustomAabb = bounds };
-            AddSurface(mesh, data, parts, material, remap, skinned, key.Effect?.UsesSecondUv == true, key.Billboard);
+            if (bake is not null)
+            {
+                ModelLibrary.AddBakedSurface(mesh, data, bake, parts, material, key.Effect?.UsesSecondUv == true, key.Billboard);
+            }
+            else
+            {
+                AddSurface(mesh, data, parts, material, remap, skinned, key.Effect?.UsesSecondUv == true, key.Billboard);
+            }
         }
 
         return mesh;

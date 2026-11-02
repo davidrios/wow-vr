@@ -14,6 +14,9 @@ namespace WowVR.Converters;
 /// <summary>An M2 ready to draw.</summary>
 public sealed record M2Asset(ArrayMesh Mesh, float Radius, Vector3[] CollisionFaces, ModelMaterial[] Materials)
 {
+    /// <summary>Its particle emitters.</summary>
+    public ParticleAsset[] Particles { get; init; } = [];
+
     /// <summary>The same mesh for copies inside buildings, made when one first needs it.</summary>
     public ArrayMesh? InteriorMesh { get; set; }
 
@@ -172,6 +175,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
     private readonly List<(ShaderMaterial Material, M2Effect Effect, int Generation)> _animated = [];
     private readonly ConcurrentQueue<(ShaderMaterial Material, M2Effect Effect, int Generation)> _newAnimated = new();
     private int _generation;
+    private ParticleLibrary? _particles;
     private int _prunedGeneration;
 
     /// <summary>Models and textures stay alive in the nodes using them, so this only stops a long trip collecting them all.</summary>
@@ -237,6 +241,8 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         return _materials.GetOrAdd((key, false, true), k => BuildEffectMaterial(k.Material, k.Material.Effect!, indoor: false, creature: true));
     }
 
+    public ParticleLibrary Particles => _particles ??= new ParticleLibrary(GetTexture);
+
     public M2Asset? GetM2(string path) => _m2s.GetOrAdd(path, LoadM2);
 
     public WmoAsset? GetWmo(string path) => _wmos.GetOrAdd(path, LoadWmo);
@@ -260,7 +266,9 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
 
             var model = M2Model.Parse(m2, skin);
             var used = new List<ModelMaterial>();
-            return BuildMesh(model.Surfaces, indoor: false, used) is { } mesh ? new M2Asset(mesh, model.Radius, model.CollisionFaces.Select(ToGodot).ToArray(), used.ToArray()) : null;
+            return BuildMesh(model.Surfaces, indoor: false, used) is { } mesh
+                ? new M2Asset(mesh, model.Radius, model.CollisionFaces.Select(ToGodot).ToArray(), used.ToArray()) { Particles = Particles.Build(model.Emitters) }
+                : null;
         }
         catch (WowAlchemyException e)
         {
@@ -329,10 +337,10 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         }
 
         var faces = M2Model.Parse(m2, skin).CollisionFaces.Select(ToGodot).ToArray();
-        return new M2Asset(mesh, Mathf.Max(bounds.Size.Length() / 2f, 0.1f), faces, used.ToArray());
+        return new M2Asset(mesh, Mathf.Max(bounds.Size.Length() / 2f, 0.1f), faces, used.ToArray()) { Particles = Particles.Build(data.Emitters) };
     }
 
-    private static void AddBakedSurface(ArrayMesh mesh, M2SkinnedModel data, M2BoneBake bake, List<int[]> parts, Material material, bool secondUv, bool billboard)
+    public static void AddBakedSurface(ArrayMesh mesh, M2SkinnedModel data, M2BoneBake bake, List<int[]> parts, Material material, bool secondUv, bool billboard)
     {
         var remap = new int[data.Positions.Length];
         Array.Fill(remap, -1);

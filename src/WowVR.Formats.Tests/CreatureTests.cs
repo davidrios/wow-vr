@@ -6,6 +6,36 @@ using Xunit;
 
 namespace WowVR.Formats.Tests;
 
+public class ParticleEmitterTests
+{
+    [Fact]
+    public void AFiresEmitterHasSensibleSettings()
+    {
+        var client = Environment.GetEnvironmentVariable("WOWVR_CLIENT_PATH");
+        if (string.IsNullOrWhiteSpace(client))
+        {
+            return;
+        }
+
+        using var source = WowVR.Formats.Assets.MpqAssetSource.Open(client);
+        const int CozyFire = 199;
+        var path = WowVR.Formats.World.GameObjectDisplayTable.Read(source).ModelOf(CozyFire)!;
+        var model = WowVR.Formats.Models.M2Model.Parse(source.Read(path)!, source.Read(WowVR.Formats.Models.M2Model.SkinPath(path))!);
+
+        Assert.NotEmpty(model.Emitters);
+        Assert.All(model.Emitters, e =>
+        {
+            Console.WriteLine($"{path}: {e.Texture} blend {e.Blend} rate {e.Rate} life {e.Lifespan} speed {e.Speed} gravity {e.Gravity} sizes {string.Join(',', e.Sizes)} tiles {e.Rows}x{e.Columns} at {e.Position}");
+            Assert.NotNull(source.Read(e.Texture));
+            Assert.InRange(e.Lifespan, 0.01f, 60f);
+            Assert.InRange(e.Rate, 0.01f, 5000f);
+            Assert.InRange(e.Sizes.Max(), 0.001f, 100f);
+            Assert.InRange(e.Mid, 0f, 1f);
+            Assert.All(e.Colors, c => Assert.InRange(c.W, 0f, 1.01f));
+        });
+    }
+}
+
 public class GameObjectPlacementTests
 {
     private static GameObjectSpawn Spawn(float orientation, params float[] rotation) => new()

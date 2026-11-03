@@ -86,6 +86,7 @@ public partial class TileManager : Node3D
     private (int X, int Y) _center;
     private bool _centerKnown;
     private bool _warped;
+    private float? _warpHeight;
     private double _materialClock;
     private bool _checkerboard = Array.IndexOf(OS.GetCmdlineUserArgs(), "--checkerboard") >= 0;
     private bool _swapVertexColors = Array.IndexOf(OS.GetCmdlineUserArgs(), "--swap-vertex-colors") >= 0;
@@ -196,7 +197,7 @@ public partial class TileManager : Node3D
         }
 
         _warped = false;
-        _guard.PlaceOnSurfaceWhenLoaded();
+        _guard.PlaceOnSurfaceWhenLoaded(_warpHeight);
         return true;
     }
 
@@ -303,11 +304,22 @@ public partial class TileManager : Node3D
     /// </summary>
     public bool CollisionSettled => _objects.Values.All(o => o.CollisionSettled);
 
-    /// <summary>Waits for the ground, then stands on it.</summary>
-    public void PlacePlayerOnSurface()
+    /// <summary>Waits for the ground, then stands on it: the highest, or the floor at about <paramref name="nearHeight"/>.</summary>
+    public void PlacePlayerOnSurface(float? nearHeight = null)
     {
         _warped = true;
-        _guard.PlaceOnSurfaceWhenLoaded();
+        _warpHeight = nearHeight;
+        _guard.PlaceOnSurfaceWhenLoaded(nearHeight);
+    }
+
+    /// <summary>The map and the WoW position of the player's feet, as <c>--start=</c> takes them.</summary>
+    public (string Map, double WowX, double WowY, float WowZ) PlayerLocation
+    {
+        get
+        {
+            var feet = _player.Feet;
+            return (_map.Directory, -(feet.Z + _originZ), -(feet.X + _originX), feet.Y);
+        }
     }
 
     private (int X, int Z) ChunkAt(Vector3 local) =>

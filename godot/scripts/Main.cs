@@ -53,16 +53,35 @@ public partial class Main : Node3D
     /// <summary>Null on tours, whose frame times need the world streaming in as it does when walking.</summary>
     private LoadingScreen? _loading;
 
+    /// <summary>How the player is put at the start: on the highest surface, flying where they are, or on the floor at about their height.</summary>
+    private enum Placement
+    {
+        Surface,
+        Flying,
+        NearHeight,
+    }
+
+    /// <summary>How often the place the player is in is saved, in seconds. It's saved on quitting too.</summary>
+    private const double LastPlaceSeconds = 5;
+
+    /// <summary>Checks, tours and benchmarks start where they say, or in Goldshire, and leave no place behind.</summary>
+    private static readonly string[] TestArguments = ["--tour", "-check", BenchArgument, ScreenshotArgument, SampleSpawnsArgument, HoldLoadingArgument];
+
+    private static bool IsTestRun => OS.GetCmdlineUserArgs().Any(a => TestArguments.Any(a.Contains));
+
+    private TileManager? _tiles;
+    private double _sinceLastPlace;
+
     /// <summary>
-    /// Standing in Goldshire, unless <c>--start=map,x,y,z[,pitch[,yaw]]</c> gives another map,
-    /// WoW position and view in degrees, which starts flying so the view stays put. Yaw turns
-    /// left from north.
+    /// <c>--start=map,x,y,z[,pitch[,yaw]]</c> gives a map, WoW position and view in degrees, and
+    /// starts flying so the view stays put. Yaw turns left from north. Without it, the player starts
+    /// where they last were, or in Goldshire the first time and in checks.
     /// </summary>
-    private static (string Map, System.Numerics.Vector3 Position, float Pitch, float Yaw, bool Explicit) ReadStart()
+    private static (string Map, System.Numerics.Vector3 Position, float Pitch, float Yaw, Placement Placement) ReadStart()
     {
         if (_nextStart is { } landmark)
         {
-            return (landmark.Map, new System.Numerics.Vector3(landmark.WowX, landmark.WowY, 0f), 0f, 0f, false);
+            return (landmark.Map, new System.Numerics.Vector3(landmark.WowX, landmark.WowY, 0f), 0f, 0f, Placement.Surface);
         }
 
         foreach (var argument in OS.GetCmdlineUserArgs())
@@ -76,11 +95,40 @@ public partial class Main : Node3D
                     float.Parse(parts[3], CultureInfo.InvariantCulture)),
                     parts.Length > 4 ? float.Parse(parts[4], CultureInfo.InvariantCulture) : 0f,
                     parts.Length > 5 ? float.Parse(parts[5], CultureInfo.InvariantCulture) : 0f,
-                    true);
+                    Placement.Flying);
             }
         }
 
-        return ("Azeroth", new System.Numerics.Vector3(-9464f, 62f, 57f), 0f, 0f, false);
+        if (!IsTestRun && AppSettings.LastPlace is { } last)
+        {
+            return (last.Map, new System.Numerics.Vector3((float)last.WowX, (float)last.WowY, last.WowZ), 0f, last.Yaw, last.Flying ? Placement.Flying : Placement.NearHeight);
+        }
+
+        return ("Azeroth", new System.Numerics.Vector3(-9464f, 62f, 57f), 0f, 0f, Placement.Surface);
+    }
+
+    public override void _Process(double delta)
+    {
+        _sinceLastPlace += delta;
+        if (_sinceLastPlace >= LastPlaceSeconds)
+        {
+            _sinceLastPlace = 0;
+            SaveLastPlace();
+        }
+    }
+
+    /// <summary>Remembers where the player is, once they're standing or flying somewhere rather than being placed.</summary>
+    private void SaveLastPlace()
+    {
+        if (_tiles is null || IsTestRun || !IsInstanceValid(_tiles) || !_player.IsInsideTree() || _tiles.PlacingPlayer)
+        {
+            return;
+        }
+
+        var player = (IPlayer)_player;
+        var (map, x, y, z) = _tiles.PlayerLocation;
+        var yaw = _player is DesktopPlayer ? _player.RotationDegrees.Y : 0f;
+        AppSettings.LastPlace = new LastPlace(map, Math.Round(x, 2), Math.Round(y, 2), MathF.Round(z, 2), MathF.Round(yaw, 1), player.Flying);
     }
 
     public override void _Ready()
@@ -112,6 +160,15 @@ public partial class Main : Node3D
 
     public override void _ExitTree() => AppSettings.Changed -= ApplyRenderScale;
 
+    public override void _Notification(int what)
+    {
+        // Leaving the tree is too late: the player has left it first, and has no position by then.
+        if (what == NotificationWMCloseRequest)
+        {
+            SaveLastPlace();
+        }
+    }
+
     /// <summary>
     /// Draws the world at less than the screen's resolution, which only the GPU feels. Desktop
     /// upscales with FSR. VR scales each eye bilinearly: with no anti-aliasing, FSR's sharpening
@@ -130,7 +187,7 @@ public partial class Main : Node3D
     {
         try
         {
-            var (startMap, startPosition, startPitch, startYaw, explicitStart) = ReadStart();
+            var (startMap, startPosition, startPitch, startYaw, placement) = ReadStart();
             var opening = await Task.Run(() =>
             {
                 var opened = _openSource ??= MpqAssetSource.Open(clientPath);
@@ -169,6 +226,7 @@ public partial class Main : Node3D
             sky.Start(lights, tiles, GetNode<WorldEnvironment>("WorldEnvironment").Environment, GetNode<DirectionalLight3D>("Sun"), mapId, liquids);
 
             AddChild(tiles);
+            _tiles = tiles;
             tiles.Start(source, map, liquids, player, start.X, start.Z, ChooseGameObjectSource(OS.GetCmdlineUserArgs(), mapId));
             sky.SetCelestialTextures(tiles.Models);
 
@@ -204,13 +262,13 @@ public partial class Main : Node3D
 
             var walkTour = Array.IndexOf(arguments, WalkTourArgument) >= 0;
             var flyTour = Array.IndexOf(arguments, TourArgument) >= 0;
-            if (explicitStart || flyTour)
+            if (placement == Placement.Flying || flyTour)
             {
                 player.Flying = true;
             }
             else
             {
-                tiles.PlacePlayerOnSurface();
+                tiles.PlacePlayerOnSurface(placement == Placement.NearHeight ? start.Y : null);
             }
 
             if (Array.IndexOf(arguments, ContinentCheckArgument) >= 0)
@@ -338,6 +396,7 @@ public partial class Main : Node3D
     /// <summary>Another map needs other tiles, sky and spawns throughout, so the whole world reloads.</summary>
     private void TravelTo(Continent continent)
     {
+        SaveLastPlace();
         _nextStart = Landmarks.On(continent.Map).First();
         BehindLoadingScreen(continent.Name, () => GetTree().CallDeferred(SceneTree.MethodName.ReloadCurrentScene));
     }

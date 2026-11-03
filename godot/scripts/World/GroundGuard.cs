@@ -12,6 +12,9 @@ public partial class GroundGuard : Node
     private const float RayHeight = 6000f;
     private const float StandClearance = 0.1f;
 
+    /// <summary>How far above a remembered height to look for its floor, in yards: about a head's height, so a ceiling isn't taken for it.</summary>
+    private const float FloorSearchAbove = 1.5f;
+
     /// <summary>New bodies take a physics step or two to be found by rays.</summary>
     private const int TicksBeforeActing = 5;
 
@@ -20,16 +23,21 @@ public partial class GroundGuard : Node
 
     private Vector3? _lastGround;
     private bool _placePending;
+    private float? _placeFrom;
     private int _readyTicks;
     private int _noFloorTicks;
 
     /// <summary>A placement is still waiting for the ground to load.</summary>
     public bool Placing => _placePending;
 
-    /// <summary>Puts the player on the surface once it has loaded.</summary>
-    public void PlaceOnSurfaceWhenLoaded()
+    /// <summary>
+    /// Puts the player on the surface once it has loaded: the highest one, or with
+    /// <paramref name="nearHeight"/>, the floor at about that height, which can be inside a building.
+    /// </summary>
+    public void PlaceOnSurfaceWhenLoaded(float? nearHeight = null)
     {
         _placePending = true;
+        _placeFrom = nearHeight;
         _readyTicks = 0;
         _lastGround = null;
     }
@@ -96,7 +104,7 @@ public partial class GroundGuard : Node
         }
         else if (_readyTicks >= TicksBeforeActing)
         {
-            if (Surface(feet) is { } surface)
+            if ((_placeFrom is { } height ? FloorBelow(feet, height) ?? Surface(feet) : Surface(feet)) is { } surface)
             {
                 Player.PlaceAt(surface);
             }
@@ -128,6 +136,9 @@ public partial class GroundGuard : Node
             }
         }
     }
+
+    private Vector3? FloorBelow(Vector3 near, float height) =>
+        RayDown(new Vector3(near.X, height + FloorSearchAbove, near.Z), -RayHeight) is { } hit ? hit + Vector3.Up * StandClearance : null;
 
     private Vector3? Surface(Vector3 near) =>
         RayDown(new Vector3(near.X, RayHeight, near.Z), -RayHeight) is { } hit ? hit + Vector3.Up * StandClearance : null;

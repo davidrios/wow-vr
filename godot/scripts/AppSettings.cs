@@ -12,6 +12,9 @@ public enum PlayerScale
     PlayerSized,
 }
 
+/// <summary>A place to start, in WoW coordinates. Yaw turns left from north, in degrees, and only the desktop player uses it.</summary>
+public sealed record LastPlace(string Map, double WowX, double WowY, float WowZ, float Yaw, bool Flying);
+
 public enum VideoPreset
 {
     Low,
@@ -255,6 +258,51 @@ public static class AppSettings
     {
         get => Read(VideoSection, "particles", true).AsBool();
         set => WriteMovement(VideoSection, "particles", value);
+    }
+
+    private const string LastPlaceSection = "last_place";
+
+    /// <summary>Where the player was when last seen, in WoW coordinates, to start there next time. Null before there's one.</summary>
+    public static LastPlace? LastPlace
+    {
+        get
+        {
+            var map = Read(LastPlaceSection, "map", "").AsString();
+            return map.Length == 0
+                ? null
+                : new LastPlace(
+                    map,
+                    Read(LastPlaceSection, "x", 0.0).AsDouble(),
+                    Read(LastPlaceSection, "y", 0.0).AsDouble(),
+                    Read(LastPlaceSection, "z", 0f).AsSingle(),
+                    Read(LastPlaceSection, "yaw", 0f).AsSingle(),
+                    Read(LastPlaceSection, "flying", false).AsBool());
+        }
+        set
+        {
+            if (value is not { } place || place == LastPlace)
+            {
+                return;
+            }
+
+            // Written together and saved once, without raising Changed, since nothing reacts to it.
+            _batching = true;
+            try
+            {
+                Write(LastPlaceSection, "map", place.Map);
+                Write(LastPlaceSection, "x", place.WowX);
+                Write(LastPlaceSection, "y", place.WowY);
+                Write(LastPlaceSection, "z", place.WowZ);
+                Write(LastPlaceSection, "yaw", place.Yaw);
+                Write(LastPlaceSection, "flying", place.Flying);
+            }
+            finally
+            {
+                _batching = false;
+            }
+
+            Save();
+        }
     }
 
     /// <summary>What a preset puts in each video setting. The user's own changes after it stay.</summary>

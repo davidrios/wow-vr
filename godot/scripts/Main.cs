@@ -139,6 +139,12 @@ public partial class Main : Node3D
                 desktop.RotationDegrees = new Vector3(0, startYaw, 0);
             }
 
+            // Only when it's on, so that a saved setting of off doesn't undo --disable-vsync.
+            if (AppSettings.UnlockFps)
+            {
+                AppSettings.ApplyFpsLimit();
+            }
+
             var tiles = new TileManager { Name = "Tiles" };
             var sky = new SkyController { Name = "Sky" };
             AddChild(sky);

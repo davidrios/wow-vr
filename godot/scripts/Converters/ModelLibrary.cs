@@ -553,6 +553,26 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         }
     }
 
+    /// <summary>A model's mesh as a skybox, with its own materials, since the weight is per sky.</summary>
+    public (ArrayMesh Mesh, (ShaderMaterial Material, M2Effect Effect)[] Materials) SkyboxMeshOf(M2Asset model, bool behindClouds = false)
+    {
+        var mesh = (ArrayMesh)model.Mesh.Duplicate();
+        var materials = new List<(ShaderMaterial, M2Effect)>();
+        for (var i = 0; i < model.Materials.Length && i < mesh.GetSurfaceCount(); i++)
+        {
+            var source = model.Materials[i];
+            var effect = source.Effect ?? (source.Blend == ModelBlend.Opaque ? PlainOpaque : PlainMod);
+            if (BuildEffectMaterial(source with { Unlit = true }, effect, indoor: false, creature: false, skybox: true, behindClouds) is { } material)
+            {
+                mesh.SurfaceSetMaterial(i, material);
+                materials.Add((material, effect));
+            }
+        }
+
+        mesh.CustomAabb = new Aabb(-Vector3.One * 1e6f, Vector3.One * 2e6f);
+        return (mesh, materials.ToArray());
+    }
+
     private ArrayMesh? BuildMesh(IReadOnlyList<ModelSurface> surfaces, bool indoor, List<ModelMaterial>? used)
     {
         ArrayMesh? mesh = null;
@@ -631,14 +651,20 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         return result;
     }
 
-    private ShaderMaterial? BuildEffectMaterial(ModelMaterial material, M2Effect effect, bool indoor, bool creature)
+    private ShaderMaterial? BuildEffectMaterial(ModelMaterial material, M2Effect effect, bool indoor, bool creature, bool skybox = false, bool behindClouds = false)
     {
         if (GetTexture(material.Texture) is not { } texture)
         {
             return null;
         }
 
-        var result = new ShaderMaterial { Shader = EffectShader(material, effect, indoor, creature) };
+        var result = new ShaderMaterial { Shader = EffectShader(material, effect, indoor, creature, skybox, behindClouds) };
+        if (skybox)
+        {
+            // Before anything else that's transparent, since it's behind everything.
+            result.RenderPriority = (int)RenderingServer.MaterialRenderPriorityMin;
+        }
+
         if (ReferenceEquals(effect, PlainMod))
         {
             result.SetShaderParameter("alpha_key", PlainAlphaKey);
@@ -668,7 +694,8 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             }
         }
 
-        if (effect.Animated)
+        // A skybox's owner runs its effects, because some follow the time of day.
+        if (effect.Animated && !skybox)
         {
             _newAnimated.Enqueue((result, effect, Volatile.Read(ref _generation)));
         }
@@ -676,7 +703,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         return result;
     }
 
-    private static void ApplyEffect(ShaderMaterial material, M2Effect effect, double clock)
+    public static void ApplyEffect(ShaderMaterial material, M2Effect effect, double clock)
     {
         if (effect.Uv0Animation is { } uv0)
         {
@@ -707,14 +734,14 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         new Vector3(m.X, m.Y, 1));
 
     /// <summary>Render modes and wrap modes are fixed in a shader's code, so each mix gets a shader.</summary>
-    private Shader EffectShader(ModelMaterial material, M2Effect effect, bool indoor, bool creature)
+    private Shader EffectShader(ModelMaterial material, M2Effect effect, bool indoor, bool creature, bool skybox = false, bool behindClouds = false)
     {
         var modulates = material.Blend == ModelBlend.Modulate;
 
         // An opaque part of a creature, such as an eyelid, is tinted to match a body that's lit.
         var tintReplacesLight = effect.Tinted && !(creature && material.Blend == ModelBlend.Opaque);
         var unshaded = material.Unlit || modulates || tintReplacesLight || indoor;
-        var blended = material.Blend is ModelBlend.Alpha or ModelBlend.Add || effect.Fades;
+        var blended = skybox || material.Blend is ModelBlend.Alpha or ModelBlend.Add || effect.Fades;
         var baked = material.Bake is not null;
         var floorLit = creature && !unshaded;
 
@@ -722,7 +749,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         var indoorOccluded = indoor && !material.Unlit && !modulates && !effect.Tinted && !blended;
         // Glows and glass have no shape to show. The shader leaves a WMO's own walls alone, which get no direction.
         var shaped = indoor && !material.Unlit && !effect.Tinted && material.Blend is ModelBlend.Opaque or ModelBlend.AlphaKey;
-        var key = $"{material.Blend}_{material.TwoSided}_{material.Repeat}_{effect.Repeat2}_{unshaded}_{blended}_{baked}_{material.Billboard}_{indoor}_{floorLit}_{indoorOccluded}_{shaped}";
+        var key = $"{material.Blend}_{material.TwoSided}_{material.Repeat}_{effect.Repeat2}_{unshaded}_{blended}_{baked}_{material.Billboard}_{indoor}_{floorLit}_{indoorOccluded}_{shaped}_{skybox}_{behindClouds}";
         return _effectShaders.GetOrAdd(key, _ =>
         {
             var modes = new List<string> { material.TwoSided ? "cull_disabled" : "cull_back" };
@@ -747,6 +774,23 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
                 $"#define TEX0_WRAP {(material.Repeat ? "repeat_enable" : "repeat_disable")}",
                 $"#define TEX1_WRAP {(effect.Repeat2 ? "repeat_enable" : "repeat_disable")}",
             };
+            if (skybox)
+            {
+                defines.Add("#define SKYBOX");
+                if (behindClouds)
+                {
+                    defines.Add("#define BEHIND_CLOUDS");
+                }
+
+                modes.Add("skip_vertex_transform");
+                modes.Add("depth_draw_never");
+                modes.Add("shadows_disabled");
+                if (material.Blend != ModelBlend.Add && !modulates)
+                {
+                    modes.Add("fog_disabled");
+                }
+            }
+
             if (unshaded)
             {
                 defines.Add("#define UNSHADED");
@@ -813,7 +857,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
 
             return new Shader
             {
-                Code = $"shader_type spatial;\nrender_mode {string.Join(", ", modes)};\n{string.Join("\n", defines)}\n#include \"res://shaders/m2_combiners.gdshaderinc\"\n",
+                Code = $"shader_type spatial;\nrender_mode {string.Join(", ", modes.Distinct())};\n{string.Join("\n", defines)}\n#include \"res://shaders/m2_combiners.gdshaderinc\"\n",
             };
         });
     }

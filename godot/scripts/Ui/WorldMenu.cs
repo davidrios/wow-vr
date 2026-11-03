@@ -68,6 +68,9 @@ public partial class WorldMenu : PanelContainer
         var toggles = new HBoxContainer();
         toggles.AddChild(_fly);
         toggles.AddChild(namePlates);
+        var unlockFps = new CheckButton { Text = "Unlock FPS (desktop)", ButtonPressed = AppSettings.UnlockFps, SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        unlockFps.Toggled += on => AppSettings.UnlockFps = on;
+        toggles.AddChild(unlockFps);
         rows.AddChild(toggles);
 
         rows.AddChild(new Label { Text = "Fly speed" });

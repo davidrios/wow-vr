@@ -87,6 +87,25 @@ public static class AppSettings
         set => WriteMovement("shadows", value);
     }
 
+    /// <summary>Desktop only: draws as fast as it can, rather than waiting for the monitor. A headset paces itself.</summary>
+    public static bool UnlockFps
+    {
+        get => Read(MovementSection, "unlock_fps", false).AsBool();
+        set
+        {
+            WriteMovement("unlock_fps", value);
+            ApplyFpsLimit();
+        }
+    }
+
+    public static void ApplyFpsLimit()
+    {
+        if (XRServer.PrimaryInterface?.IsInitialized() != true)
+        {
+            DisplayServer.WindowSetVsyncMode(UnlockFps ? DisplayServer.VSyncMode.Disabled : DisplayServer.VSyncMode.Enabled);
+        }
+    }
+
     public const float MaxOcclusionStrength = 16f;
     public const float MinOcclusionSize = 0.1f;
     public const float MaxOcclusionSize = 4f;

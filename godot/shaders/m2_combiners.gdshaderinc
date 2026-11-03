@@ -61,7 +61,22 @@ const float SHAPED_FILL = 0.45;
 varying vec3 light_going;
 #endif
 
-#if defined(BAKED_BONES) || defined(BILLBOARD) || defined(SHAPED_LIGHT)
+#ifdef SKYBOX
+// How strongly a skybox shows, as its light's weight changes. It's blended into the sky behind it.
+uniform float skybox_weight = 1.0;
+// How far through its animation, from 0 to 1, if that follows the time of day. Otherwise below 0, and it loops.
+uniform float skybox_day = -1.0;
+#endif
+
+#ifdef BEHIND_CLOUDS
+#include "res://shaders/sky_clouds.gdshaderinc"
+// Models draw after the sky, but stars belong behind the moon and clouds, so they fade where those cover them.
+uniform sampler2D moon_texture : filter_linear, repeat_disable, hint_default_transparent;
+uniform vec3 moon_direction = vec3(0.0, -1.0, 0.0);
+varying vec3 sky_direction;
+#endif
+
+#if defined(BAKED_BONES) || defined(BILLBOARD) || defined(SHAPED_LIGHT) || defined(SKYBOX)
 void vertex() {
 #ifdef SHAPED_LIGHT
 	light_going = INSTANCE_CUSTOM.xyz;
@@ -71,7 +86,11 @@ void vertex() {
 #ifdef BAKED_BONES
 	// Each copy keeps its own phase, from where it stands, so a forest doesn't sway as one.
 	float phase = fract(dot(MODEL_MATRIX[3].xz, vec2(0.0137, 0.0071)));
+#ifdef SKYBOX
+	float position = (skybox_day >= 0.0 ? fract(skybox_day) : fract(TIME / bake_seconds)) * float(bake_frames);
+#else
 	float position = fract(TIME / bake_seconds + phase) * float(bake_frames);
+#endif
 	int frame_a = int(position) % bake_frames;
 	int frame_b = (frame_a + 1) % bake_frames;
 	float blend = fract(position);
@@ -120,6 +139,15 @@ void vertex() {
 #else
 	VERTEX = (skin * vec4(VERTEX, 1.0)).xyz;
 	NORMAL = normalize(mat3(skin) * NORMAL);
+#endif
+#ifdef SKYBOX
+	// Infinitely far away for each eye: it turns with the view but never moves, and sits behind
+	// everything, where depth is 0 in Godot's reversed depth.
+#ifdef BEHIND_CLOUDS
+	sky_direction = mat3(MODEL_MATRIX) * VERTEX;
+#endif
+	POSITION = PROJECTION_MATRIX * vec4(mat3(VIEW_MATRIX) * mat3(MODEL_MATRIX) * VERTEX, 1.0);
+	POSITION.z = POSITION.w * 0.000001;
 #endif
 }
 #endif
@@ -218,6 +246,14 @@ void fragment() {
 #else
 	ALBEDO = to_linear(lit);
 	EMISSION = to_linear(added);
+#endif
+
+#ifdef SKYBOX
+	a *= skybox_weight;
+#endif
+#ifdef BEHIND_CLOUDS
+	vec3 toward_sky = normalize(sky_direction);
+	a *= (1.0 - clouds_toward(toward_sky).a) * (1.0 - on_quad(moon_texture, toward_sky, moon_direction, MOON_SIZE).a);
 #endif
 
 #if defined(GAMMA_ADD)

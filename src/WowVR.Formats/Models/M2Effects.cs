@@ -318,6 +318,9 @@ public sealed class M2EffectTrack<T>(float[] times, T[] values, float period, bo
 
     public IReadOnlyList<T> Values => values;
 
+    /// <summary>How long it takes to repeat, in the same units as the clock.</summary>
+    public float Period => period;
+
     public T Sample(double clock)
     {
         if (!Changes || period <= 0f)
@@ -408,6 +411,9 @@ public sealed class M2Effect
     /// <summary>Anything that changes over time.</summary>
     public bool Animated => Uv0Animation?.Changes == true || Uv1Animation?.Changes == true
         || Color?.Changes == true || ColorAlpha?.Changes == true || Weight?.Changes == true;
+
+    /// <summary>The length of its color and fade tracks' sequence, or 0 with none.</summary>
+    public float Period => MathF.Max(Color?.Period ?? 0f, MathF.Max(ColorAlpha?.Period ?? 0f, Weight?.Period ?? 0f));
 
     public Vector3 TintAt(double clock) => Color?.Sample(clock) ?? Vector3.One;
 

@@ -17,11 +17,20 @@ public enum SkyBand
     Fog = 7,
     Sun = 9,
     SunHalo = 10,
+    CloudShaded = 11,
     Cloud = 12,
     OceanShallow = 14,
     OceanDeep = 15,
     RiverShallow = 16,
     RiverDeep = 17,
+}
+
+/// <summary>A row of LightSkybox. <see cref="Path"/> names an .m2. Flag 1 ties its animation to the time of day, and flag 2 keeps the made sky behind it.</summary>
+public sealed record SkyboxModel(string Path, int Flags)
+{
+    public bool FollowsDay => (Flags & 1) != 0;
+
+    public bool KeepsSky => (Flags & 2) != 0;
 }
 
 /// <summary>The sky at one place and time. Colors are red, green, blue from 0 to 1, in gamma space.</summary>
@@ -34,6 +43,12 @@ public sealed class SkyState
 
     /// <summary>Where fog starts, as a fraction of <see cref="FogEnd"/>.</summary>
     public float FogStart { get; set; }
+
+    /// <summary>Skybox models showing here, with how strongly, from 0 to 1.</summary>
+    public Dictionary<SkyboxModel, float> Skyboxes { get; } = [];
+
+    /// <summary>How much of the sky has clouds, from 0 to 1. The tables call this glow.</summary>
+    public float Glow { get; set; }
 
     public float RiverShallowAlpha { get; set; }
     public float RiverDeepAlpha { get; set; }
@@ -66,7 +81,7 @@ public sealed class LightTable
 
     private readonly record struct FloatCurve(int[] Times, float[] Values);
 
-    private sealed record Params(Curve[] Bands, FloatCurve[] Floats, float RiverShallow, float RiverDeep, float OceanShallow, float OceanDeep);
+    private sealed record Params(Curve[] Bands, FloatCurve[] Floats, SkyboxModel? Skybox, float Glow, float RiverShallow, float RiverDeep, float OceanShallow, float OceanDeep);
 
     private sealed record Light(Vector3 Position, float Inner, float Outer, Params Clear)
     {
@@ -85,6 +100,20 @@ public sealed class LightTable
         var ints = DbcTables.Read(source, @"DBFilesClient\LightIntBand.dbc", ReadCurves);
         var floats = DbcTables.Read(source, @"DBFilesClient\LightFloatBand.dbc", ReadFloatCurves);
         var parameters = new Dictionary<int, Params>();
+        var skyboxes = DbcTables.Read(source, @"DBFilesClient\LightSkybox.dbc", dbc =>
+        {
+            var rows = new Dictionary<int, SkyboxModel>();
+            for (var row = 0; row < dbc.RecordCount; row++)
+            {
+                var path = dbc.GetString(row, 1);
+                if (path.Length > 0)
+                {
+                    rows[dbc.GetInt32(row, 0)] = new SkyboxModel(Path.ChangeExtension(path, ".m2"), dbc.GetInt32(row, 2));
+                }
+            }
+
+            return rows;
+        });
 
         DbcTables.Read<object?>(source, @"DBFilesClient\LightParams.dbc", dbc =>
         {
@@ -106,6 +135,8 @@ public sealed class LightTable
                 parameters[id] = new Params(
                     bands,
                     floatBands,
+                    skyboxes.GetValueOrDefault(dbc.GetInt32(row, 2)),
+                    dbc.GetSingle(row, 4),
                     dbc.GetSingle(row, 5),
                     dbc.GetSingle(row, 6),
                     dbc.GetSingle(row, 7),
@@ -161,7 +192,8 @@ public sealed class LightTable
     public void Sample(int mapId, Vector3 position, float ticks, SkyState into)
     {
         Array.Clear(into.Colors);
-        into.FogEnd = into.FogStart = 0;
+        into.Skyboxes.Clear();
+        into.FogEnd = into.FogStart = into.Glow = 0;
         into.RiverShallowAlpha = into.RiverDeepAlpha = into.OceanShallowAlpha = into.OceanDeepAlpha = 0;
 
         // A map with no lights of its own borrows the first global light, as Noggit does.
@@ -212,6 +244,12 @@ public sealed class LightTable
 
         into.FogEnd += ValueAt(parameters.Floats[FogEndFloatBand], ticks) / UnitsPerYard * weight;
         into.FogStart += ValueAt(parameters.Floats[FogStartFloatBand], ticks) * weight;
+        if (parameters.Skybox is { } skybox)
+        {
+            into.Skyboxes[skybox] = into.Skyboxes.GetValueOrDefault(skybox) + weight;
+        }
+
+        into.Glow += parameters.Glow * weight;
         into.RiverShallowAlpha += parameters.RiverShallow * weight;
         into.RiverDeepAlpha += parameters.RiverDeep * weight;
         into.OceanShallowAlpha += parameters.OceanShallow * weight;
@@ -319,6 +357,16 @@ public static class SunPath
 
     /// <summary>How far south of straight overhead the sun passes, so noon has some shading.</summary>
     private const float SouthTilt = 0.35f;
+
+    /// <summary>How strongly stars show, from 0 to 1, as the client has it: full until 3:00, gone by 4:30, and back from 22:30 to midnight.</summary>
+    public static float StarBrightness(float ticks)
+    {
+        var day = (ticks % LightTable.TicksPerDay + LightTable.TicksPerDay) % LightTable.TicksPerDay / LightTable.TicksPerDay;
+        return day < 0.125f ? 1f
+            : day < 0.1875f ? 1f - (day - 0.125f) / 0.0625f
+            : day < 0.9375f ? 0f
+            : (day - 0.9375f) / 0.0625f;
+    }
 
     /// <summary>A direction towards the sun in Godot axes (X east, Y up, Z south), below the horizon at night.</summary>
     public static Vector3 Direction(float ticks)

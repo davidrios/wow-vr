@@ -30,6 +30,7 @@ In the headset the frame rate fell below 90, and a maximized 4K desktop window r
 ## Consequences
 
 - Far creatures' animation is visibly steppier up close to 50 yards, if looked for.
-- A creature past the animated count stands still, as before; that count is now the player's.
+- Every creature in the scene animates. A cap on how many did, with the rest frozen in place, was dropped: with the engine patches of `0012-patched-godot.md` and far creatures updating less often, animating all 150 rather than 60 cost 0.06 ms in Goldshire and 0.15 ms in Stormwind. Creature distance is what's left to turn down.
+- Desktop has a field of view setting, Godot's 75 degrees by default, since a wide window stretches the edges. A headset's lenses fix its own.
 - The render scale hasn't been tried in the headset, where it applies per eye.
 - On this PC the GPU is far from the limit, so the GPU settings were measured but matter little here. A slower GPU or a headset at a high resolution is where they help.

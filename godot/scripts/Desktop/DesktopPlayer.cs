@@ -109,6 +109,7 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     {
         var scale = AppSettings.WorldScale;
         _camera.Position = new Vector3(0, EyeHeightMeters * scale, 0);
+        _camera.Fov = AppSettings.FieldOfView;
         _capsule.Radius = BodyRadiusMeters * scale;
         _capsule.Height = BodyHeightMeters * scale;
         _shape.Position = new Vector3(0, _capsule.Height / 2, 0);

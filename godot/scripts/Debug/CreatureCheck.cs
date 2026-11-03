@@ -92,7 +92,7 @@ public partial class CreatureCheck : Node
         GD.Print($"Creatures: {nodes} nodes of {Creatures.SpawnCount} spawns, {_posed.Count} changed pose, {Engine.GetFramesPerSecond():F0} FPS, worst frame {_worstFrame:F1} ms, worst ground gap {_worstGroundGap:F2}, {Creatures.Sounds.PlayedCount} sounds, {Creatures.Nodes.Count(n => n.FloorLightAmount > 0.5f)} lit by a floor");
 
         var problems = new List<string>();
-        if (_posed.Count < System.Math.Min(nodes, CreatureManager.MaxAnimated))
+        if (_posed.Count < nodes)
         {
             problems.Add($"only {_posed.Count} of {nodes} animate");
         }

@@ -41,9 +41,6 @@ public partial class CreatureManager : Node
 
     private const int MaxNodes = 150;
 
-    /// <summary>The nearest this many animate and move, from the video settings. See <c>PLAN.md</c>'s performance budget.</summary>
-    public static int MaxAnimated => AppSettings.AnimatedCreatures;
-
     /// <summary>Making a skeleton is slow enough to see, so at most this many start per frame.</summary>
     private const int MaxNewNodesPerFrame = 1;
 
@@ -268,15 +265,6 @@ public partial class CreatureManager : Node
             }
         }
 
-        var animatedBudget = MaxAnimated;
-        foreach (var entry in candidates)
-        {
-            if (entry.Node is { } node)
-            {
-                node.SetAnimated(animatedBudget-- > 0);
-            }
-        }
-
         StartNextAsset();
     }
 
@@ -372,7 +360,8 @@ public partial class CreatureManager : Node
         var fullRate = AppSettings.FullRateAnimation;
         foreach (var entry in _nodes)
         {
-            if (entry.Node!.Animated && _tiles.TryGetValue(entry.Tile, out var state))
+            // Every creature in the scene animates: far ones update less often, so freezing them saved little.
+            if (_tiles.TryGetValue(entry.Tile, out var state))
             {
                 MoveNode(entry, state, delta);
                 entry.Node.Animate(delta, fullRate ? 0 : AnimationInterval(entry.Distance));

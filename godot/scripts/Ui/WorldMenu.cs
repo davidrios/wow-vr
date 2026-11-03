@@ -203,7 +203,7 @@ public partial class WorldMenu : PanelContainer
 
         var creatures = new HBoxContainer();
         creatures.AddChild(VideoSlider("Creature distance", AppSettings.MinCreatureRange, AppSettings.MaxCreatureRange, 10, "0' yd'", () => AppSettings.CreatureRange, v => AppSettings.CreatureRange = v));
-        creatures.AddChild(VideoSlider("Animated creatures", AppSettings.MinAnimatedCreatures, AppSettings.MaxAnimatedCreatures, 5, "0", () => AppSettings.AnimatedCreatures, v => AppSettings.AnimatedCreatures = (int)v));
+        creatures.AddChild(VideoSlider("Desktop FOV", AppSettings.MinFieldOfView, AppSettings.MaxFieldOfView, 1, "0", () => AppSettings.FieldOfView, v => AppSettings.FieldOfView = v));
         rows.AddChild(creatures);
 
         var effects = new HBoxContainer();

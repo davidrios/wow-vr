@@ -218,14 +218,17 @@ public static class AppSettings
         set => WriteMovement(VideoSection, "creature_range", Mathf.Clamp(value, MinCreatureRange, MaxCreatureRange));
     }
 
-    public const int MinAnimatedCreatures = 10;
-    public const int MaxAnimatedCreatures = 60;
+    public const float MinFieldOfView = 50f;
+    public const float MaxFieldOfView = 100f;
 
-    /// <summary>How many of the nearest creatures move and animate. Further ones stand still, and cost little.</summary>
-    public static int AnimatedCreatures
+    /// <summary>
+    /// Desktop only, in degrees from the top of the view to the bottom. A wide window shows more
+    /// across, and stretches the edges more. A headset's lenses fix its own.
+    /// </summary>
+    public static float FieldOfView
     {
-        get => Read(VideoSection, "animated_creatures", MaxAnimatedCreatures).AsInt32();
-        set => WriteMovement(VideoSection, "animated_creatures", Mathf.Clamp(value, MinAnimatedCreatures, MaxAnimatedCreatures));
+        get => Read(VideoSection, "field_of_view", 75f).AsSingle(); // Godot's own default, which it was before.
+        set => WriteMovement(VideoSection, "field_of_view", Mathf.Clamp(value, MinFieldOfView, MaxFieldOfView));
     }
 
     public const float MinDetailDistance = 0.3f;
@@ -257,11 +260,11 @@ public static class AppSettings
     /// <summary>What a preset puts in each video setting. The user's own changes after it stay.</summary>
     public static void ApplyPreset(VideoPreset preset)
     {
-        var (scale, shadows, occlusion, grass, creatures, animated, detail, particles) = preset switch
+        var (scale, shadows, occlusion, grass, creatures, detail, particles) = preset switch
         {
-            VideoPreset.Low => (0.7f, false, false, false, 70f, 15, 0.4f, false),
-            VideoPreset.Medium => (0.85f, true, false, true, 100f, 30, 0.7f, true),
-            _ => (1f, true, true, true, MaxCreatureRange, MaxAnimatedCreatures, 1f, true),
+            VideoPreset.Low => (0.7f, false, false, false, 70f, 0.4f, false),
+            VideoPreset.Medium => (0.85f, true, false, true, 100f, 0.7f, true),
+            _ => (1f, true, true, true, MaxCreatureRange, 1f, true),
         };
 
         _batching = true;
@@ -272,7 +275,6 @@ public static class AppSettings
             AmbientOcclusion = occlusion;
             GroundCover = grass;
             CreatureRange = creatures;
-            AnimatedCreatures = animated;
             DetailDistance = detail;
             Particles = particles;
 

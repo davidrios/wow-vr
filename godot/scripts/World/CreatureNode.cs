@@ -52,8 +52,6 @@ public partial class CreatureNode : Node3D
 
     public Skeleton3D Skeleton { get; private set; } = null!;
 
-    public bool Animated => _player.Active;
-
     public void Build(CreatureAsset asset, string name)
     {
         _asset = asset;
@@ -167,15 +165,6 @@ public partial class CreatureNode : Node3D
             _player.Advance(_sinceAnimated);
             _billboards?.Apply(Skeleton);
             _sinceAnimated = 0;
-        }
-    }
-
-    /// <summary>Stops bones moving, keeping the current pose, for creatures past the animation cap.</summary>
-    public void SetAnimated(bool animated)
-    {
-        if (_player.Active != animated)
-        {
-            _player.Active = animated;
         }
     }
 

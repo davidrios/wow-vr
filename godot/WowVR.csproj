@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\src\WowVR.Formats\WowVR.Formats.csproj" />
+    <ProjectReference Include="..\src\WowVR.Net\WowVR.Net.csproj" />
   </ItemGroup>
 
 </Project>

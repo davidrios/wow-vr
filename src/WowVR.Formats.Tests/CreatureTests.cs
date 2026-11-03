@@ -830,6 +830,23 @@ public class ClientCreatureTests(ClientFixture client) : IClassFixture<ClientFix
         Assert.True(look.Geosets.IsVisible(1), "the scalp covers the head where hair was");
     }
 
+    /// <summary>A server says what a creature holds by item id, which Item.dbc turns into a look.</summary>
+    [Fact]
+    public void ItemsHeldByServerCreaturesHaveModels()
+    {
+        var table = CreatureDisplayTable.Read(Source);
+
+        // Items Brill's NPCs hold on an AzerothCore server: Vance Undergloom's and Innkeeper Renee's.
+        foreach (var item in new[] { 1899, 2705 })
+        {
+            var display = table.ItemDisplayOf(item);
+            Assert.True(display > 0, $"item {item} has no display");
+            Assert.NotNull(table.ItemFiles(display));
+        }
+
+        Assert.Equal(0, table.ItemDisplayOf(int.MaxValue));
+    }
+
     [Fact]
     public void UnknownDisplaysResolveToNothing() =>
         Assert.Null(CreatureDisplayTable.Read(Source).Resolve(int.MaxValue));

@@ -15,6 +15,9 @@ public enum PlayerScale
 /// <summary>A place to start, in WoW coordinates. Yaw turns left from north, in degrees, and only the desktop player uses it.</summary>
 public sealed record LastPlace(string Map, double WowX, double WowY, float WowZ, float Yaw, bool Flying);
 
+/// <summary>An account on an AzerothCore server, and which of its characters to play, or the first.</summary>
+public sealed record ServerLogin(string Host, string Account, string Password, string? Character);
+
 public enum VideoPreset
 {
     Low,
@@ -302,6 +305,24 @@ public static class AppSettings
             }
 
             Save();
+        }
+    }
+
+    private const string ServerSection = "server";
+
+    /// <summary>
+    /// The AzerothCore server to play on, from <c>[server]</c>'s host, account, password and
+    /// character, or null without a host. The password is kept as written.
+    /// </summary>
+    public static ServerLogin? Server
+    {
+        get
+        {
+            var host = Read(ServerSection, "host", "").AsString();
+            var character = Read(ServerSection, "character", "").AsString();
+            return host.Length == 0
+                ? null
+                : new ServerLogin(host, Read(ServerSection, "account", "").AsString(), Read(ServerSection, "password", "").AsString(), character.Length > 0 ? character : null);
         }
     }
 

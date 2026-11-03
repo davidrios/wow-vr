@@ -132,6 +132,7 @@ public sealed class CreatureDisplayTable
     private readonly Dictionary<int, ExtraRow> _extras = [];
     private readonly Dictionary<int, ItemRow> _items = [];
     private readonly Dictionary<int, HelmetVisRow> _helmetVis = [];
+    private readonly Dictionary<int, int> _itemDisplays = [];
     private readonly Dictionary<int, string> _racePrefixes = [];
     private readonly Dictionary<int, CreatureSoundSet> _sounds = [];
     private readonly Dictionary<(int Race, int Sex, int Style), (int Geoset, bool Scalp)> _hair = [];
@@ -282,8 +283,22 @@ public sealed class CreatureDisplayTable
             return null;
         });
 
+        // A server says what a creature holds by item, and the client's Item table gives the item's look.
+        DbcTables.Read<object?>(source, @"DBFilesClient\Item.dbc", dbc =>
+        {
+            for (var i = 0; i < dbc.RecordCount; i++)
+            {
+                table._itemDisplays[dbc.GetInt32(i, 0)] = dbc.GetInt32(i, 5);
+            }
+
+            return null;
+        });
+
         return table;
     }
+
+    /// <summary>An item's ItemDisplayInfo row, or 0 for an item the client doesn't know.</summary>
+    public int ItemDisplayOf(int item) => _itemDisplays.GetValueOrDefault(item);
 
     /// <summary>The displays whose model path contains some text, for finding examples.</summary>
     public IEnumerable<int> DisplaysOfModel(string text, bool characterOnly = false) =>

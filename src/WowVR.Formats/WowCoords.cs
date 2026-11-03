@@ -73,6 +73,15 @@ public static class WowCoords
     public static float YawFromOrientation(float orientation) => orientation + MathF.PI / 2;
 
     /// <summary>
+    /// The WoW orientation a camera with this Godot Y rotation looks along. A camera looks down
+    /// its -Z, which is WoW's north, and both turn left as the angle grows.
+    /// </summary>
+    public static float OrientationFromCameraYaw(float yaw) => yaw;
+
+    /// <summary>The Godot Y rotation of a camera looking along a WoW orientation.</summary>
+    public static float CameraYawFromOrientation(float orientation) => orientation;
+
+    /// <summary>
     /// A model placed on a tile. Files give the position as east, up and south from the
     /// map's north-west corner, and rotations in degrees, as WoWModelViewer applies them:
     /// around up by Y - 90, around south... Z by -X, then around X by Z.

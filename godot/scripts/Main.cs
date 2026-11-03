@@ -11,6 +11,7 @@ using WowVR.Formats.Database;
 using WowVR.Formats.Terrain;
 using WowVR.Formats.Textures;
 using WowVR.Formats.World;
+using WowVR.Net;
 using WowVR.Ui;
 using WowVR.World;
 using Godot;
@@ -41,6 +42,9 @@ public partial class Main : Node3D
     private const string LoadingCheckArgument = "--loading-check";
     private const string HoldLoadingArgument = "--hold-loading";
     private const string BenchArgument = "--bench";
+    private const string ServerArgument = "--server=";
+    private const string CharacterArgument = "--character=";
+    private const string OfflineArgument = "--offline";
 
     /// <summary>Kept open across reloads, because tile and model workers can still be reading when the old world goes.</summary>
     private static MpqAssetSource? _openSource;
@@ -188,13 +192,32 @@ public partial class Main : Node3D
         try
         {
             var (startMap, startPosition, startPitch, startYaw, placement) = ReadStart();
+            var session = await ConnectAsync();
             var opening = await Task.Run(() =>
             {
                 var opened = _openSource ??= MpqAssetSource.Open(clientPath);
                 var record = MapRecord.ReadAll(opened)
-                    .First(m => m.Directory.Equals(startMap, StringComparison.OrdinalIgnoreCase));
+                    .First(m => session is null
+                        ? m.Directory.Equals(startMap, StringComparison.OrdinalIgnoreCase)
+                        : m.Id == session.MapId);
                 return (Source: opened, Record: record, Picture: ReadLoadingPicture(opened, record));
             });
+
+            // The server says where the character is, on its feet. A --start on the same map moves it
+            // there instead, since the server follows where the player goes.
+            var startGiven = OS.GetCmdlineUserArgs().Any(a => a.StartsWith(StartArgument));
+            if (session is not null && !(startGiven && startMap.Equals(opening.Record.Directory, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (startGiven)
+                {
+                    GD.PushWarning($"--start is ignored: {session.Character.Name} is on {opening.Record.Directory}, and only the server can change map.");
+                }
+
+                startPosition = session.StartPosition;
+                (startPitch, startYaw, placement) = (0f, Mathf.RadToDeg(WowCoords.CameraYawFromOrientation(session.StartOrientation)), Placement.NearHeight);
+            }
+
+            startMap = opening.Record.Directory;
             _loading?.SetPlace(opening.Record.Name, opening.Picture is null ? null : ImageTexture.CreateFromImage(opening.Picture));
 
             var source = opening.Source;
@@ -237,7 +260,11 @@ public partial class Main : Node3D
             player.Menu.SetSky(sky);
 
             player.Menu.SetLandmarks(Landmarks.On(startMap), l => BehindLoadingScreen(l.Name, () => tiles.TeleportTo(l.WowX, l.WowY)));
-            player.Menu.SetContinents(startMap, TravelTo);
+            // On a server, only the server can move the character to another map.
+            if (session is null)
+            {
+                player.Menu.SetContinents(startMap, TravelTo);
+            }
 
             var arguments = OS.GetCmdlineUserArgs();
             var creatures = new CreatureManager { Name = "Creatures" };
@@ -245,7 +272,14 @@ public partial class Main : Node3D
             var creatureSounds = new CreatureSoundPlayer { Name = "CreatureSounds" };
             AddChild(creatureSounds);
             creatureSounds.Start(source);
-            creatures.Start(new CreatureLibrary(source, displays, tiles.Models), tiles, ChooseSpawnSource(arguments, displays, mapId, startPosition), creatureSounds, footsteps);
+            creatures.Start(new CreatureLibrary(source, displays, tiles.Models), tiles, session is null ? ChooseSpawnSource(arguments, displays, mapId, startPosition) : new NoSpawns(), creatureSounds, footsteps);
+            if (session is not null)
+            {
+                var server = new ServerWorld { Name = "Server" };
+                AddChild(server);
+                server.Start(session, creatures, tiles, displays, _player);
+            }
+
             _loading?.Watch(tiles, creatures, player);
 
             var groundCover = new GroundCoverManager { Name = "GroundCover" };
@@ -321,6 +355,45 @@ public partial class Main : Node3D
         {
             GD.PushError($"Could not open the client at {clientPath}: {e.Message}");
             _loading?.Dismiss();
+        }
+    }
+
+    /// <summary>
+    /// The server session to play on, or null to play from spawn files. <c>--server=host</c> and
+    /// <c>--character=</c> override settings.cfg's <c>[server]</c>, and <c>WOWVR_AC_USER</c> and
+    /// <c>WOWVR_AC_PASS</c> its account. Checks and tours stay offline unless given <c>--server=</c>.
+    /// </summary>
+    private async Task<RealmSession?> ConnectAsync()
+    {
+        var arguments = OS.GetCmdlineUserArgs();
+        var host = arguments.FirstOrDefault(a => a.StartsWith(ServerArgument))?[ServerArgument.Length..];
+        var saved = AppSettings.Server;
+        if (Array.IndexOf(arguments, OfflineArgument) >= 0 || (host is null && (saved is null || IsTestRun)))
+        {
+            return null;
+        }
+
+        host ??= saved!.Host;
+        var account = System.Environment.GetEnvironmentVariable("WOWVR_AC_USER") is { Length: > 0 } user ? user : saved?.Account ?? "";
+        var password = System.Environment.GetEnvironmentVariable("WOWVR_AC_PASS") is { Length: > 0 } pass ? pass : saved?.Password ?? "";
+        var character = arguments.FirstOrDefault(a => a.StartsWith(CharacterArgument))?[CharacterArgument.Length..] ?? saved?.Character;
+        if (account.Length == 0)
+        {
+            GD.PushError($"No account for {host}: set [server] account and password in settings.cfg, or WOWVR_AC_USER and WOWVR_AC_PASS. Playing offline.");
+            return null;
+        }
+
+        _loading?.SetPlace($"Connecting to {host}", null);
+        try
+        {
+            var session = await RealmSession.OpenAsync(host, account, password, character, message => GD.Print(message));
+            GD.Print($"On {host} as {session.Character.Name}: map {session.MapId} at {session.StartPosition}");
+            return session;
+        }
+        catch (Exception e) when (e is System.IO.IOException or System.Net.Sockets.SocketException or InvalidOperationException)
+        {
+            GD.PushError($"Could not play on {host}: {e.Message} Playing offline.");
+            return null;
         }
     }
 

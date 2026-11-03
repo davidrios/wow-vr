@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The 3.3.5a client protocol, to talk to an AzerothCore server. See docs/decisions/0013-azerothcore-server.md. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WowVR.Net.Tests" />
+  </ItemGroup>
+
+</Project>

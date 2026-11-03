@@ -5,12 +5,21 @@ namespace WowVR.Formats.World;
 /// <param name="Facing">Radians, turning left from north.</param>
 public readonly record struct CreatureMotionState(double X, double Y, float? Z, float Facing, bool Moving);
 
+/// <summary>Where a creature is at each moment of the game's clock.</summary>
+public interface ICreatureMotion
+{
+    CreatureMotionState At(double clock);
+
+    /// <summary>Yards per second while it moves, which sets how fast its walk plays.</summary>
+    float MoveSpeed { get; }
+}
+
 /// <summary>
-/// A creature's movement as a function of the world clock, with no state between calls. Two
-/// clients with the same clock see the same thing, which is how M7 keeps creatures in step
-/// without sending them over the network.
+/// A creature's movement as a function of the world clock, with no state between calls, for
+/// spawn files. Two players with the same clock see the same thing. Connected to a server,
+/// creatures follow the server's paths instead.
 /// </summary>
-public sealed class CreatureMotion
+public sealed class CreatureMotion : ICreatureMotion
 {
     /// <summary>WoW's walking speed in yards per second, for spawns that don't say.</summary>
     public const float WalkSpeed = 2.5f;
@@ -48,6 +57,8 @@ public sealed class CreatureMotion
             _pathSeconds = time;
         }
     }
+
+    public float MoveSpeed => Speed(_spawn);
 
     public CreatureMotionState At(double clock)
     {

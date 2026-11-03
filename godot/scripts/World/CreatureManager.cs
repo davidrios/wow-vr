@@ -20,6 +20,12 @@ public interface ISpawnSource
     IReadOnlyList<CreatureSpawn> Read(int tileX, int tileY, TerrainHeights heights);
 }
 
+/// <summary>No creatures from files, as when a server sends them instead.</summary>
+public sealed class NoSpawns : ISpawnSource
+{
+    public IReadOnlyList<CreatureSpawn> Read(int tileX, int tileY, TerrainHeights heights) => [];
+}
+
 /// <summary>The files tools/spawn-exporter writes. A tile without one simply has no creatures.</summary>
 public sealed class SpawnFiles(string folder, int mapId) : ISpawnSource
 {
@@ -32,7 +38,8 @@ public sealed class SpawnFiles(string folder, int mapId) : ISpawnSource
 
 /// <summary>
 /// Streams creatures with their tiles. All of a tile's spawns are known once it loads, but
-/// only those near the player get a node, and only the nearest of those animate.
+/// only those near the player get a node, and only the nearest of those animate. A server's
+/// creatures come and go through <see cref="AddLive"/> and <see cref="RemoveLive"/> instead.
 /// </summary>
 public partial class CreatureManager : Node
 {
@@ -69,11 +76,11 @@ public partial class CreatureManager : Node
     /// <summary>Doodads say nothing about light, so a ray goes through this many to reach the floor.</summary>
     private const int MaxDoodadsThrough = 3;
 
-    private sealed class Entry(CreatureSpawn spawn, (int X, int Y) tile)
+    private sealed class Entry(CreatureSpawn spawn, (int X, int Y) tile, ICreatureMotion motion)
     {
         public CreatureSpawn Spawn { get; } = spawn;
         public (int X, int Y) Tile { get; } = tile;
-        public CreatureMotion Motion { get; } = new(spawn);
+        public ICreatureMotion Motion { get; set; } = motion;
         public CreatureNode? Node { get; set; }
         public float Distance { get; set; } = float.PositiveInfinity;
         public float Height { get; set; } = spawn.Z;
@@ -93,6 +100,9 @@ public partial class CreatureManager : Node
     private readonly Dictionary<string, CreatureAsset?> _assets = [];
     private readonly List<Entry> _nodes = [];
     private readonly List<Entry> _wanted = [];
+
+    /// <summary>A server's creatures, whose tile may not be loaded yet.</summary>
+    private readonly Dictionary<long, Entry> _live = [];
     private int _reading;
     private bool _building;
     private double _rankTimer;
@@ -103,7 +113,7 @@ public partial class CreatureManager : Node
     private CreatureSoundPlayer _sounds = null!;
     private FootstepTable _footsteps = null!;
 
-    /// <summary>Seconds on the clock that decides where creatures are. M7's server takes this over.</summary>
+    /// <summary>Seconds on the clock that decides where creatures are: spawn files' motion, and how far along a server's paths are.</summary>
     public double Clock => _clock;
 
     /// <summary>Anything that's near the player but not in the scene yet.</summary>
@@ -112,6 +122,13 @@ public partial class CreatureManager : Node
     public int SpawnCount => _tiles.Values.Sum(t => t.Entries.Count);
 
     public IEnumerable<CreatureNode> Nodes => _nodes.Select(e => e.Node!);
+
+    public int NodeCount => _nodes.Count;
+
+    /// <summary>The nearest of a server's creatures, its distance and whether its tile is loaded, for the log.</summary>
+    public string NearestLive => _live.Values.MinBy(e => e.Distance) is { } nearest
+        ? $"{nearest.Spawn.Name} at {nearest.Distance:F0} yd, tile {nearest.Tile.X}_{nearest.Tile.Y}{(_tiles.ContainsKey(nearest.Tile) ? "" : " (not loaded)")}"
+        : "none";
 
     /// <summary>A placed creature with this name, for checks.</summary>
     public IEnumerable<CreatureNode> NodesNamed(string name) =>
@@ -130,11 +147,54 @@ public partial class CreatureManager : Node
         world.TileRemoved += OnTileRemoved;
     }
 
+    /// <summary>A creature the server shows, at its position's tile. It appears once that tile loads.</summary>
+    public void AddLive(CreatureSpawn spawn, ICreatureMotion motion)
+    {
+        RemoveLive(spawn.Guid);
+        var now = motion.At(_clock);
+        var entry = new Entry(spawn, WowCoords.TileAt(now.X, now.Y), motion);
+        _live[spawn.Guid] = entry;
+        if (_tiles.TryGetValue(entry.Tile, out var state))
+        {
+            state.Entries.Add(entry);
+        }
+    }
+
+    /// <summary>The server has it moving differently. It keeps its tile, which is only where it's measured from.</summary>
+    public void SetLiveMotion(long guid, ICreatureMotion motion)
+    {
+        if (_live.TryGetValue(guid, out var entry))
+        {
+            entry.Motion = motion;
+        }
+    }
+
+    public void RemoveLive(long guid)
+    {
+        if (!_live.Remove(guid, out var entry))
+        {
+            return;
+        }
+
+        if (_tiles.TryGetValue(entry.Tile, out var state))
+        {
+            state.Entries.Remove(entry);
+        }
+
+        _wanted.Remove(entry);
+        if (entry.Node is { } node)
+        {
+            _nodes.Remove(entry);
+            node.QueueFree();
+            entry.Node = null;
+        }
+    }
+
     private void OnTileAdded((int X, int Y) tile, Node3D node, TerrainHeights heights)
     {
         var container = new Node3D { Name = "Creatures" };
         node.AddChild(container);
-        _tiles[tile] = new TileState(node, heights, container, []);
+        _tiles[tile] = new TileState(node, heights, container, [.. _live.Values.Where(e => e.Tile == tile)]);
 
         _reading++;
         Task.Run(() =>
@@ -155,10 +215,18 @@ public partial class CreatureManager : Node
 
     private void OnTileRemoved((int X, int Y) tile)
     {
-        // Their nodes leave with the tile's.
+        // Their nodes leave with the tile's. A server's creatures wait for it to come back.
         _nodes.RemoveAll(e => e.Tile == tile);
         _wanted.RemoveAll(e => e.Tile == tile);
         _tiles.Remove(tile);
+        foreach (var entry in _live.Values)
+        {
+            if (entry.Tile == tile)
+            {
+                entry.Node = null;
+                entry.Distance = float.PositiveInfinity;
+            }
+        }
     }
 
     public override void _Process(double delta)
@@ -199,7 +267,7 @@ public partial class CreatureManager : Node
             _reading--;
             if (_tiles.TryGetValue(read.Tile, out var state))
             {
-                state.Entries.AddRange(read.Spawns.Select(s => new Entry(s, read.Tile)));
+                state.Entries.AddRange(read.Spawns.Select(s => new Entry(s, read.Tile, new CreatureMotion(s))));
             }
 
             // Ranking soon means something on screen right after a tile loads.
@@ -474,7 +542,7 @@ public partial class CreatureManager : Node
         var motion = entry.Motion.At(_clock);
         var height = HeightOf(entry, state, motion, delta);
         var position = WowCoords.TileLocal(motion.X, motion.Y, height, entry.Tile.X, entry.Tile.Y);
-        entry.Node!.Move(new Vector3(position.X, position.Y, position.Z), motion.Facing, motion.Moving, entry.Spawn.WalkSpeed, entry.Distance, delta);
+        entry.Node!.Move(new Vector3(position.X, position.Y, position.Z), motion.Facing, motion.Moving, entry.Motion.MoveSpeed, entry.Distance, delta);
         UpdateLight(entry, state, motion, new Vector3(position.X, position.Y, position.Z));
         entry.Node.FadeLight(delta);
     }

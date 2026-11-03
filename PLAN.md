@@ -2,7 +2,7 @@
 
 A multiplayer exploration experience of the Wrath of the Lich King (3.3.5a) World of Warcraft world, playable in **VR or on desktop**, built in **Godot 4 (.NET / C#)**. Players walk, teleport or fly through the zones, see creatures and NPCs going about their routines, and explore together with friends.
 
-Not a game client: no combat, quests, or emulator protocol. It's a **world viewer** that reads game data from each player's own 3.3.5a client.
+Not a full game client: no combat or quests. It's a **world viewer** that reads game data from each player's own 3.3.5a client, and can play on an AzerothCore server, which supplies the world's creatures and the other players.
 
 ---
 
@@ -17,7 +17,7 @@ Not a game client: no combat, quests, or emulator protocol. It's a **world viewe
 
 **Non-goals (for now)**
 - Combat, quests, spells, inventory, NPC interaction.
-- Speaking the WoW network protocol or running an emulator server.
+- Running or shipping an emulator server. The game connects to one the players run (`docs/decisions/0013-azerothcore-server.md`).
 - Distributing any Blizzard assets.
 
 ---
@@ -68,11 +68,15 @@ Not a game client: no combat, quests, or emulator protocol. It's a **world viewe
 │  wow-alchemy FFI (native Rust library, C ABI)                    │
 │    WDT · ADT · WMO · M2 · SKIN · BLP · DBC · MPQ (wow-mpq)       │
 │                                                                  │
-│  Networking (Godot high-level multiplayer / ENet)                │
-│    player transforms · shared world clock · voice                │
+│  WowVR.Net (C#, no Godot dependency, unit-tested)                │
+│    3.3.5a client protocol: login · characters · object updates   │
+│    · creature paths · the player's position                      │
 └──────────────────────────────────────────────────────────────────┘
+          │ TCP 3724 / 8085
+          ▼
+  AzerothCore authserver + worldserver, run by the players
 
-Offline tool: tools/spawn-exporter (Python)
+Offline: tools/spawn-exporter (Python)
   AzerothCore world DB (local MySQL) → spawns/<map>/<tileX>_<tileY>.json
 ```
 
@@ -116,14 +120,16 @@ wow-vr/
 │   ├── scripts/
 │   │   ├── Xr/
 │   │   ├── World/             # TileManager, managers, floating origin
-│   │   ├── Converters/
-│   │   └── Net/
+│   │   └── Converters/
 │   └── shaders/               # terrain splat, water, sky
 ├── src/
 │   ├── WowVR.Formats/     # C# wrappers over the wow-alchemy FFI (class library)
-│   └── WowVR.Formats.Tests/
+│   ├── WowVR.Formats.Tests/
+│   ├── WowVR.Net/         # the client protocol, to play on an AzerothCore server
+│   └── WowVR.Net.Tests/
 ├── tools/
 │   ├── spawn-exporter/        # Python: AzerothCore DB → spawn JSON
+│   ├── ac-probe/              # CLI: log in to a server and print what it shows
 │   └── inspect/               # CLI: dump a file's chunks, export a BLP to PNG, etc.
 └── docs/
     ├── formats.md             # notes on each file format as implemented
@@ -200,16 +206,20 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - Stream creatures with tiles; cap active animated creatures for performance.
 - Name plates (toggleable).
 
-**Done when:** Goldshire's guards, Marshal Dughan, and the kobolds in Fargodeep Mine are all where they should be, moving naturally. Built on 2026-11-02, and `--creature-check` passes on desktop with made-up spawns. It now runs from real AzerothCore tables, turned into spawn files by `tools/spawn-exporter`, waiting for hands-on checking and a headset session. See `docs/decisions/0007-creatures.md`.
+**Done when:** Goldshire's guards, Marshal Dughan, and the kobolds in Fargodeep Mine are all where they should be, moving naturally. Built on 2026-11-02, and `--creature-check` passes on desktop with made-up spawns. It now runs from real AzerothCore tables, turned into spawn files by `tools/spawn-exporter`. Passed on 2026-11-03 after several hands-on sessions on desktop and in the headset. See `docs/decisions/0007-creatures.md`.
 
-### M7 — Multiplayer
-- Headless dedicated server build (Godot `--headless`) using high-level multiplayer over ENet.
-- Join by IP/code. Server sends a **shared world clock**, which drives day/night and creature simulation.
-- Creature movement is **deterministic per client** (seeded by spawn guid + world clock), so creatures don't need network sync.
-- Player avatars: head + hands + name, interpolated (desktop players have no tracked hands). Simple stylized avatars (not Blizzard models in this layer).
-- Voice chat: evaluate a Godot voice addon (Opus over the same connection) vs an external service.
+### M7 — Multiplayer, on an AzerothCore server
+Decided on 2026-11-03 to play on an AzerothCore server instead of our own Godot one (`docs/decisions/0013-azerothcore-server.md`). Spawn files stay as the offline mode.
+- `WowVR.Net`: log in, pick a character, enter the world, and read object updates and creature paths. Done, with `tools/ac-probe` to try it without Godot.
+- Creatures come from the server and follow its paths. Done.
+- The player's position goes to the server, so it shows what's around them. Done.
+- Game objects from the server, holidays and transports included, instead of spawn files.
+- Other players: their characters drawn from race, sex, skin, face, hair and gear, moving as the server says.
+- The sky's time from the server's clock.
+- Settings for the server and account in the menu, and offline as a choice there.
+- Voice, and VR head and hands, if wanted: a small side channel beside the server's protocol.
 
-**Done when:** two people in headsets can meet in Goldshire, talk, and see the same patrolling guard.
+**Done when:** two people log in to the same server, meet in Goldshire, and see each other and the same patrolling guard.
 
 ### M8 — Polish and distribution
 - First-run wizard: locate client, validate version, pre-convert starter zones with a progress bar.
@@ -247,6 +257,7 @@ Each milestone ends with something visible and a short acceptance check, run in 
 - StormLib: MPQ archive access
 - Godot XR Tools: locomotion and interaction
 - AzerothCore world database: spawn and waypoint data
+- AzerothCore's source (`azerothcore/azerothcore-wotlk`): the server's side of the protocol, to check packet layouts against
 
 ---
 

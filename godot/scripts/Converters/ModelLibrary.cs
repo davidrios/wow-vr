@@ -541,7 +541,8 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             var mesh = (ArrayMesh)model.Mesh.Duplicate();
             for (var i = 0; i < model.Materials.Length && i < mesh.GetSurfaceCount(); i++)
             {
-                if (GetMaterial(model.Materials[i], indoor: true) is { } material)
+                // Unlit parts, such as a lantern's glass, glow the same anywhere, and keep their material.
+                if (!model.Materials[i].Unlit && GetMaterial(model.Materials[i], indoor: true) is { } material)
                 {
                     mesh.SurfaceSetMaterial(i, material);
                 }

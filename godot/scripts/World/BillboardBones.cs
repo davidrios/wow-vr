@@ -7,21 +7,21 @@ namespace WowVR.World;
 /// <summary>
 /// Turns a creature's billboarded bones to the camera after its animation has played. Doodads
 /// do this in their vertex shader, which can't work here because a skeleton has already moved
-/// the vertices by then.
+/// the vertices by then. It isn't a skeleton modifier, because any modifier makes the skeleton
+/// back up and pose every bone a second time at each update.
 /// </summary>
-public partial class BillboardBones : SkeletonModifier3D
+public sealed class BillboardBones(IReadOnlyList<(int Bone, M2BillboardKind Kind)> bones)
 {
-    public required IReadOnlyList<(int Bone, M2BillboardKind Kind)> Bones { get; init; }
-
-    /// <summary>
-    /// The camera, set once a frame before creatures animate, rather than looked up by every one.
-    /// </summary>
+    /// <summary>The camera, set once a frame before creatures animate, rather than looked up by every one.</summary>
     public static Transform3D? Camera { get; set; }
 
-    public override void _ProcessModificationWithDelta(double delta)
+    /// <summary>
+    /// Call after the animation moves the skeleton. Each kind keeps the axes it locks and takes the
+    /// rest from the camera, so applying it to a pose it already turned gives the same result.
+    /// </summary>
+    public void Apply(Skeleton3D skeleton)
     {
-        var skeleton = GetSkeleton();
-        if (skeleton is null || Camera is not { } camera)
+        if (Camera is not { } camera)
         {
             return;
         }
@@ -29,7 +29,7 @@ public partial class BillboardBones : SkeletonModifier3D
         var toLocal = skeleton.GlobalTransform.AffineInverse();
         var view = (toLocal.Basis * camera.Basis).Orthonormalized();
         var eye = toLocal * camera.Origin;
-        foreach (var (bone, kind) in Bones)
+        foreach (var (bone, kind) in bones)
         {
             var pose = skeleton.GetBoneGlobalPose(bone);
             var facing = (eye - pose.Origin).Normalized();

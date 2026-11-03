@@ -32,6 +32,7 @@ public partial class CreatureNode : Node3D
     private bool _moving;
     private bool _placed;
     private string _soundClip = "";
+    private string _clip = "";
     private double _soundPosition;
     private BillboardBones? _billboards;
     private readonly List<MeshInstance3D> _meshes = [];
@@ -46,7 +47,8 @@ public partial class CreatureNode : Node3D
     /// <summary>A clip reached a moment that makes a sound.</summary>
     public event Action<ClipSoundEvent>? SoundEvent;
 
-    public string Clip => _player.CurrentAnimation;
+    /// <summary>Kept here, because reading it from the player makes a new string each time.</summary>
+    public string Clip => _clip;
 
     public Skeleton3D Skeleton { get; private set; } = null!;
 
@@ -73,8 +75,8 @@ public partial class CreatureNode : Node3D
 
         Skeleton.ResetBonePoses();
 
-        // Modifiers otherwise rebuild the pose and skin every frame, even of a creature that stands still.
-        // They still run whenever the animation moves a bone.
+        // Every skeleton has a hidden, active physical bone simulator for compatibility, and any active
+        // modifier otherwise rebuilds the pose and skin every frame, even of a creature that stands still.
         Skeleton.ModifierCallbackModeProcess = Skeleton3D.ModifierCallbackModeProcessEnum.Manual;
         _body.AddChild(Skeleton);
         var body = new MeshInstance3D
@@ -110,22 +112,20 @@ public partial class CreatureNode : Node3D
             attachment.AddChild(particle.Particle.NewNode(particle.Offset));
         }
 
-        if (asset.ClosedFingers.Length > 0)
-        {
-            Skeleton.AddChild(new ClosedHands { Fingers = asset.ClosedFingers });
-        }
-
         if (asset.Skeleton.Billboards.Length > 0)
         {
-            _billboards = new BillboardBones { Bones = asset.Skeleton.Billboards };
-            Skeleton.AddChild(_billboards);
+            _billboards = new BillboardBones(asset.Skeleton.Billboards);
         }
 
         // Advanced by Animate, so creatures further away can update less often.
         _player = new AnimationPlayer { RootNode = new NodePath(".."), CallbackModeProcess = AnimationMixer.AnimationCallbackModeProcess.Manual };
         _body.AddChild(_player);
-        _player.AddAnimationLibrary("", asset.Skeleton.Animations);
-        _player.AnimationFinished += _ => PlayNextIdle();
+        _player.AddAnimationLibrary("", asset.Animations);
+        _player.AnimationFinished += _ =>
+        {
+            _clip = "";
+            PlayNextIdle();
+        };
 
         if (name.Length > 0)
         {
@@ -165,6 +165,7 @@ public partial class CreatureNode : Node3D
         if (_sinceAnimated >= interval)
         {
             _player.Advance(_sinceAnimated);
+            _billboards?.Apply(Skeleton);
             _sinceAnimated = 0;
         }
     }
@@ -175,10 +176,6 @@ public partial class CreatureNode : Node3D
         if (_player.Active != animated)
         {
             _player.Active = animated;
-            if (_billboards is not null)
-            {
-                _billboards.Active = animated;
-            }
         }
     }
 
@@ -258,6 +255,7 @@ public partial class CreatureNode : Node3D
                 // Plays at the speed that keeps its feet from sliding.
                 var speed = _asset.Skeleton.WalkSpeed * _asset.Scale;
                 _player.Play(walk, BlendSeconds, speed > 0f ? walkSpeed / speed : 1f);
+                _clip = walk;
             }
             else
             {
@@ -274,19 +272,17 @@ public partial class CreatureNode : Node3D
     /// <summary>Fires the sound events the clip passed since last time. Only worth calling near the player.</summary>
     public void CheckSoundEvents()
     {
-        string clip = _player.CurrentAnimation;
-        if (clip.Length == 0)
+        var clip = _clip;
+        if (!_asset.Skeleton.ClipSounds.TryGetValue(clip, out var sounds))
         {
+            // Still noted, so coming back to a clip with sounds isn't taken for carrying on in it.
+            _soundClip = clip;
             return;
         }
 
         var position = _player.CurrentAnimationPosition;
         var (from, restarted) = clip == _soundClip ? (_soundPosition, position < _soundPosition) : (position, false);
         (_soundClip, _soundPosition) = (clip, position);
-        if (!_asset.Skeleton.ClipSounds.TryGetValue(clip, out var sounds))
-        {
-            return;
-        }
 
         foreach (var sound in sounds)
         {
@@ -325,6 +321,7 @@ public partial class CreatureNode : Node3D
             {
                 // Fidgets are cosmetic, so they needn't match between players.
                 _player.Play(clip.Name, BlendSeconds);
+                _clip = clip.Name;
                 return;
             }
         }

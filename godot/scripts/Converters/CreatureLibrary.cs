@@ -46,13 +46,16 @@ public sealed class CreatureSkeletonAsset
     /// <summary>Empty for a model with no closed-hands sequence.</summary>
     public FingerPose[] RightFist { get; init; } = [];
     public FingerPose[] LeftFist { get; init; } = [];
+
+    /// <summary>The animations with a closed right and left hand, made when first asked for. Without either, <see cref="Animations"/>.</summary>
+    public ConcurrentDictionary<(bool Right, bool Left), AnimationLibrary> WithFists { get; } = new();
 }
 
 /// <summary>A display ready to place. Each placed creature gets its own skeleton.</summary>
 public sealed record CreatureAsset(CreatureSkeletonAsset Skeleton, ArrayMesh Mesh, float Scale, IReadOnlyList<CreatureItemAsset> Items, CreatureSoundSet? Sounds, IReadOnlyList<CreatureParticle> Particles)
 {
-    /// <summary>Fingers of hands with something in them.</summary>
-    public FingerPose[] ClosedFingers { get; init; } = [];
+    /// <summary>The skeleton's animations, with the fingers of hands that hold something closed.</summary>
+    public required AnimationLibrary Animations { get; init; }
 }
 
 /// <summary>Builds creatures off the main thread, once per display and skeleton per model.</summary>
@@ -121,7 +124,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                 .ToList();
             return new CreatureAsset(model.Skeleton, mesh, look.Scale, items, look.Sounds, particles)
             {
-                ClosedFingers = [.. held.Contains(RightPalmAttachment) ? model.Skeleton.RightFist : [], .. held.Contains(LeftPalmAttachment) ? model.Skeleton.LeftFist : []],
+                Animations = AnimationsHolding(model.Skeleton, held.Contains(RightPalmAttachment), held.Contains(LeftPalmAttachment)),
             };
         }
         catch (WowAlchemyException e)
@@ -155,6 +158,57 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
     }
 
     private static string BoneName(int bone) => $"b{bone}";
+
+    /// <summary>
+    /// The animations with the fingers of each hand that holds something fixed in a fist. Done in
+    /// the animations rather than a skeleton modifier, because any modifier makes the skeleton
+    /// pose every bone twice and back them all up at each update.
+    /// </summary>
+    private static AnimationLibrary AnimationsHolding(CreatureSkeletonAsset skeleton, bool right, bool left)
+    {
+        FingerPose[] fingers = [.. right ? skeleton.RightFist : [], .. left ? skeleton.LeftFist : []];
+        if (fingers.Length == 0)
+        {
+            return skeleton.Animations;
+        }
+
+        return skeleton.WithFists.GetOrAdd((right, left), _ =>
+        {
+            var library = new AnimationLibrary();
+            foreach (var name in skeleton.Animations.GetAnimationList())
+            {
+                var animation = (Animation)skeleton.Animations.GetAnimation(name).Duplicate();
+                foreach (var finger in fingers)
+                {
+                    var text = $"{CreatureNode.SkeletonName}:{BoneName(finger.Bone)}";
+                    var path = new NodePath(text);
+                    for (var track = animation.GetTrackCount() - 1; track >= 0; track--)
+                    {
+                        // NodePath compares by reference.
+                        if (animation.TrackGetPath(track).ToString() == text)
+                        {
+                            animation.RemoveTrack(track);
+                        }
+                    }
+
+                    animation.PositionTrackInsertKey(AddTrack(animation, Animation.TrackType.Position3D, path), 0, finger.Position);
+                    animation.RotationTrackInsertKey(AddTrack(animation, Animation.TrackType.Rotation3D, path), 0, finger.Rotation);
+                    animation.ScaleTrackInsertKey(AddTrack(animation, Animation.TrackType.Scale3D, path), 0, finger.Scale);
+                }
+
+                library.AddAnimation(name, animation);
+            }
+
+            return library;
+        });
+    }
+
+    private static int AddTrack(Animation animation, Animation.TrackType type, NodePath path)
+    {
+        var index = animation.AddTrack(type);
+        animation.TrackSetPath(index, path);
+        return index;
+    }
 
     private (M2SkinnedModel, CreatureSkeletonAsset)? LoadModel(string path)
     {

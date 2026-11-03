@@ -125,6 +125,12 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _swim.Set("controller", _leftController);
         _vignette = GetNode<Node3D>("XRCamera3D/Vignette");
         _fly.Set("controller", _leftController);
+
+        // XR Tools' way of not sliding down slopes pulls the body toward the ground's normal, which
+        // leans uphill, and Godot moves a body standing on a floor along it by that pull's level
+        // part: standing still, the player crept uphill at about 0.18 yards a second. With plain
+        // gravity, Godot's own floor_stop_on_slope keeps them put, as for the desktop player.
+        _body.Get("default_physics").AsGodotObject().Set("stop_on_slope", false);
         _teleport.Set("step_size", TeleportStepSize);
 
         Menu = _wristMenu.Call("get_scene_instance").As<WorldMenu>();

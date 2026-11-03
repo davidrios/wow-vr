@@ -36,6 +36,7 @@ public partial class MovementCheck : Node
         // Lets Main finish starting the world, which comes after adding this node.
         await Seconds(0.1);
         await StandsOnTheGround("At the start");
+        await StaysPut("Standing still at the start");
 
         var start = Player.Feet;
         await WalksAlongTheGround();
@@ -138,6 +139,7 @@ public partial class MovementCheck : Node
         var walked = new Vector2(Player.Feet.X - before.X, Player.Feet.Z - before.Z).Length();
         Check("Left stick walks at walking speed", walked > 3f && walked < MaxWalkedInASecond, $"moved {walked:F1} yards in a second");
         await Seconds(0.5);
+        await StaysPut("Standing still after walking, in VR");
 
         // Turning.
         var basis = xr.GlobalBasis;
@@ -362,6 +364,17 @@ public partial class MovementCheck : Node
     }
 
     private bool InWater() => !Player.OnGround && Tiles.LiquidAt(Player.Feet + Vector3.Up * 2f) is { } liquid && liquid.Surface > Player.Feet.Y;
+
+    /// <summary>With no input, the player stays where they are, rather than creeping along the ground.</summary>
+    private async Task StaysPut(string when)
+    {
+        // Lets earlier movement finish stopping: XR Tools' drag takes over a second to bring a walk to rest.
+        await Seconds(1.5);
+        var before = Player.Feet;
+        await Seconds(3);
+        var drift = new Vector2(Player.Feet.X - before.X, Player.Feet.Z - before.Z).Length();
+        Check(when, drift < 0.05f, $"moved {drift:F3} yards in 3 seconds");
+    }
 
     private async Task StandsOnTheGround(string when)
     {

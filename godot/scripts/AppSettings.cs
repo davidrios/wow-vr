@@ -12,17 +12,30 @@ public enum PlayerScale
     PlayerSized,
 }
 
+public enum VideoPreset
+{
+    Low,
+    Medium,
+    High,
+}
+
 /// <summary>
 /// Player settings, stored in user://settings.cfg. For the client path, the
 /// WOWVR_CLIENT_PATH environment variable overrides the stored value.
 /// </summary>
 public static class AppSettings
 {
-    private const string FilePath = "user://settings.cfg";
+    private const string DefaultFilePath = "user://settings.cfg";
+    private const string SettingsArgument = "--settings=";
+
+    /// <summary><c>--settings=file</c> reads and saves another file, to compare settings without touching the player's own.</summary>
+    private static readonly string FilePath =
+        Array.Find(OS.GetCmdlineUserArgs(), a => a.StartsWith(SettingsArgument))?[SettingsArgument.Length..] ?? DefaultFilePath;
     private const string ClientSection = "client";
     private const string MovementSection = "movement";
     private const string AudioSection = "audio";
     private const string InterfaceSection = "interface";
+    private const string VideoSection = "video";
     private const string PathKey = "path";
     private const string EnvironmentVariable = "WOWVR_CLIENT_PATH";
 
@@ -183,25 +196,141 @@ public static class AppSettings
     public static float WorldScale =>
         Scale == PlayerScale.PlayerSized ? YardsPerMeter * PlayerSizedFactor : YardsPerMeter;
 
-    private static Variant Read(string section, string key, Variant fallback)
+    public const float MinRenderScale = 0.5f;
+
+    /// <summary>
+    /// The share of the screen's resolution the world is drawn at, upscaled with FSR below 1.
+    /// Only the GPU's work depends on it.
+    /// </summary>
+    public static float RenderScale
     {
-        var config = new ConfigFile();
-        return config.Load(FilePath) == Error.Ok ? config.GetValue(section, key, fallback) : fallback;
+        get => Read(VideoSection, "render_scale", 1f).AsSingle();
+        set => WriteMovement(VideoSection, "render_scale", Mathf.Clamp(value, MinRenderScale, 1f));
     }
 
-    private static void WriteMovement(string key, Variant value)
+    public const float MinCreatureRange = 50f;
+    public const float MaxCreatureRange = 150f;
+
+    /// <summary>Yards from the player that creatures show.</summary>
+    public static float CreatureRange
     {
-        Write(MovementSection, key, value);
+        get => Read(VideoSection, "creature_range", MaxCreatureRange).AsSingle();
+        set => WriteMovement(VideoSection, "creature_range", Mathf.Clamp(value, MinCreatureRange, MaxCreatureRange));
+    }
+
+    public const int MinAnimatedCreatures = 10;
+    public const int MaxAnimatedCreatures = 60;
+
+    /// <summary>How many of the nearest creatures move and animate. Further ones stand still, and cost little.</summary>
+    public static int AnimatedCreatures
+    {
+        get => Read(VideoSection, "animated_creatures", MaxAnimatedCreatures).AsInt32();
+        set => WriteMovement(VideoSection, "animated_creatures", Mathf.Clamp(value, MinAnimatedCreatures, MaxAnimatedCreatures));
+    }
+
+    public const float MinDetailDistance = 0.3f;
+
+    /// <summary>Multiplies how far away doodads show, from <see cref="MinDetailDistance"/> to 1, the full range.</summary>
+    public static float DetailDistance
+    {
+        get => Read(VideoSection, "detail_distance", 1f).AsSingle();
+        set => WriteMovement(VideoSection, "detail_distance", Mathf.Clamp(value, MinDetailDistance, 1f));
+    }
+
+    /// <summary>
+    /// Animates every creature every frame. Off, those further than 25 yards update 12 to 30 times a
+    /// second, which in a city is about 2.5 ms a frame less.
+    /// </summary>
+    public static bool FullRateAnimation
+    {
+        get => Read(VideoSection, "full_rate_animation", false).AsBool();
+        set => WriteMovement(VideoSection, "full_rate_animation", value);
+    }
+
+    /// <summary>Doodads' particles: torches' flames, smoke and the like. Creatures and objects keep theirs.</summary>
+    public static bool Particles
+    {
+        get => Read(VideoSection, "particles", true).AsBool();
+        set => WriteMovement(VideoSection, "particles", value);
+    }
+
+    /// <summary>What a preset puts in each video setting. The user's own changes after it stay.</summary>
+    public static void ApplyPreset(VideoPreset preset)
+    {
+        var (scale, shadows, occlusion, grass, creatures, animated, detail, particles) = preset switch
+        {
+            VideoPreset.Low => (0.7f, false, false, false, 70f, 15, 0.4f, false),
+            VideoPreset.Medium => (0.85f, true, false, true, 100f, 30, 0.7f, true),
+            _ => (1f, true, true, true, MaxCreatureRange, MaxAnimatedCreatures, 1f, true),
+        };
+
+        _batching = true;
+        try
+        {
+            RenderScale = scale;
+            Shadows = shadows;
+            AmbientOcclusion = occlusion;
+            GroundCover = grass;
+            CreatureRange = creatures;
+            AnimatedCreatures = animated;
+            DetailDistance = detail;
+            Particles = particles;
+
+            // Off even on High, which it would take below 180 FPS in cities on a fast PC.
+            FullRateAnimation = false;
+        }
+        finally
+        {
+            _batching = false;
+        }
+
+        Save();
         Changed?.Invoke();
+    }
+
+    private static ConfigFile? _config;
+    private static bool _batching;
+
+    /// <summary>Read once and kept, because some settings are read several times a second.</summary>
+    private static ConfigFile Config
+    {
+        get
+        {
+            if (_config is null)
+            {
+                _config = new ConfigFile();
+                _config.Load(FilePath); // A missing file is fine: it's made on the first save.
+            }
+
+            return _config;
+        }
+    }
+
+    private static Variant Read(string section, string key, Variant fallback) => Config.GetValue(section, key, fallback);
+
+    private static void WriteMovement(string key, Variant value) => WriteMovement(MovementSection, key, value);
+
+    private static void WriteMovement(string section, string key, Variant value)
+    {
+        Write(section, key, value);
+        if (!_batching)
+        {
+            Changed?.Invoke();
+        }
     }
 
     private static void Write(string section, string key, Variant value)
     {
-        var config = new ConfigFile();
-        config.Load(FilePath); // A missing file is fine: we create it below.
-        config.SetValue(section, key, value);
+        Config.SetValue(section, key, value);
+        if (!_batching)
+        {
+            Save();
+        }
+    }
 
-        var result = config.Save(FilePath);
+    private static void Save()
+    {
+        var result = Config.Save(FilePath);
         if (result != Error.Ok)
         {
             GD.PushError($"Could not save {FilePath}: {result}");

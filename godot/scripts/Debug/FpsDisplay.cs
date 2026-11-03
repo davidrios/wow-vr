@@ -9,6 +9,9 @@ namespace WowVR.Debug;
 public partial class FpsDisplay : Label3D
 {
     private const double UpdateInterval = 0.25;
+
+    /// <summary>Redrawing the graph costs a call per vertex, so it's redrawn this often at most.</summary>
+    private const double GraphInterval = 1.0 / 30;
     private const int GraphFrames = 180;
     private const float GraphWidth = 0.36f;
     private const float GraphHeight = 0.09f;
@@ -31,6 +34,8 @@ public partial class FpsDisplay : Label3D
     private int _nextFrame;
     private double _sinceUpdate;
     private double _worstFrame;
+    private double _sinceGraph;
+    private double _refreshRate = 60;
 
     public override void _Ready()
     {
@@ -76,14 +81,19 @@ public partial class FpsDisplay : Label3D
         _frames[_nextFrame] = delta;
         _nextFrame = (_nextFrame + 1) % GraphFrames;
 
-        var refreshRate = RefreshRate();
-        DrawGraph(1.0 / refreshRate);
+        _sinceGraph += delta;
+        if (_sinceGraph >= GraphInterval)
+        {
+            _sinceGraph = 0;
+            DrawGraph(1.0 / _refreshRate);
+        }
 
         _worstFrame = Mathf.Max(_worstFrame, delta);
         _sinceUpdate += delta;
         if (_sinceUpdate >= UpdateInterval)
         {
-            Text = $"{Engine.GetFramesPerSecond():F0} FPS / {refreshRate:F0} Hz\nworst {_worstFrame * 1000:F1} ms";
+            _refreshRate = RefreshRate();
+            Text = $"{Engine.GetFramesPerSecond():F0} FPS / {_refreshRate:F0} Hz\nworst {_worstFrame * 1000:F1} ms";
             _sinceUpdate = 0;
             _worstFrame = 0;
         }

@@ -84,6 +84,7 @@ public partial class TileObjectsNode : Node3D
     }
 
     private readonly List<PortalWmo> _portalWmos = [];
+    private readonly List<(MultiMeshInstance3D Item, float Range)> _ranged = [];
     private readonly List<PendingItem> _pending = [];
     private readonly List<CollisionGroup> _collision = [];
     private readonly Dictionary<CollisionGroup, WmoGroupBody> _bodies = [];
@@ -149,11 +150,7 @@ public partial class TileObjectsNode : Node3D
         {
             AddDoodadCell(batch);
 
-            _pending.Add(new PendingItem(batch.Center, () => AddChild(new MultiMeshInstance3D
-            {
-                Multimesh = batch.MultiMesh,
-                VisibilityRangeEnd = batch.VisibleRange,
-            })));
+            _pending.Add(new PendingItem(batch.Center, () => AddChild(Ranged(new MultiMeshInstance3D { Multimesh = batch.MultiMesh }, batch.VisibleRange))));
         }
 
         foreach (var wmo in objects.Wmos)
@@ -187,12 +184,11 @@ public partial class TileObjectsNode : Node3D
                     // Their transforms already include the WMO's, so they go beside its node.
                     _pending.Add(new PendingItem(batch.Center, () =>
                     {
-                        var item = new MultiMeshInstance3D
+                        var item = Ranged(new MultiMeshInstance3D
                         {
                             Multimesh = batch.MultiMesh,
-                            VisibilityRangeEnd = batch.VisibleRange,
                             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-                        };
+                        }, batch.VisibleRange);
                         AddChild(item);
                         Track(item, groupIndex);
                     }));
@@ -250,6 +246,30 @@ public partial class TileObjectsNode : Node3D
             }
         }
     }
+
+    /// <summary>Shows a doodad batch up to its range, shortened by the detail distance setting.</summary>
+    private MultiMeshInstance3D Ranged(MultiMeshInstance3D item, float range)
+    {
+        item.VisibilityRangeEnd = range * AppSettings.DetailDistance;
+        _ranged.Add((item, range));
+        return item;
+    }
+
+    private void ApplySettings()
+    {
+        var detail = AppSettings.DetailDistance;
+        foreach (var (item, range) in _ranged)
+        {
+            item.VisibilityRangeEnd = range * detail;
+        }
+
+        // Particles are looked at again next frame, as if the player had moved.
+        _collisionChecked = false;
+    }
+
+    public override void _EnterTree() => AppSettings.Changed += ApplySettings;
+
+    public override void _ExitTree() => AppSettings.Changed -= ApplySettings;
 
     /// <summary>Collision stays whether or not a doodad's group is showing.</summary>
     private void AddDoodadCell(DoodadBatch batch)
@@ -380,9 +400,10 @@ public partial class TileObjectsNode : Node3D
     {
         var local = ToLocal(Player.Feet);
         var added = 0;
+        var enabled = AppSettings.Particles;
         foreach (var cell in _doodadCells)
         {
-            if (cell.Model.Particles.Length == 0 || added == MaxNewParticlesPerFrame || !cell.Bounds.Grow(ParticleRange).HasPoint(local))
+            if (!enabled || cell.Model.Particles.Length == 0 || added == MaxNewParticlesPerFrame || !cell.Bounds.Grow(ParticleRange).HasPoint(local))
             {
                 continue;
             }
@@ -408,7 +429,7 @@ public partial class TileObjectsNode : Node3D
 
         foreach (var (key, holder) in _doodadParticles)
         {
-            if (key.Cell.Transforms[key.Copy].Origin.DistanceTo(local) > ParticleKeepRange)
+            if (!enabled || key.Cell.Transforms[key.Copy].Origin.DistanceTo(local) > ParticleKeepRange)
             {
                 holder.QueueFree();
                 _doodadParticles.Remove(key);

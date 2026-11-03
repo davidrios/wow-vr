@@ -13,18 +13,22 @@ public partial class BillboardBones : SkeletonModifier3D
 {
     public required IReadOnlyList<(int Bone, M2BillboardKind Kind)> Bones { get; init; }
 
+    /// <summary>
+    /// The camera, set once a frame before creatures animate, rather than looked up by every one.
+    /// </summary>
+    public static Transform3D? Camera { get; set; }
+
     public override void _ProcessModificationWithDelta(double delta)
     {
         var skeleton = GetSkeleton();
-        var camera = GetViewport().GetCamera3D();
-        if (skeleton is null || camera is null)
+        if (skeleton is null || Camera is not { } camera)
         {
             return;
         }
 
         var toLocal = skeleton.GlobalTransform.AffineInverse();
-        var view = (toLocal.Basis * camera.GlobalBasis).Orthonormalized();
-        var eye = toLocal * camera.GlobalPosition;
+        var view = (toLocal.Basis * camera.Basis).Orthonormalized();
+        var eye = toLocal * camera.Origin;
         foreach (var (bone, kind) in Bones)
         {
             var pose = skeleton.GetBoneGlobalPose(bone);

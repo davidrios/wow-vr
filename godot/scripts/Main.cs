@@ -40,6 +40,7 @@ public partial class Main : Node3D
     private const string ContinentCheckArgument = "--continent-check";
     private const string LoadingCheckArgument = "--loading-check";
     private const string HoldLoadingArgument = "--hold-loading";
+    private const string BenchArgument = "--bench";
 
     /// <summary>Kept open across reloads, because tile and model workers can still be reading when the old world goes.</summary>
     private static MpqAssetSource? _openSource;
@@ -93,6 +94,8 @@ public partial class Main : Node3D
         _player = LoadPlayer();
         AddChild(_player);
         GetViewport().GetCamera3D()?.AddChild(new FpsDisplay());
+        AppSettings.Changed += ApplyRenderScale;
+        ApplyRenderScale();
 
         if (AppSettings.ClientPath.Length > 0)
         {
@@ -105,6 +108,21 @@ public partial class Main : Node3D
 
             _ = StartWorldAsync(AppSettings.ClientPath);
         }
+    }
+
+    public override void _ExitTree() => AppSettings.Changed -= ApplyRenderScale;
+
+    /// <summary>
+    /// Draws the world at less than the screen's resolution, which only the GPU feels. Desktop
+    /// upscales with FSR. VR scales each eye bilinearly: with no anti-aliasing, FSR's sharpening
+    /// makes edges crawl, differently in each eye, and the headset resamples the image again anyway.
+    /// </summary>
+    private void ApplyRenderScale()
+    {
+        var scale = AppSettings.RenderScale;
+        var viewport = GetViewport();
+        viewport.Scaling3DMode = scale < 1f && !viewport.UseXR ? Viewport.Scaling3DModeEnum.Fsr : Viewport.Scaling3DModeEnum.Bilinear;
+        viewport.Scaling3DScale = scale;
     }
 
     /// <summary>The grey floor stays up until the client is open, or if it can't be opened.</summary>
@@ -200,9 +218,12 @@ public partial class Main : Node3D
                 AddChild(new ContinentCheck { Tiles = tiles, Player = player, Map = startMap });
             }
 
-            if (Array.IndexOf(arguments, OpenMenuArgument) >= 0)
+            // --open-menu=video opens it at the video settings.
+            var openMenu = arguments.FirstOrDefault(a => a.StartsWith(OpenMenuArgument));
+            if (openMenu is not null)
             {
                 player.SetMenuOpen(true);
+                player.Menu.ShowVideoPage(openMenu == OpenMenuArgument + "=video");
             }
 
             if (Array.IndexOf(arguments, MovementCheckArgument) >= 0)
@@ -226,6 +247,11 @@ public partial class Main : Node3D
             if (Array.IndexOf(arguments, CreatureCheckArgument) >= 0)
             {
                 AddChild(new CreatureCheck { Tiles = tiles, Creatures = creatures });
+            }
+
+            if (Array.IndexOf(arguments, BenchArgument) >= 0)
+            {
+                AddChild(new Benchmark { Tiles = tiles, Player = _player, Creatures = creatures, Loading = _loading });
             }
 
             if (walkTour || flyTour)

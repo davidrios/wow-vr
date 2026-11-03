@@ -20,6 +20,9 @@ public partial class WorldMenu : PanelContainer
     private HSlider _time = null!;
     private CheckButton _timePasses = null!;
     private SkyController? _sky;
+    private VBoxContainer _mainPage = null!;
+    private VBoxContainer _videoPage = null!;
+    private readonly List<Action> _refreshVideo = [];
 
     public IPlayer? Player { get; set; }
 
@@ -34,9 +37,17 @@ public partial class WorldMenu : PanelContainer
         }
 
         AddChild(margin);
-        var rows = new VBoxContainer();
-        rows.AddThemeConstantOverride("separation", 8);
-        margin.AddChild(rows);
+        // Only one shows, and a container gives the hidden one no room.
+        var pages = new VBoxContainer();
+        margin.AddChild(pages);
+        var rows = Page();
+        _mainPage = rows;
+        _videoPage = Page();
+        _videoPage.Visible = false;
+        pages.AddChild(rows);
+        pages.AddChild(_videoPage);
+        BuildVideoPage(_videoPage);
+        AppSettings.Changed += RefreshVideoPage;
 
         _continents = new HBoxContainer();
         rows.AddChild(_continents);
@@ -68,9 +79,9 @@ public partial class WorldMenu : PanelContainer
         var toggles = new HBoxContainer();
         toggles.AddChild(_fly);
         toggles.AddChild(namePlates);
-        var unlockFps = new CheckButton { Text = "Unlock FPS (desktop)", ButtonPressed = AppSettings.UnlockFps, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        unlockFps.Toggled += on => AppSettings.UnlockFps = on;
-        toggles.AddChild(unlockFps);
+        var video = new Button { Text = "Video settings", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        video.Pressed += () => ShowVideoPage(true);
+        toggles.AddChild(video);
         rows.AddChild(toggles);
 
         rows.AddChild(new Label { Text = "Fly speed" });
@@ -95,18 +106,7 @@ public partial class WorldMenu : PanelContainer
 
         var smoothTurn = new CheckButton { Text = "Smooth turning (VR)", ButtonPressed = AppSettings.SmoothTurn };
         smoothTurn.Toggled += on => AppSettings.SmoothTurn = on;
-        smoothTurn.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-
-        // Shares a row, because the wrist menu has no room for another.
-        var shadows = new CheckButton { Text = "Shadows", ButtonPressed = AppSettings.Shadows, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        shadows.Toggled += on => AppSettings.Shadows = on;
-        var graphics = new HBoxContainer();
-        graphics.AddChild(smoothTurn);
-        graphics.AddChild(shadows);
-        var groundCover = new CheckButton { Text = "Grass", ButtonPressed = AppSettings.GroundCover, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        groundCover.Toggled += on => AppSettings.GroundCover = on;
-        graphics.AddChild(groundCover);
-        rows.AddChild(graphics);
+        rows.AddChild(smoothTurn);
 
         rows.AddChild(new Label { Text = "Comfort vignette size, left is off (VR)" });
         var vignette = new HSlider
@@ -122,7 +122,10 @@ public partial class WorldMenu : PanelContainer
 
         rows.AddChild(new HSeparator());
 
-        rows.AddChild(new Label { Text = "Time of day" });
+        // The label shares its row, because the wrist menu has no room for another.
+        var timeRow = new HBoxContainer();
+        timeRow.AddChild(new Label { Text = "Time of day", SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        rows.AddChild(timeRow);
         _time = new HSlider { MinValue = 0, MaxValue = LightTable.TicksPerDay - 1, Step = 10 };
         _time.ValueChanged += value =>
         {
@@ -132,7 +135,6 @@ public partial class WorldMenu : PanelContainer
                 _sky.Refresh();
             }
         };
-        rows.AddChild(_time);
 
         _timePasses = new CheckButton { Text = "Time passes", ButtonPressed = true };
         _timePasses.Toggled += on =>
@@ -142,23 +144,8 @@ public partial class WorldMenu : PanelContainer
                 _sky.TimePasses = on;
             }
         };
-        // Shares a row, because the wrist menu has no room for another.
-        var fps = new CheckButton { Text = "FPS display", ButtonPressed = AppSettings.FpsDisplay, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        fps.Toggled += on => AppSettings.FpsDisplay = on;
-        _timePasses.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        var timeAndFps = new HBoxContainer();
-        timeAndFps.AddChild(_timePasses);
-        timeAndFps.AddChild(fps);
-        var occlusion = new CheckButton { Text = "Occlusion", ButtonPressed = AppSettings.AmbientOcclusion, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        occlusion.Toggled += on => AppSettings.AmbientOcclusion = on;
-        timeAndFps.AddChild(occlusion);
-        rows.AddChild(timeAndFps);
-
-        // Side by side, because the menu has no room for two more rows.
-        var occlusionSliders = new HBoxContainer();
-        occlusionSliders.AddChild(LabeledSlider("Occlusion strength", 0f, AppSettings.MaxOcclusionStrength, 0.25, AppSettings.OcclusionStrength, value => AppSettings.OcclusionStrength = value));
-        occlusionSliders.AddChild(LabeledSlider("Occlusion size", AppSettings.MinOcclusionSize, AppSettings.MaxOcclusionSize, 0.05, AppSettings.OcclusionSize, value => AppSettings.OcclusionSize = value));
-        rows.AddChild(occlusionSliders);
+        timeRow.AddChild(_timePasses);
+        rows.AddChild(_time);
 
         rows.AddChild(new Label { Text = "Music volume" });
         var music = new HSlider { MinValue = 0, MaxValue = 1, Step = 0.05, Value = AppSettings.MusicVolume };
@@ -175,6 +162,114 @@ public partial class WorldMenu : PanelContainer
         rows.AddChild(close);
     }
 
+    public override void _ExitTree() => AppSettings.Changed -= RefreshVideoPage;
+
+    private static VBoxContainer Page()
+    {
+        var page = new VBoxContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
+        page.AddThemeConstantOverride("separation", 8);
+        return page;
+    }
+
+    public void ShowVideoPage(bool show)
+    {
+        _mainPage.Visible = !show;
+        _videoPage.Visible = show;
+    }
+
+    /// <summary>
+    /// What costs frame time, cheapest to lose first. The numbers are from <c>--bench</c> on a fast
+    /// PC; on a slower GPU, render scale and occlusion matter more.
+    /// </summary>
+    private void BuildVideoPage(VBoxContainer rows)
+    {
+        rows.AddChild(new Label { Text = "Video settings. Presets set everything below." });
+
+        // Buttons rather than an OptionButton, whose popup doesn't open on the wrist menu.
+        var presets = new HBoxContainer();
+        foreach (var preset in new[] { VideoPreset.Low, VideoPreset.Medium, VideoPreset.High })
+        {
+            var button = new Button { Text = preset.ToString(), SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            button.Pressed += () => AppSettings.ApplyPreset(preset);
+            presets.AddChild(button);
+        }
+
+        rows.AddChild(presets);
+
+        var scaleAndDetail = new HBoxContainer();
+        scaleAndDetail.AddChild(VideoSlider("Render scale", AppSettings.MinRenderScale, 1f, 0.05, "0%", () => AppSettings.RenderScale, v => AppSettings.RenderScale = v));
+        scaleAndDetail.AddChild(VideoSlider("Detail distance", AppSettings.MinDetailDistance, 1f, 0.05, "0%", () => AppSettings.DetailDistance, v => AppSettings.DetailDistance = v));
+        rows.AddChild(scaleAndDetail);
+
+        var creatures = new HBoxContainer();
+        creatures.AddChild(VideoSlider("Creature distance", AppSettings.MinCreatureRange, AppSettings.MaxCreatureRange, 10, "0' yd'", () => AppSettings.CreatureRange, v => AppSettings.CreatureRange = v));
+        creatures.AddChild(VideoSlider("Animated creatures", AppSettings.MinAnimatedCreatures, AppSettings.MaxAnimatedCreatures, 5, "0", () => AppSettings.AnimatedCreatures, v => AppSettings.AnimatedCreatures = (int)v));
+        rows.AddChild(creatures);
+
+        var effects = new HBoxContainer();
+        effects.AddChild(VideoToggle("Shadows", () => AppSettings.Shadows, on => AppSettings.Shadows = on));
+        effects.AddChild(VideoToggle("Grass", () => AppSettings.GroundCover, on => AppSettings.GroundCover = on));
+        effects.AddChild(VideoToggle("Particles", () => AppSettings.Particles, on => AppSettings.Particles = on));
+        rows.AddChild(effects);
+
+        var toggles = new HBoxContainer();
+        toggles.AddChild(VideoToggle("Ambient occlusion", () => AppSettings.AmbientOcclusion, on => AppSettings.AmbientOcclusion = on));
+        toggles.AddChild(VideoToggle("Full-rate far animation", () => AppSettings.FullRateAnimation, on => AppSettings.FullRateAnimation = on));
+        rows.AddChild(toggles);
+        var occlusionSliders = new HBoxContainer();
+        occlusionSliders.AddChild(VideoSlider("Occlusion strength", 0f, AppSettings.MaxOcclusionStrength, 0.25, "0.00", () => AppSettings.OcclusionStrength, v => AppSettings.OcclusionStrength = v));
+        occlusionSliders.AddChild(VideoSlider("Occlusion size", AppSettings.MinOcclusionSize, AppSettings.MaxOcclusionSize, 0.05, "0.00", () => AppSettings.OcclusionSize, v => AppSettings.OcclusionSize = v));
+        rows.AddChild(occlusionSliders);
+
+        var frames = new HBoxContainer();
+        frames.AddChild(VideoToggle("Unlock FPS (desktop)", () => AppSettings.UnlockFps, on => AppSettings.UnlockFps = on));
+        frames.AddChild(VideoToggle("FPS display", () => AppSettings.FpsDisplay, on => AppSettings.FpsDisplay = on));
+        rows.AddChild(frames);
+
+        var back = new Button { Text = "Back" };
+        back.Pressed += () => ShowVideoPage(false);
+        rows.AddChild(back);
+    }
+
+    private CheckButton VideoToggle(string text, Func<bool> read, Action<bool> write)
+    {
+        var toggle = new CheckButton { Text = text, ButtonPressed = read(), SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        toggle.Toggled += on => write(on);
+        _refreshVideo.Add(() => toggle.SetPressedNoSignal(read()));
+        return toggle;
+    }
+
+    /// <summary>A slider that shows its value, and follows presets.</summary>
+    private VBoxContainer VideoSlider(string name, float min, float max, double step, string format, Func<float> read, Action<float> write)
+    {
+        string Text(double v) => $"{name}: {v.ToString(format, System.Globalization.CultureInfo.InvariantCulture)}";
+        var label = new Label { Text = Text(read()) };
+        var slider = new HSlider { MinValue = min, MaxValue = max, Step = step, Value = read() };
+        slider.ValueChanged += v =>
+        {
+            label.Text = Text(v);
+            write((float)v);
+        };
+        _refreshVideo.Add(() =>
+        {
+            slider.SetValueNoSignal(read());
+            label.Text = Text(read());
+        });
+
+        var box = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        box.AddChild(label);
+        box.AddChild(slider);
+        return box;
+    }
+
+    private void RefreshVideoPage()
+    {
+        foreach (var refresh in _refreshVideo)
+        {
+            refresh();
+        }
+    }
+
     private static Button ScaleButton(string text, PlayerScale value, ButtonGroup group)
     {
         var button = new Button
@@ -187,23 +282,6 @@ public partial class WorldMenu : PanelContainer
         };
         button.Pressed += () => AppSettings.Scale = value;
         return button;
-    }
-
-    /// <summary>A slider that shows its value, for settings tuned by eye.</summary>
-    private static VBoxContainer LabeledSlider(string name, float min, float max, double step, float value, Action<float> changed)
-    {
-        var label = new Label { Text = $"{name}: {value:0.00}" };
-        var slider = new HSlider { MinValue = min, MaxValue = max, Step = step, Value = value };
-        slider.ValueChanged += v =>
-        {
-            label.Text = $"{name}: {v:0.00}";
-            changed((float)v);
-        };
-
-        var box = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        box.AddChild(label);
-        box.AddChild(slider);
-        return box;
     }
 
     public void SetSky(SkyController sky)

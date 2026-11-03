@@ -38,6 +38,7 @@ public partial class CreatureNode : Node3D
     private Color _light = new(1f, 1f, 1f, 0f);
     private Color _lightTarget = new(1f, 1f, 1f, 0f);
     private bool _lightKnown;
+    private double _sinceAnimated;
 
     /// <summary>How far the floor's light has replaced the sky's, from 0 to 1.</summary>
     public float FloorLightAmount => _light.A;
@@ -71,6 +72,10 @@ public partial class CreatureNode : Node3D
         }
 
         Skeleton.ResetBonePoses();
+
+        // Modifiers otherwise rebuild the pose and skin every frame, even of a creature that stands still.
+        // They still run whenever the animation moves a bone.
+        Skeleton.ModifierCallbackModeProcess = Skeleton3D.ModifierCallbackModeProcessEnum.Manual;
         _body.AddChild(Skeleton);
         var body = new MeshInstance3D
         {
@@ -116,7 +121,8 @@ public partial class CreatureNode : Node3D
             Skeleton.AddChild(_billboards);
         }
 
-        _player = new AnimationPlayer { RootNode = new NodePath("..") };
+        // Advanced by Animate, so creatures further away can update less often.
+        _player = new AnimationPlayer { RootNode = new NodePath(".."), CallbackModeProcess = AnimationMixer.AnimationCallbackModeProcess.Manual };
         _body.AddChild(_player);
         _player.AddAnimationLibrary("", asset.Skeleton.Animations);
         _player.AnimationFinished += _ => PlayNextIdle();
@@ -140,7 +146,28 @@ public partial class CreatureNode : Node3D
     }
 
     /// <summary>Starts animating, once the creature is in the scene.</summary>
-    public void StartIdle() => PlayNextIdle();
+    public void StartIdle()
+    {
+        PlayNextIdle();
+        _player.Advance(0);
+
+        // Spread out, so creatures on the same rate don't all update in the same frame.
+        _sinceAnimated = Random.Shared.NextDouble() * 0.05;
+    }
+
+    /// <summary>
+    /// Moves the animation on, at most once every <paramref name="interval"/> seconds. Most of a
+    /// creature's cost is posing its skeleton, so far ones update less often.
+    /// </summary>
+    public void Animate(double delta, double interval)
+    {
+        _sinceAnimated += delta;
+        if (_sinceAnimated >= interval)
+        {
+            _player.Advance(_sinceAnimated);
+            _sinceAnimated = 0;
+        }
+    }
 
     /// <summary>Stops bones moving, keeping the current pose, for creatures past the animation cap.</summary>
     public void SetAnimated(bool animated)
@@ -207,12 +234,21 @@ public partial class CreatureNode : Node3D
     /// <summary>Applies where the creature should be. The world clock decides this, and only its turning is smoothed.</summary>
     public void Move(Vector3 position, float orientation, bool moving, float walkSpeed, float distance, double delta)
     {
-        Position = position;
+        // Setting a transform notifies every bone attachment and mesh below, even when it's the same.
+        if (Position != position)
+        {
+            Position = position;
+        }
 
         var target = WowCoords.YawFromOrientation(orientation);
-        _yaw = _placed ? Mathf.LerpAngle(_yaw, target, 1f - Mathf.Exp(-TurnRate * (float)delta)) : target;
+        var yaw = _placed ? Mathf.LerpAngle(_yaw, target, 1f - Mathf.Exp(-TurnRate * (float)delta)) : target;
+        if (!_placed || yaw != _yaw)
+        {
+            _yaw = Mathf.Abs(Mathf.AngleDifference(yaw, target)) < 1e-4f ? target : yaw;
+            _body.Rotation = new Vector3(0, _yaw, 0);
+        }
+
         _placed = true;
-        _body.Rotation = new Vector3(0, _yaw, 0);
 
         if (moving != _moving)
         {
@@ -229,9 +265,9 @@ public partial class CreatureNode : Node3D
             }
         }
 
-        if (_name is not null)
+        if (_name is not null && _name.Visible != (AppSettings.NamePlates && distance < NameRange))
         {
-            _name.Visible = AppSettings.NamePlates && distance < NameRange;
+            _name.Visible = !_name.Visible;
         }
     }
 

@@ -36,16 +36,13 @@ public sealed class SpawnFiles(string folder, int mapId) : ISpawnSource
 /// </summary>
 public partial class CreatureManager : Node
 {
-    /// <summary>Creatures get a node this close, in yards.</summary>
-    private const float VisibleRange = 150f;
-
-    /// <summary>Kept a little further out, so walking back and forth doesn't rebuild.</summary>
-    private const float KeepRange = 175f;
+    /// <summary>Creatures are kept this much further out than they show, so walking back and forth doesn't rebuild.</summary>
+    private const float KeepMargin = 25f;
 
     private const int MaxNodes = 150;
 
-    /// <summary>The nearest this many animate and move every frame. See <c>PLAN.md</c>'s performance budget.</summary>
-    public const int MaxAnimated = 60;
+    /// <summary>The nearest this many animate and move, from the video settings. See <c>PLAN.md</c>'s performance budget.</summary>
+    public static int MaxAnimated => AppSettings.AnimatedCreatures;
 
     /// <summary>Making a skeleton is slow enough to see, so at most this many start per frame.</summary>
     private const int MaxNewNodesPerFrame = 1;
@@ -223,6 +220,8 @@ public partial class CreatureManager : Node
     private void Rank()
     {
         var feet = _world.Player.Feet;
+        var visibleRange = AppSettings.CreatureRange;
+        var keepRange = visibleRange + KeepMargin;
         var candidates = new List<Entry>();
         foreach (var state in _tiles.Values)
         {
@@ -232,7 +231,7 @@ public partial class CreatureManager : Node
                 var motion = entry.Motion.At(_clock);
                 var position = WowCoords.TileLocal(motion.X, motion.Y, entry.Height, entry.Tile.X, entry.Tile.Y);
                 entry.Distance = new Vector3(position.X, position.Y, position.Z).DistanceTo(local);
-                if (entry.Distance < KeepRange)
+                if (entry.Distance < keepRange)
                 {
                     candidates.Add(entry);
                 }
@@ -243,7 +242,7 @@ public partial class CreatureManager : Node
 
         _nodes.RemoveAll(entry =>
         {
-            if (entry.Distance < KeepRange)
+            if (entry.Distance < keepRange)
             {
                 return false;
             }
@@ -257,7 +256,7 @@ public partial class CreatureManager : Node
         var count = 0;
         foreach (var entry in candidates)
         {
-            if (count >= MaxNodes || entry.Distance >= VisibleRange)
+            if (count >= MaxNodes || entry.Distance >= visibleRange)
             {
                 break;
             }
@@ -369,11 +368,14 @@ public partial class CreatureManager : Node
 
     private void MoveNodes(double delta)
     {
+        BillboardBones.Camera = GetViewport().GetCamera3D()?.GlobalTransform;
+        var fullRate = AppSettings.FullRateAnimation;
         foreach (var entry in _nodes)
         {
             if (entry.Node!.Animated && _tiles.TryGetValue(entry.Tile, out var state))
             {
                 MoveNode(entry, state, delta);
+                entry.Node.Animate(delta, fullRate ? 0 : AnimationInterval(entry.Distance));
                 if (entry.Distance < CreatureSoundPlayer.MaxDistance)
                 {
                     entry.Node.CheckSoundEvents();
@@ -382,6 +384,19 @@ public partial class CreatureManager : Node
             }
         }
     }
+
+    /// <summary>
+    /// Seconds between a creature's animation updates: every frame up close, less often further away,
+    /// where it's small on screen. Running creatures on worker threads was tried and was slower, since
+    /// every bone a worker uploads goes through the engine's locked command queue.
+    /// </summary>
+    private static double AnimationInterval(float distance) => distance switch
+    {
+        < 25f => 0,
+        < 50f => 1.0 / 30,
+        < 100f => 1.0 / 20,
+        _ => 1.0 / 12,
+    };
 
     private void PlaySound(Entry entry, CreatureSoundKind kind, int index)
     {

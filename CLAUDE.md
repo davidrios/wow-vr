@@ -18,6 +18,7 @@ VR exploration of the WotLK WoW world in Godot 4 (.NET / C#), reading the player
 - Record significant decisions as short ADRs in `docs/decisions/`.
 
 ## Commands
+- Godot: our own build of the pinned `third_party/godot` with `patches/godot` applied, made by `scripts/build-godot.sh` into `third_party/godot/bin` (see `patches/godot/README.md`). `godot` in the commands below means that build's editor. Stock 4.7.2 also runs the game, only slower. Engine changes go in the patch queue, never straight into the submodule, and must not change Godot's API
 - Build: `dotnet build WowVR.sln` (also builds the native library, which needs `cargo` and `../wow-alchemy`)
 - Tests: while developing, run only what's relevant: `dotnet test --project src/WowVR.Formats.Tests -- --filter-class "*Name*"`. Run them all with `WOWVR_CLIENT_PATH` set only before committing, since those with client data are slow and skip without it. The same goes for the Godot checks below.
 - Terrain flight test: `godot --path godot -- --tour` (flies Goldshire to Northshire, prints frame times, quits); `--tour=walk` walks it through physics. Its report splits frame time by phase and system and lists slow frames; add `--no-shadows` or `--no-ao` to compare, and `--disable-vsync` before the `--` for uncapped times

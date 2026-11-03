@@ -1,0 +1,29 @@
+Animation: interpolate_via_rest() without a slerp at full weight.
+
+AnimationMixer blends every rotation track through interpolate_via_rest(), which
+slerps from identity by the track's weight: an acos and three sins per track per
+frame. With one animation playing, the weight is 1, and the slerp's result is its
+target, negated when its w is negative because slerp takes the shorter way. That's
+computed directly, with the same sign.
+
+Upstream: not proposed yet. Drop when an equivalent change is in the Godot we pin.
+
+diff --git a/scene/resources/animation.cpp b/scene/resources/animation.cpp
+index b805e4b..8ba4589 100644
+--- a/scene/resources/animation.cpp
++++ b/scene/resources/animation.cpp
+@@ -5691,7 +5691,13 @@ Quaternion Animation::interpolate_via_rest(const Quaternion &p_from, const Quate
+ 	ERR_FAIL_COND_V_MSG(!p_to.is_normalized(), Quaternion(), "The end quaternion must be normalized.");
+ 	ERR_FAIL_COND_V_MSG(!p_rest.is_normalized(), Quaternion(), "The rest quaternion must be normalized.");
+ #endif
+-	return (p_from * Quaternion().slerp(p_rest.inverse() * p_to, p_weight)).normalized();
++	const Quaternion delta = p_rest.inverse() * p_to;
++	if (p_weight == 1.0f) {
++		// The usual case of one animation playing alone. A full-weight slerp from identity is its
++		// target, taken the short way round, which is what this gives without the trigonometry.
++		return (p_from * (delta.w < 0.0f ? -delta : delta)).normalized();
++	}
++	return (p_from * Quaternion().slerp(delta, p_weight)).normalized();
+ }
+ 
+ // Helper math functions for Variant.

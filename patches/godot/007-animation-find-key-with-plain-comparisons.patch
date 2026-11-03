@@ -1,0 +1,75 @@
+Animation: find keys with plain comparisons, and match approximately once.
+
+_find() compared every probed key with is_equal_approx() on the way down the
+binary search. It now finds the first key after the time with plain comparisons,
+then checks the keys either side of that position for an approximate match, the
+only keys that can be one. Results are the same, except that a key within epsilon
+of the time is always found as a match, where before it was only if a probe
+landed on it.
+
+Upstream: not proposed yet. Drop when an equivalent change is in the Godot we pin.
+
+diff --git a/scene/resources/animation.cpp b/scene/resources/animation.cpp
+index 8ba4589..a6fd529 100644
+--- a/scene/resources/animation.cpp
++++ b/scene/resources/animation.cpp
+@@ -2402,38 +2402,33 @@ int Animation::_find(const LocalVector<K> &p_keys, double p_time, bool p_backwar
+ 		return -2;
+ 	}
+ 
+-	int low = 0;
+-	int high = len - 1;
+-	int middle = 0;
+-
+-#ifdef DEBUG_ENABLED
+-	if (low > high) {
+-		ERR_PRINT("low > high, this may be a bug.");
+-	}
+-#endif
+-
+ 	const K *keys = &p_keys[0];
+ 
+-	while (low <= high) {
+-		middle = (low + high) / 2;
+-
+-		if (Math::is_equal_approx(p_time, (double)keys[middle].time)) { //match
+-			return middle;
+-		} else if (p_time < keys[middle].time) {
+-			high = middle - 1; //search low end of array
++	// The first key after the time, searched with plain comparisons: an approximate
++	// comparison at every step costs more than the search itself.
++	int low = 0;
++	int high = len;
++	while (low < high) {
++		const int mid = (low + high) >> 1;
++		if (keys[mid].time <= p_time) {
++			low = mid + 1;
+ 		} else {
+-			low = middle + 1; //search high end of array
++			high = mid;
+ 		}
+ 	}
+ 
+-	if (!p_backward) {
+-		if (keys[middle].time > p_time) {
+-			middle--;
+-		}
+-	} else {
+-		if (keys[middle].time < p_time) {
+-			middle++;
+-		}
++	// A key at about the time is a match. Only the keys on either side can be close enough.
++	int middle = low - 1;
++	if (middle >= 0 && Math::is_equal_approx(p_time, (double)keys[middle].time)) {
++		return middle;
++	}
++	if (low < len && Math::is_equal_approx(p_time, (double)keys[low].time)) {
++		return low;
++	}
++
++	// The key before the time going forward, or after it going backward.
++	if (p_backward) {
++		middle = low;
+ 	}
+ 
+ 	if (p_limit && middle > -1 && middle < len) {

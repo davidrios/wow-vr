@@ -1,0 +1,27 @@
+Skeleton3D: update dirty bone poses in one pass, not one per root bone.
+
+_force_update_all_bone_transforms() called _force_update_bone_children_transforms()
+once per parentless bone, but that function walks the whole nested set whatever
+bone it's given. A skeleton with several roots (WoW models have two to four) walked
+every bone that many times, and recomputed every global rest that many times when
+rests were dirty. One walk does the same work.
+
+Upstream: not proposed yet. Drop when an equivalent change is in the Godot we pin.
+
+diff --git a/scene/3d/skeleton_3d.cpp b/scene/3d/skeleton_3d.cpp
+index f5bca4e..3568ecb 100644
+--- a/scene/3d/skeleton_3d.cpp
++++ b/scene/3d/skeleton_3d.cpp
+@@ -1072,8 +1072,10 @@ void Skeleton3D::force_update_all_bone_transforms() {
+ 
+ void Skeleton3D::_force_update_all_bone_transforms() const {
+ 	_update_process_order();
+-	for (int i = 0; i < parentless_bones.size(); i++) {
+-		_force_update_bone_children_transforms(parentless_bones[i]);
++	// One pass over the nested set updates every dirty bone, whichever root it hangs from,
++	// so it isn't repeated per parentless bone.
++	if (!parentless_bones.is_empty()) {
++		_force_update_bone_children_transforms(parentless_bones[0]);
+ 	}
+ 	if (rest_dirty) {
+ 		rest_dirty = false;

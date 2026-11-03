@@ -1,0 +1,78 @@
+PhysicalBoneSimulator3D: copy the skeleton's poses when they're read, not at every update.
+
+The simulator copied every bone's global pose on every pose_updated signal. Every
+skeleton has a compatibility simulator, so this ran for every skeleton at every
+update, though only physical bones and starting a simulation read the copies. It
+now marks them stale, and get_bone_global_pose(), set_bone_global_pose() and
+starting a simulation bring them up to date first. Nothing is copied while
+simulating, as before.
+
+Upstream: not proposed yet. Drop when an equivalent change is in the Godot we pin.
+
+diff --git a/scene/3d/physics/physical_bone_simulator_3d.cpp b/scene/3d/physics/physical_bone_simulator_3d.cpp
+index 4a8e2d1..ea30fcc 100644
+--- a/scene/3d/physics/physical_bone_simulator_3d.cpp
++++ b/scene/3d/physics/physical_bone_simulator_3d.cpp
+@@ -82,9 +82,23 @@ void PhysicalBoneSimulator3D::_pose_updated() {
+ 		// NOTE: this is re-entrant and will call _pose_updated again.
+ 		_bone_list_changed();
+ 	} else {
+-		for (int i = 0; i < skeleton->get_bone_count(); i++) {
+-			_bone_pose_updated(skeleton, i);
+-		}
++		// Copied when they're next read. Every skeleton has a simulator for compatibility, and
++		// most never simulate, so copying every bone at every pose update would be wasted.
++		poses_dirty = true;
++	}
++}
++
++void PhysicalBoneSimulator3D::_update_poses() {
++	if (!poses_dirty) {
++		return;
++	}
++	Skeleton3D *skeleton = get_skeleton();
++	if (!skeleton || simulating || skeleton->get_bone_count() != (int)bones.size()) {
++		return;
++	}
++	poses_dirty = false;
++	for (int i = 0; i < skeleton->get_bone_count(); i++) {
++		_bone_pose_updated(skeleton, i);
+ 	}
+ }
+ 
+@@ -304,6 +318,7 @@ void _pb_start_simulation(const PhysicalBoneSimulator3D *p_simulator, Node *p_no
+ 
+ void PhysicalBoneSimulator3D::physical_bones_start_simulation_on(const TypedArray<StringName> &p_bones) {
+ 	_pose_updated();
++	_update_poses();
+ 
+ 	simulating = true;
+ 	_reset_physical_bones_state();
+@@ -361,12 +376,14 @@ void PhysicalBoneSimulator3D::physical_bones_remove_collision_exception(RID p_ex
+ Transform3D PhysicalBoneSimulator3D::get_bone_global_pose(int p_bone) const {
+ 	const int bone_size = bones.size();
+ 	ERR_FAIL_INDEX_V(p_bone, bone_size, Transform3D());
++	const_cast<PhysicalBoneSimulator3D *>(this)->_update_poses();
+ 	return bones[p_bone].global_pose;
+ }
+ 
+ void PhysicalBoneSimulator3D::set_bone_global_pose(int p_bone, const Transform3D &p_pose) {
+ 	const int bone_size = bones.size();
+ 	ERR_FAIL_INDEX(p_bone, bone_size);
++	_update_poses(); // So a later read doesn't replace this one.
+ 	bones[p_bone].global_pose = p_pose;
+ }
+ 
+diff --git a/scene/3d/physics/physical_bone_simulator_3d.h b/scene/3d/physics/physical_bone_simulator_3d.h
+index b2b372a..42d309d 100644
+--- a/scene/3d/physics/physical_bone_simulator_3d.h
++++ b/scene/3d/physics/physical_bone_simulator_3d.h
+@@ -71,6 +71,8 @@ protected:
+ 
+ 	void _bone_list_changed();
+ 	void _pose_updated();
++	bool poses_dirty = false;
++	void _update_poses();
+ 	void _bone_pose_updated(Skeleton3D *skeleton, int p_bone_id);
+ 
+ 	virtual void _process_modification(double p_delta) override;

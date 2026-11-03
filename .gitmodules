@@ -1,3 +1,5 @@
 [submodule "third_party/godot"]
 	path = third_party/godot
 	url = https://github.com/godotengine/godot.git
+	shallow = true
+	ignore = dirty

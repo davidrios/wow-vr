@@ -1,0 +1,3 @@
+# Patches apply to Godot's LF sources, and bash scripts break on CR, so both keep LF on every platform.
+*.patch -text
+*.sh text eol=lf

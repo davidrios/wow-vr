@@ -1,0 +1,40 @@
+AnimationMixer: skip post-processing rotation and scale keys unless a script overrides it.
+
+Every key value went through post_process_key_value(), which boxes it in a Variant
+for a possible script override of _post_process_key_value() and then calls the
+built-in one, which returns rotations and scales unchanged. Once the mixer knows no
+script overrides it (is_GDVIRTUAL_CALL_post_process_key_value, re-checked each
+frame), rotation and scale keys skip the call. Position keys still go through it,
+since the built-in one applies the skeleton's motion scale.
+
+Upstream: not proposed yet. Drop when an equivalent change is in the Godot we pin.
+
+diff --git a/scene/animation/animation_mixer.cpp b/scene/animation/animation_mixer.cpp
+index 29655d4..1cd7ca2 100644
+--- a/scene/animation/animation_mixer.cpp
++++ b/scene/animation/animation_mixer.cpp
+@@ -1504,7 +1504,11 @@ void AnimationMixer::_blend_process(double p_delta, bool p_update_only) {
+ 						if (err != OK) {
+ 							continue;
+ 						}
+-						rot = post_process_key_value(a, i, rot, t->object_id, t->bone_idx);
++						// The built-in post-processing leaves rotations as they are, so only a script's
++						// override needs the round trip through Variant.
++						if (is_GDVIRTUAL_CALL_post_process_key_value) {
++							rot = post_process_key_value(a, i, rot, t->object_id, t->bone_idx);
++						}
+ 						t->rot = Animation::interpolate_via_rest(t->rot, rot, blend, t->init_rot);
+ 					}
+ #endif // _3D_DISABLED
+@@ -1592,7 +1596,10 @@ void AnimationMixer::_blend_process(double p_delta, bool p_update_only) {
+ 						if (err != OK) {
+ 							continue;
+ 						}
+-						scale = post_process_key_value(a, i, scale, t->object_id, t->bone_idx);
++						// As for rotations, only a script's override changes scales.
++						if (is_GDVIRTUAL_CALL_post_process_key_value) {
++							scale = post_process_key_value(a, i, scale, t->object_id, t->bone_idx);
++						}
+ 						t->scale += (scale - t->init_scale) * blend;
+ 					}
+ #endif // _3D_DISABLED

@@ -1,0 +1,61 @@
+Skeleton3D: keep the pose without overrides only once an override is used.
+
+With deprecated APIs compiled in, every bone update also computed
+pose_global_no_override, a second transform multiply per bone, though it only
+differs from global_pose once set_bone_global_pose_override() has been called.
+Until then get_bone_global_pose_no_override() returns global_pose, and the first
+override makes every bone dirty so the separate poses are built from then on.
+
+Upstream: not proposed yet. Drop when an equivalent change is in the Godot we pin.
+
+diff --git a/scene/3d/skeleton_3d.cpp b/scene/3d/skeleton_3d.cpp
+index 3568ecb..abf6167 100644
+--- a/scene/3d/skeleton_3d.cpp
++++ b/scene/3d/skeleton_3d.cpp
+@@ -1136,6 +1136,11 @@ void Skeleton3D::_force_update_bone_children_transforms(int p_bone_idx) const {
+ 		}
+ 
+ #ifndef DISABLE_DEPRECATED
++		// Without an override the pose without it is the global pose, which the getter returns instead.
++		if (!global_pose_override_used) {
++			bone_global_pose_dirty[offset] = false;
++			continue;
++		}
+ 		if (bone_enabled) {
+ 			Transform3D pose = b.pose_cache;
+ 			if (b.parent >= 0) {
+@@ -1357,6 +1362,11 @@ void Skeleton3D::set_bone_global_pose_override(int p_bone, const Transform3D &p_
+ 	bones[p_bone].global_pose_override_amount = p_amount;
+ 	bones[p_bone].global_pose_override = p_pose;
+ 	bones[p_bone].global_pose_override_reset = !p_persistent;
++	if (!global_pose_override_used) {
++		// From now on the poses without overrides are kept apart, so every bone needs them.
++		global_pose_override_used = true;
++		_make_bone_global_poses_dirty();
++	}
+ 	_make_dirty();
+ 	_make_bone_global_pose_subtree_dirty(p_bone);
+ }
+@@ -1371,7 +1381,7 @@ Transform3D Skeleton3D::get_bone_global_pose_no_override(int p_bone) const {
+ 	const int bone_size = bones.size();
+ 	ERR_FAIL_INDEX_V(p_bone, bone_size, Transform3D());
+ 	_force_update_all_dirty_bones();
+-	return bones[p_bone].pose_global_no_override;
++	return global_pose_override_used ? bones[p_bone].pose_global_no_override : bones[p_bone].global_pose;
+ }
+ 
+ #ifndef PHYSICS_3D_DISABLED
+diff --git a/scene/3d/skeleton_3d.h b/scene/3d/skeleton_3d.h
+index a2cbf0c..1dcbd83 100644
+--- a/scene/3d/skeleton_3d.h
++++ b/scene/3d/skeleton_3d.h
+@@ -169,6 +169,9 @@ private:
+ 
+ 	mutable LocalVector<Bone> bones;
+ 	mutable bool process_order_dirty = false;
++#ifndef DISABLE_DEPRECATED
++	bool global_pose_override_used = false; // Until a global pose override is set, the pose without overrides is the global pose.
++#endif // _DISABLE_DEPRECATED
+ 
+ 	mutable Vector<int> parentless_bones;
+ 	AHashMap<String, int> name_to_bone_index;

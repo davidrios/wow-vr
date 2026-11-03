@@ -1,0 +1,29 @@
+Animation: count a track's keys within the length without searching when they all are.
+
+_interpolate() ran _find(keys, length) on every call, a second binary search per
+track per frame, only to count the keys at or before the animation's end. When the
+last key is within the length, which is the usual case, that's every key. The
+search now runs only when the last key is past the end.
+
+Upstream: not proposed yet. Drop when an equivalent change is in the Godot we pin.
+
+diff --git a/scene/resources/animation.cpp b/scene/resources/animation.cpp
+index a6fd529..f4c69bf 100644
+--- a/scene/resources/animation.cpp
++++ b/scene/resources/animation.cpp
+@@ -2512,7 +2512,14 @@ Variant Animation::_cubic_interpolate_angle_in_time(const Variant &p_pre_a, cons
+ 
+ template <typename T>
+ T Animation::_interpolate(const LocalVector<TKey<T>> &p_keys, double p_time, InterpolationType p_interp, bool p_loop_wrap, bool *p_ok, bool p_backward) const {
+-	int len = _find(p_keys, length) + 1; // try to find last key (there may be more past the end)
++	// Try to find last key (there may be more past the end). Usually that's the last one, which
++	// saves a second search on every call.
++	int len = p_keys.size();
++	if (len > 0 && p_keys[len - 1].time > length && !Math::is_equal_approx(length, (double)p_keys[len - 1].time)) {
++		len = _find(p_keys, length) + 1;
++	} else if (len == 0) {
++		len = -1;
++	}
+ 
+ 	if (len <= 0) {
+ 		// (-1 or -2 returned originally) (plus one above)

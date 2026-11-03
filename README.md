@@ -4,7 +4,7 @@ A multiplayer world viewer for the 3.3.5a World of Warcraft client, playable in 
 
 ## Requirements
 
-- [Godot 4.7.2 .NET](https://godotengine.org/download/archive/4.7.2-stable/)
+- Godot 4.7.2 .NET, ideally our build of it: `git submodule update --init third_party/godot`, then `scripts/build-godot.sh`, which needs Python with SCons and a C++ toolchain (see [patches/godot](patches/godot/README.md)). Stock [Godot 4.7.2 .NET](https://godotengine.org/download/archive/4.7.2-stable/) also works, with creatures costing more.
 - .NET SDK 10.0.402 or a later 10.0.4xx patch
 - Rust 1.92 or later, with [wow-alchemy](https://github.com/davidrios/wow-alchemy) checked out next to this repo, on its `ffi-crate` branch
 - For VR: an OpenXR runtime, such as SteamVR, and a headset

@@ -1,0 +1,40 @@
+Skeleton3D: keep the pose backup between updates instead of allocating it each time.
+
+A skeleton with modifiers backed up every bone's pose into a local vector at each
+update, allocating and freeing it every frame. The vectors are now members, which
+keep their capacity.
+
+Upstream: the bones_backup half is in godotengine/godot#113441 ("Optimize
+Skeleton3D", open). Drop when that, or an equivalent, is in the Godot we pin.
+
+diff --git a/scene/3d/skeleton_3d.cpp b/scene/3d/skeleton_3d.cpp
+index abf6167..2f869b2 100644
+--- a/scene/3d/skeleton_3d.cpp
++++ b/scene/3d/skeleton_3d.cpp
+@@ -320,11 +320,8 @@ void Skeleton3D::_notification(int p_what) {
+ 			Bone *bonesptr = bones.ptr();
+ 			int len = bones.size();
+ 
+-			LocalVector<bool> bone_global_pose_dirty_backup;
+-
+ 			// Process modifiers.
+ 
+-			LocalVector<BonePoseBackup> bones_backup;
+ 			_find_modifiers();
+ 			if (!modifiers.is_empty()) {
+ 				bones_backup.resize(bones.size());
+diff --git a/scene/3d/skeleton_3d.h b/scene/3d/skeleton_3d.h
+index 1dcbd83..168b50d 100644
+--- a/scene/3d/skeleton_3d.h
++++ b/scene/3d/skeleton_3d.h
+@@ -196,6 +196,10 @@ private:
+ 	bool modifiers_dirty = false;
+ 	void _find_modifiers();
+ 	void _process_modifiers();
++
++	// Kept between updates, so processing modifiers doesn't allocate every frame.
++	LocalVector<BonePoseBackup> bones_backup;
++	LocalVector<bool> bone_global_pose_dirty_backup;
+ 	void _process_changed();
+ 	void _make_modifiers_dirty();
+ 	bool modifier_updating = false; // Is modifier updating now?

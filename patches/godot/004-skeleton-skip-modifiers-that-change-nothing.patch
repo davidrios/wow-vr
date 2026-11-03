@@ -1,0 +1,140 @@
+Skeleton3D: skip modifier processing when no active modifier can change anything.
+
+Every Skeleton3D gets an internal PhysicalBoneSimulator3D for compatibility, and
+since animate_physical_bones defaults to true it's active. So every skeleton, with
+or without physical bones, counted as having an active modifier: it advanced every
+frame, and each update backed up and restored every bone's pose and ran the
+modifier loop, which re-walked the bones after each modifier.
+
+SkeletonModifier3D gets can_modify(), true by default. The simulator returns false
+while no PhysicalBone3D is bound to it. The skeleton only advances, backs up and
+processes modifiers that are active and can modify. One visible difference: the
+idle compatibility simulator no longer emits modification_processed.
+
+Upstream: not proposed yet. Drop when an equivalent change is in the Godot we pin.
+
+diff --git a/scene/3d/physics/physical_bone_simulator_3d.cpp b/scene/3d/physics/physical_bone_simulator_3d.cpp
+index 7d6ce68..4a8e2d1 100644
+--- a/scene/3d/physics/physical_bone_simulator_3d.cpp
++++ b/scene/3d/physics/physical_bone_simulator_3d.cpp
+@@ -57,6 +57,7 @@ void PhysicalBoneSimulator3D::_skeleton_changed(Skeleton3D *p_old, Skeleton3D *p
+ 
+ void PhysicalBoneSimulator3D::_bone_list_changed() {
+ 	bones.clear();
++	has_physical_bones = false;
+ 	Skeleton3D *skeleton = get_skeleton();
+ 	if (!skeleton) {
+ 		return;
+@@ -193,7 +194,9 @@ PhysicalBone3D *PhysicalBoneSimulator3D::_get_physical_bone_parent(int p_bone) {
+ 
+ void PhysicalBoneSimulator3D::_rebuild_physical_bones_cache() {
+ 	const int b_size = bones.size();
++	has_physical_bones = false;
+ 	for (int i = 0; i < b_size; ++i) {
++		has_physical_bones = has_physical_bones || bones[i].physical_bone;
+ 		PhysicalBone3D *parent_pb = _get_physical_bone_parent(i);
+ 		if (parent_pb != bones[i].cache_parent_physical_bone) {
+ 			bones[i].cache_parent_physical_bone = parent_pb;
+diff --git a/scene/3d/physics/physical_bone_simulator_3d.h b/scene/3d/physics/physical_bone_simulator_3d.h
+index 5eb5ccb..b2b372a 100644
+--- a/scene/3d/physics/physical_bone_simulator_3d.h
++++ b/scene/3d/physics/physical_bone_simulator_3d.h
+@@ -38,6 +38,7 @@ class PhysicalBoneSimulator3D : public SkeletonModifier3D {
+ 	GDCLASS(PhysicalBoneSimulator3D, SkeletonModifier3D);
+ 
+ 	bool simulating = false;
++	bool has_physical_bones = false; // Without any, there's nothing to simulate or follow.
+ 
+ 	struct SimulatedBone {
+ 		int parent;
+@@ -77,6 +78,8 @@ protected:
+ 	virtual void _skeleton_changed(Skeleton3D *p_old, Skeleton3D *p_new) override;
+ 
+ public:
++	virtual bool can_modify() const override { return has_physical_bones; }
++
+ #ifndef DISABLE_DEPRECATED
+ 	bool is_compat = false;
+ #endif // _DISABLE_DEPRECATED
+diff --git a/scene/3d/skeleton_3d.cpp b/scene/3d/skeleton_3d.cpp
+index 2f869b2..f3da693 100644
+--- a/scene/3d/skeleton_3d.cpp
++++ b/scene/3d/skeleton_3d.cpp
+@@ -320,10 +320,11 @@ void Skeleton3D::_notification(int p_what) {
+ 			Bone *bonesptr = bones.ptr();
+ 			int len = bones.size();
+ 
+-			// Process modifiers.
+-
++			// Process modifiers. Ones that can't change anything, such as the physical bone simulator
++			// every skeleton has for compatibility, don't need the poses backed up.
+ 			_find_modifiers();
+-			if (!modifiers.is_empty()) {
++			const bool process_modifiers = _has_active_modifiers();
++			if (process_modifiers) {
+ 				bones_backup.resize(bones.size());
+ 				// Store unmodified bone poses.
+ 				for (uint32_t i = 0; i < bones.size(); i++) {
+@@ -403,7 +404,7 @@ void Skeleton3D::_notification(int p_what) {
+ 				}
+ 			}
+ 
+-			if (!modifiers.is_empty()) {
++			if (process_modifiers) {
+ 				// Restore unmodified bone poses.
+ 				for (uint32_t i = 0; i < bones.size(); i++) {
+ 					bones_backup[i].restore(bones[i]);
+@@ -424,9 +425,19 @@ void Skeleton3D::_notification(int p_what) {
+ 	}
+ }
+ 
++bool Skeleton3D::_has_active_modifiers() const {
++	for (const ObjectID &oid : modifiers) {
++		SkeletonModifier3D *mod = ObjectDB::get_instance<SkeletonModifier3D>(oid);
++		if (mod && mod->is_active() && mod->can_modify()) {
++			return true;
++		}
++	}
++	return false;
++}
++
+ void Skeleton3D::advance(double p_delta) {
+ 	_find_modifiers();
+-	if (!modifiers.is_empty()) {
++	if (_has_active_modifiers()) {
+ 		update_delta += p_delta; // Accumulate delta for manual advance as it needs to process in deferred update.
+ 		_update_deferred(UPDATE_FLAG_MODIFIER);
+ 	}
+@@ -1185,7 +1196,7 @@ void Skeleton3D::_process_modifiers() {
+ 			continue;
+ 		}
+ 		SkeletonModifier3D *mod = cast_to<SkeletonModifier3D>(t_obj);
+-		if (!mod) {
++		if (!mod || !mod->can_modify()) {
+ 			continue;
+ 		}
+ #ifdef TOOLS_ENABLED
+diff --git a/scene/3d/skeleton_3d.h b/scene/3d/skeleton_3d.h
+index 168b50d..7ec02d0 100644
+--- a/scene/3d/skeleton_3d.h
++++ b/scene/3d/skeleton_3d.h
+@@ -195,6 +195,7 @@ private:
+ 	LocalVector<ObjectID> modifiers;
+ 	bool modifiers_dirty = false;
+ 	void _find_modifiers();
++	bool _has_active_modifiers() const;
+ 	void _process_modifiers();
+ 
+ 	// Kept between updates, so processing modifiers doesn't allocate every frame.
+diff --git a/scene/3d/skeleton_modifier_3d.h b/scene/3d/skeleton_modifier_3d.h
+index dde4257..8e88055 100644
+--- a/scene/3d/skeleton_modifier_3d.h
++++ b/scene/3d/skeleton_modifier_3d.h
+@@ -118,6 +118,7 @@ protected:
+ public:
+ 	virtual PackedStringArray get_configuration_warnings() const override;
+ 	virtual bool has_process() const { return false; } // Return true if modifier needs to modify bone pose without external animation such as physics, jiggle and etc.
++	virtual bool can_modify() const { return true; } // Return false while an active modifier has nothing it could change, so the skeleton can skip processing it.
+ 
+ 	void set_active(bool p_active);
+ 	bool is_active() const;

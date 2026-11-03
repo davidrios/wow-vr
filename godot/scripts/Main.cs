@@ -307,7 +307,7 @@ public partial class Main : Node3D
                 AddChild(new CreatureCheck { Tiles = tiles, Creatures = creatures });
             }
 
-            if (Array.IndexOf(arguments, BenchArgument) >= 0)
+            if (arguments.Any(a => a.StartsWith(BenchArgument)))
             {
                 AddChild(new Benchmark { Tiles = tiles, Player = _player, Creatures = creatures, Loading = _loading });
             }

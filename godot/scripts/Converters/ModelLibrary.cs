@@ -703,35 +703,42 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         return result;
     }
 
+    // Made once: passing a string makes a new StringName on every call, which is garbage, and these are set every frame.
+    private static readonly StringName UvLinear0 = "uv_linear0";
+    private static readonly StringName UvOffset0 = "uv_offset0";
+    private static readonly StringName UvLinear1 = "uv_linear1";
+    private static readonly StringName UvOffset1 = "uv_offset1";
+    private static readonly StringName Tint = "tint";
+    private static readonly StringName ElementAlpha = "element_alpha";
+
     public static void ApplyEffect(ShaderMaterial material, M2Effect effect, double clock)
     {
+        // Vectors rather than a Basis: a Basis goes through a Variant with a finalizer, and this is every frame.
         if (effect.Uv0Animation is { } uv0)
         {
-            material.SetShaderParameter("uv_matrix0", ToBasis(uv0.At(clock)));
+            var m = uv0.At(clock);
+            material.SetShaderParameter(UvLinear0, new Vector4(m.A, m.C, m.B, m.D));
+            material.SetShaderParameter(UvOffset0, new Vector2(m.X, m.Y));
         }
 
         if (effect.Uv1Animation is { } uv1)
         {
-            material.SetShaderParameter("uv_matrix1", ToBasis(uv1.At(clock)));
+            var m = uv1.At(clock);
+            material.SetShaderParameter(UvLinear1, new Vector4(m.A, m.C, m.B, m.D));
+            material.SetShaderParameter(UvOffset1, new Vector2(m.X, m.Y));
         }
 
         if (effect.Color is not null)
         {
             var tint = effect.TintAt(clock);
-            material.SetShaderParameter("tint", new Vector3(tint.X, tint.Y, tint.Z));
+            material.SetShaderParameter(Tint, new Vector3(tint.X, tint.Y, tint.Z));
         }
 
         if (effect.ColorAlpha is not null || effect.Weight is not null)
         {
-            material.SetShaderParameter("element_alpha", effect.AlphaAt(clock));
+            material.SetShaderParameter(ElementAlpha, effect.AlphaAt(clock));
         }
     }
-
-    /// <summary>The columns of the matrix the shader multiplies UVs by.</summary>
-    private static Basis ToBasis(M2UvMatrix m) => new(
-        new Vector3(m.A, m.C, 0),
-        new Vector3(m.B, m.D, 0),
-        new Vector3(m.X, m.Y, 1));
 
     /// <summary>Render modes and wrap modes are fixed in a shader's code, so each mix gets a shader.</summary>
     private Shader EffectShader(ModelMaterial material, M2Effect effect, bool indoor, bool creature, bool skybox = false, bool behindClouds = false)

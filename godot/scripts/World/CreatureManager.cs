@@ -479,30 +479,26 @@ public partial class CreatureManager : Node
 
         entry.NextLightRay = _clock + (motion.Moving ? WalkingLightSeconds : StandingLightSeconds);
 
-        var from = state.Node.Position + local + Vector3.Up * RayAbove;
-        var query = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (RayAbove + RayBelow), TileManager.TerrainLayer);
-        var space = _world.GetViewport().FindWorld3D().DirectSpaceState;
+        var ray = CastDown(state.Node.Position + local + Vector3.Up * RayAbove);
         for (var through = 0; through <= MaxDoodadsThrough; through++)
         {
-            var hit = space.IntersectRay(query);
-            if (hit.Count == 0)
+            if (!ray.IsColliding())
             {
                 // Keeps what it had, since this says nothing about where it is.
                 return;
             }
 
-            var collider = hit["collider"].AsGodotObject();
+            var collider = ray.GetCollider();
             if (collider is Node node && node.IsInGroup(TileObjectsNode.DoodadCollisionGroup))
             {
-                var exclude = query.Exclude;
-                exclude.Add(hit["rid"].AsRid());
-                query.Exclude = exclude;
+                ray.AddExceptionRid(ray.GetColliderRid());
+                ray.ForceRaycastUpdate();
                 continue;
             }
 
             if (collider is WmoGroupBody group)
             {
-                entry.Node!.SetGroundLight(group.CreatureLightAt(hit["position"].AsVector3()));
+                entry.Node!.SetGroundLight(group.CreatureLightAt(ray.GetCollisionPoint()));
                 entry.LightFound = !motion.Moving;
             }
             else
@@ -552,9 +548,29 @@ public partial class CreatureManager : Node
     private float? RayHeight(Entry entry, TileState state, CreatureMotionState motion, float around)
     {
         var local = WowCoords.TileLocal(motion.X, motion.Y, around, entry.Tile.X, entry.Tile.Y);
-        var from = state.Node.Position + new Vector3(local.X, local.Y + RayAbove, local.Z);
-        var query = PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (RayAbove + RayBelow), TileManager.TerrainLayer);
-        var result = _world.GetViewport().FindWorld3D().DirectSpaceState.IntersectRay(query);
-        return result.Count > 0 ? result["position"].AsVector3().Y : null;
+        var ray = CastDown(state.Node.Position + new Vector3(local.X, local.Y + RayAbove, local.Z));
+        return ray.IsColliding() ? ray.GetCollisionPoint().Y : null;
+    }
+
+    private RayCast3D? _ray;
+
+    /// <summary>
+    /// Casts down from a point through one ray node, which can be cast again after adding
+    /// exceptions. A space state query makes several objects each call, garbage that made the
+    /// collector pause now and then with many creatures about.
+    /// </summary>
+    private RayCast3D CastDown(Vector3 from)
+    {
+        if (_ray is null)
+        {
+            _ray = new RayCast3D { TopLevel = true, Enabled = false, CollisionMask = TileManager.TerrainLayer };
+            AddChild(_ray);
+        }
+
+        _ray.ClearExceptions();
+        _ray.GlobalPosition = from;
+        _ray.TargetPosition = Vector3.Down * (RayAbove + RayBelow);
+        _ray.ForceRaycastUpdate();
+        return _ray;
     }
 }

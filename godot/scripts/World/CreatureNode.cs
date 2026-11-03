@@ -22,7 +22,7 @@ public partial class CreatureNode : Node3D
     /// <summary>How quickly light changes between the sky's and a floor's, per second.</summary>
     private const float LightFadeRate = 2f;
     private const float LightSettled = 0.002f;
-    private const string LightParameter = "floor_light";
+    private static readonly StringName LightParameter = "floor_light"; // Made once, since a string makes a new StringName per call.
 
     private CreatureAsset _asset = null!;
     private Node3D _body = null!;

@@ -324,6 +324,26 @@ public partial class TileObjectsNode : Node3D
         return new Aabb(a, Vector3.Zero).Expand(b);
     }
 
+    private Projection _clipProjection;
+    private Transform3D _clipFromWmo;
+
+    /// <summary>
+    /// Takes a point in a WMO's file axes, Z up, to clip space, for the WMO and camera in the fields
+    /// above. Made once, because a closure for each WMO each frame made garbage enough for the
+    /// collector to pause every couple of seconds in cities.
+    /// </summary>
+    private readonly Func<System.Numerics.Vector3, (float X, float Y, float W)> _toClip;
+
+    public TileObjectsNode() => _toClip = ToClip;
+
+    private (float X, float Y, float W) ToClip(System.Numerics.Vector3 file)
+    {
+        var godot = WowCoords.ModelToGodot(file);
+        var inView = _clipFromWmo * new Vector3(godot.X, godot.Y, godot.Z);
+        var clip = _clipProjection * new Vector4(inView.X, inView.Y, inView.Z, 1f);
+        return (clip.X, clip.Y, clip.W);
+    }
+
     /// <summary>Shows each portal WMO's groups that can be seen from the camera, in every mode the same way.</summary>
     private void UpdatePortals()
     {
@@ -332,24 +352,14 @@ public partial class TileObjectsNode : Node3D
             return;
         }
 
-        var projection = camera.GetCameraProjection();
+        _clipProjection = camera.GetCameraProjection();
         var view = camera.GlobalTransform.AffineInverse();
         foreach (var wmo in _portalWmos)
         {
-            var fromWmo = view * wmo.Node.GlobalTransform;
-
-            // Portals are in the file's axes, Z up, so a point goes to Godot's first.
-            (float, float, float) ToClip(System.Numerics.Vector3 file)
-            {
-                var godot = WowCoords.ModelToGodot(file);
-                var inView = fromWmo * new Vector3(godot.X, godot.Y, godot.Z);
-                var clip = projection * new Vector4(inView.X, inView.Y, inView.Z, 1f);
-                return (clip.X, clip.Y, clip.W);
-            }
-
+            _clipFromWmo = view * wmo.Node.GlobalTransform;
             var cameraLocal = wmo.Node.ToLocal(camera.GlobalPosition);
             var cameraFile = new System.Numerics.Vector3(cameraLocal.X, -cameraLocal.Z, cameraLocal.Y);
-            wmo.Portals.Compute(cameraFile, ToClip, wmo.Visible);
+            wmo.Portals.Compute(cameraFile, _toClip, wmo.Visible);
 
             for (var group = 0; group < wmo.Visible.Length; group++)
             {

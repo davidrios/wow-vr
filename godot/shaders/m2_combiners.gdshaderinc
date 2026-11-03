@@ -7,8 +7,12 @@ uniform sampler2D tex1 : hint_default_white, filter_linear_mipmap_anisotropic, T
 uniform int combiner = 1;
 uniform int uv_source0 = 0;
 uniform int uv_source1 = 0;
-uniform mat3 uv_matrix0 = mat3(1.0);
-uniform mat3 uv_matrix1 = mat3(1.0);
+// Each texture's UV transform: a 2x2 matrix by columns, then an offset. Not a mat3, because
+// C# sends a Basis through a Variant that the garbage collector has to finalize, every frame.
+uniform vec4 uv_linear0 = vec4(1.0, 0.0, 0.0, 1.0);
+uniform vec2 uv_offset0 = vec2(0.0);
+uniform vec4 uv_linear1 = vec4(1.0, 0.0, 0.0, 1.0);
+uniform vec2 uv_offset1 = vec2(0.0);
 uniform vec3 tint = vec3(1.0);
 uniform float element_alpha = 1.0;
 uniform float alpha_key = 0.878;
@@ -166,15 +170,15 @@ vec2 sphere_map(vec3 vertex, vec3 normal) {
 	return normalize(reflected).xy * 0.5 + vec2(0.5);
 }
 
-vec2 coords(int source, vec2 first, vec2 second, vec2 sphere, mat3 matrix) {
+vec2 coords(int source, vec2 first, vec2 second, vec2 sphere, vec4 linear, vec2 offset) {
 	vec2 uv = source == 2 ? sphere : (source == 1 ? second : first);
-	return (matrix * vec3(uv, 1.0)).xy;
+	return mat2(linear.xy, linear.zw) * uv + offset;
 }
 
 void fragment() {
 	vec2 sphere = sphere_map(VERTEX, NORMAL);
-	vec4 t0 = texture(tex0, coords(uv_source0, UV, UV2, sphere, uv_matrix0));
-	vec4 t1 = texture(tex1, coords(uv_source1, UV, UV2, sphere, uv_matrix1));
+	vec4 t0 = texture(tex0, coords(uv_source0, UV, UV2, sphere, uv_linear0, uv_offset0));
+	vec4 t1 = texture(tex1, coords(uv_source1, UV, UV2, sphere, uv_linear1, uv_offset1));
 	vec3 lit = tint;
 #ifdef INSTANCE_LIGHT
 	// Inside a building, each copy has its own baked light instead of the sky's. The client's

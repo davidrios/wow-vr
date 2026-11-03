@@ -64,7 +64,12 @@ public sealed class CreatureMotion
     private CreatureMotionState OnPath(double clock)
     {
         var time = PositiveModulo(clock + _offset, _pathSeconds);
-        var index = Array.FindLastIndex(_legs, l => l.Start <= time);
+        // A plain loop: a lambda capturing the time is garbage on every call, and this runs every frame for every creature.
+        var index = _legs.Length - 1;
+        while (index >= 0 && _legs[index].Start > time)
+        {
+            index--;
+        }
         var (from, to, start, walk) = _legs[Math.Max(index, 0)];
         var elapsed = time - start;
         var facing = FacingAlong(to.X - from.X, to.Y - from.Y);

@@ -65,6 +65,39 @@ public partial class SkyController : Node
 
     private static readonly Shader SkyShader = GD.Load<Shader>("res://shaders/sky.gdshader");
 
+    /// <summary>Shader parameters by name, made once: passing a string makes a new StringName each call, and these are set often.</summary>
+    private static class Param
+    {
+        public static readonly StringName AboveHorizonColor = "above_horizon_color";
+        public static readonly StringName CloudsFade = "clouds_fade";
+        public static readonly StringName CloudsFrom = "clouds_from";
+        public static readonly StringName CloudsTo = "clouds_to";
+        public static readonly StringName DeepAlpha = "deep_alpha";
+        public static readonly StringName DeepColor = "deep_color";
+        public static readonly StringName FogColor = "fog_color";
+        public static readonly StringName HaloColor = "halo_color";
+        public static readonly StringName HorizonColor = "horizon_color";
+        public static readonly StringName LowColor = "low_color";
+        public static readonly StringName MadeSky = "made_sky";
+        public static readonly StringName MiddleColor = "middle_color";
+        public static readonly StringName MoonDirection = "moon_direction";
+        public static readonly StringName MoonGlareTexture = "moon_glare_texture";
+        public static readonly StringName MoonTexture = "moon_texture";
+        public static readonly StringName RoadStrength = "road_strength";
+        public static readonly StringName ShallowAlpha = "shallow_alpha";
+        public static readonly StringName ShallowColor = "shallow_color";
+        public static readonly StringName SkyHorizon = "sky_horizon";
+        public static readonly StringName SkyTop = "sky_top";
+        public static readonly StringName SkyboxDay = "skybox_day";
+        public static readonly StringName SkyboxWeight = "skybox_weight";
+        public static readonly StringName SunColor = "sun_color";
+        public static readonly StringName SunDirection = "sun_direction";
+        public static readonly StringName SunGlareTexture = "sun_glare_texture";
+        public static readonly StringName SunTexture = "sun_texture";
+        public static readonly StringName TextureLight = "texture_light";
+        public static readonly StringName TopColor = "top_color";
+    }
+
     private readonly SkyState _state = new();
     private readonly ShaderMaterial _skyMaterial = new() { Shader = SkyShader };
     private readonly ConcurrentQueue<(ShaderMaterial Material, LiquidKind Kind)> _newLiquids = new();
@@ -164,10 +197,10 @@ public partial class SkyController : Node
     public void SetCelestialTextures(ModelLibrary textures)
     {
         _models = textures;
-        _skyMaterial.SetShaderParameter("sun_texture", textures.GetTexture(SunTexture));
-        _skyMaterial.SetShaderParameter("sun_glare_texture", textures.GetTexture(SunGlareTexture));
-        _skyMaterial.SetShaderParameter("moon_texture", textures.GetTexture(MoonTexture));
-        _skyMaterial.SetShaderParameter("moon_glare_texture", textures.GetTexture(MoonGlareTexture));
+        _skyMaterial.SetShaderParameter(Param.SunTexture, textures.GetTexture(SunTexture));
+        _skyMaterial.SetShaderParameter(Param.SunGlareTexture, textures.GetTexture(SunGlareTexture));
+        _skyMaterial.SetShaderParameter(Param.MoonTexture, textures.GetTexture(MoonTexture));
+        _skyMaterial.SetShaderParameter(Param.MoonGlareTexture, textures.GetTexture(MoonGlareTexture));
     }
 
     public override void _ExitTree() => AppSettings.Changed -= _onSettings;
@@ -253,16 +286,16 @@ public partial class SkyController : Node
 
         RenderingServer.GlobalShaderParameterSet("fog_range", new Vector2(_environment.FogDepthBegin, _environment.FogDepthEnd));
 
-        _skyMaterial.SetShaderParameter("top_color", ToColor(SkyBand.SkyTop));
-        _skyMaterial.SetShaderParameter("middle_color", ToColor(SkyBand.SkyMiddle));
-        _skyMaterial.SetShaderParameter("low_color", ToColor(SkyBand.SkyLow));
-        _skyMaterial.SetShaderParameter("above_horizon_color", ToColor(SkyBand.SkyAboveHorizon));
-        _skyMaterial.SetShaderParameter("horizon_color", ToColor(SkyBand.SkyHorizon));
-        _skyMaterial.SetShaderParameter("fog_color", ToColor(SkyBand.Fog));
-        _skyMaterial.SetShaderParameter("sun_color", ToColor(SkyBand.Sun));
-        _skyMaterial.SetShaderParameter("halo_color", ToColor(SkyBand.SunHalo));
-        _skyMaterial.SetShaderParameter("sun_direction", sunDirection);
-        _skyMaterial.SetShaderParameter("moon_direction", new Vector3(-sunDirection.X, -sunDirection.Y, sunDirection.Z));
+        _skyMaterial.SetShaderParameter(Param.TopColor, ToColor(SkyBand.SkyTop));
+        _skyMaterial.SetShaderParameter(Param.MiddleColor, ToColor(SkyBand.SkyMiddle));
+        _skyMaterial.SetShaderParameter(Param.LowColor, ToColor(SkyBand.SkyLow));
+        _skyMaterial.SetShaderParameter(Param.AboveHorizonColor, ToColor(SkyBand.SkyAboveHorizon));
+        _skyMaterial.SetShaderParameter(Param.HorizonColor, ToColor(SkyBand.SkyHorizon));
+        _skyMaterial.SetShaderParameter(Param.FogColor, ToColor(SkyBand.Fog));
+        _skyMaterial.SetShaderParameter(Param.SunColor, ToColor(SkyBand.Sun));
+        _skyMaterial.SetShaderParameter(Param.HaloColor, ToColor(SkyBand.SunHalo));
+        _skyMaterial.SetShaderParameter(Param.SunDirection, sunDirection);
+        _skyMaterial.SetShaderParameter(Param.MoonDirection, new Vector3(-sunDirection.X, -sunDirection.Y, sunDirection.Z));
         UpdateClouds(toSun);
         UpdateSkyboxes();
 
@@ -302,7 +335,7 @@ public partial class SkyController : Node
 
                 if (skybox.FollowsDay)
                 {
-                    material.SetShaderParameter("skybox_day", day);
+                    material.SetShaderParameter(Param.SkyboxDay, day);
                 }
             }
         }
@@ -356,25 +389,25 @@ public partial class SkyController : Node
                 node.Visible = weight > 0f;
                 foreach (var (material, _) in skybox.Materials)
                 {
-                    material.SetShaderParameter("skybox_weight", weight);
+                    material.SetShaderParameter(Param.SkyboxWeight, weight);
                     if (isStars)
                     {
                         var toSun = SunPath.Direction((float)Ticks);
-                        material.SetShaderParameter("moon_direction", new Vector3(-toSun.X, -toSun.Y, toSun.Z));
-                        material.SetShaderParameter("moon_texture", _models?.GetTexture(MoonTexture));
+                        material.SetShaderParameter(Param.MoonDirection, new Vector3(-toSun.X, -toSun.Y, toSun.Z));
+                        material.SetShaderParameter(Param.MoonTexture, _models?.GetTexture(MoonTexture));
                     }
 
                     if (isStars && _cloudFrames[0] is not null)
                     {
-                        material.SetShaderParameter("clouds_from", _cloudFrames[1 - _cloudTarget]);
-                        material.SetShaderParameter("clouds_to", _cloudFrames[_cloudTarget]);
-                        material.SetShaderParameter("clouds_fade", Mathf.Clamp((float)(_sinceCloudFrame / CloudFrameInterval), 0f, 1f));
+                        material.SetShaderParameter(Param.CloudsFrom, _cloudFrames[1 - _cloudTarget]);
+                        material.SetShaderParameter(Param.CloudsTo, _cloudFrames[_cloudTarget]);
+                        material.SetShaderParameter(Param.CloudsFade, Mathf.Clamp((float)(_sinceCloudFrame / CloudFrameInterval), 0f, 1f));
                     }
                 }
             }
         }
 
-        _skyMaterial.SetShaderParameter("made_sky", hidesSky ? 0f : 1f);
+        _skyMaterial.SetShaderParameter(Param.MadeSky, hidesSky ? 0f : 1f);
     }
 
     /// <summary>Called at each sky update. Makes frames off the main thread, and shows each as it's ready.</summary>
@@ -409,7 +442,7 @@ public partial class SkyController : Node
 
         if (!first)
         {
-            _skyMaterial.SetShaderParameter("clouds_fade", Mathf.Clamp((float)(_sinceCloudFrame / CloudFrameInterval), 0f, 1f));
+            _skyMaterial.SetShaderParameter(Param.CloudsFade, Mathf.Clamp((float)(_sinceCloudFrame / CloudFrameInterval), 0f, 1f));
         }
     }
 
@@ -427,29 +460,29 @@ public partial class SkyController : Node
             _cloudFrames[_cloudTarget].Update(image);
         }
 
-        _skyMaterial.SetShaderParameter("clouds_from", _cloudFrames[1 - _cloudTarget]);
-        _skyMaterial.SetShaderParameter("clouds_to", _cloudFrames[_cloudTarget]);
-        _skyMaterial.SetShaderParameter("clouds_fade", 0f);
+        _skyMaterial.SetShaderParameter(Param.CloudsFrom, _cloudFrames[1 - _cloudTarget]);
+        _skyMaterial.SetShaderParameter(Param.CloudsTo, _cloudFrames[_cloudTarget]);
+        _skyMaterial.SetShaderParameter(Param.CloudsFade, 0f);
         _sinceCloudFrame = 0;
     }
 
     private void ColorLiquid(ShaderMaterial material, LiquidKind kind)
     {
         var ocean = kind == LiquidKind.Ocean;
-        material.SetShaderParameter("shallow_color", ToColor(ocean ? SkyBand.OceanShallow : SkyBand.RiverShallow));
-        material.SetShaderParameter("deep_color", ToColor(ocean ? SkyBand.OceanDeep : SkyBand.RiverDeep));
-        material.SetShaderParameter("shallow_alpha", ocean ? _state.OceanShallowAlpha : _state.RiverShallowAlpha);
-        material.SetShaderParameter("deep_alpha", ocean ? _state.OceanDeepAlpha : _state.RiverDeepAlpha);
-        material.SetShaderParameter("sky_top", ToColor(SkyBand.SkyMiddle));
-        material.SetShaderParameter("sky_horizon", ToColor(SkyBand.SkyAboveHorizon));
-        material.SetShaderParameter("sun_color", ToColor(SkyBand.Sun));
+        material.SetShaderParameter(Param.ShallowColor, ToColor(ocean ? SkyBand.OceanShallow : SkyBand.RiverShallow));
+        material.SetShaderParameter(Param.DeepColor, ToColor(ocean ? SkyBand.OceanDeep : SkyBand.RiverDeep));
+        material.SetShaderParameter(Param.ShallowAlpha, ocean ? _state.OceanShallowAlpha : _state.RiverShallowAlpha);
+        material.SetShaderParameter(Param.DeepAlpha, ocean ? _state.OceanDeepAlpha : _state.RiverDeepAlpha);
+        material.SetShaderParameter(Param.SkyTop, ToColor(SkyBand.SkyMiddle));
+        material.SetShaderParameter(Param.SkyHorizon, ToColor(SkyBand.SkyAboveHorizon));
+        material.SetShaderParameter(Param.SunColor, ToColor(SkyBand.Sun));
 
         // At night the water shows a dimmer road of moonlight from the same light.
         var toSun = SunPath.Direction((float)Ticks);
         var night = toSun.Y < 0;
-        material.SetShaderParameter("sun_direction", night ? new Vector3(-toSun.X, -toSun.Y, toSun.Z) : new Vector3(toSun.X, toSun.Y, toSun.Z));
-        material.SetShaderParameter("road_strength", night ? MoonRoadStrength : 1f);
-        material.SetShaderParameter("texture_light", ToColor(SkyBand.Ambient) + new Color(0.5f, 0.5f, 0.5f));
+        material.SetShaderParameter(Param.SunDirection, night ? new Vector3(-toSun.X, -toSun.Y, toSun.Z) : new Vector3(toSun.X, toSun.Y, toSun.Z));
+        material.SetShaderParameter(Param.RoadStrength, night ? MoonRoadStrength : 1f);
+        material.SetShaderParameter(Param.TextureLight, ToColor(SkyBand.Ambient) + new Color(0.5f, 0.5f, 0.5f));
     }
 
     /// <summary>In sRGB, as Godot's colors are, because the tables hold the colors WoW shows on screen.</summary>

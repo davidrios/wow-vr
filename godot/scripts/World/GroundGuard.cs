@@ -143,10 +143,23 @@ public partial class GroundGuard : Node
     private Vector3? Surface(Vector3 near) =>
         RayDown(new Vector3(near.X, RayHeight, near.Z), -RayHeight) is { } hit ? hit + Vector3.Up * StandClearance : null;
 
+    private RayCast3D? _ray;
+
+    /// <summary>
+    /// Through one ray node, cast by hand: a space state query makes several objects each call,
+    /// and this runs every physics tick, so the garbage made the collector pause now and then.
+    /// </summary>
     private Vector3? RayDown(Vector3 from, float toY)
     {
-        var query = PhysicsRayQueryParameters3D.Create(from, new Vector3(from.X, toY, from.Z), TileManager.TerrainLayer);
-        var result = GetViewport().FindWorld3D().DirectSpaceState.IntersectRay(query);
-        return result.Count > 0 ? result["position"].AsVector3() : null;
+        if (_ray is null)
+        {
+            _ray = new RayCast3D { TopLevel = true, Enabled = false, CollisionMask = TileManager.TerrainLayer };
+            AddChild(_ray);
+        }
+
+        _ray.GlobalPosition = from;
+        _ray.TargetPosition = new Vector3(0, toY - from.Y, 0);
+        _ray.ForceRaycastUpdate();
+        return _ray.IsColliding() ? _ray.GetCollisionPoint() : null;
     }
 }

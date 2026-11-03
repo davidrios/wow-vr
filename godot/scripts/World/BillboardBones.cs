@@ -12,6 +12,9 @@ namespace WowVR.World;
 /// </summary>
 public sealed class BillboardBones(IReadOnlyList<(int Bone, M2BillboardKind Kind)> bones)
 {
+    // An array, so the loop below doesn't make an enumerator every call.
+    private readonly (int Bone, M2BillboardKind Kind)[] _bones = [.. bones];
+
     /// <summary>The camera, set once a frame before creatures animate, rather than looked up by every one.</summary>
     public static Transform3D? Camera { get; set; }
 
@@ -29,7 +32,7 @@ public sealed class BillboardBones(IReadOnlyList<(int Bone, M2BillboardKind Kind
         var toLocal = skeleton.GlobalTransform.AffineInverse();
         var view = (toLocal.Basis * camera.Basis).Orthonormalized();
         var eye = toLocal * camera.Origin;
-        foreach (var (bone, kind) in bones)
+        foreach (var (bone, kind) in _bones)
         {
             var pose = skeleton.GetBoneGlobalPose(bone);
             var facing = (eye - pose.Origin).Normalized();

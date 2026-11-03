@@ -10,6 +10,24 @@ namespace WowVR.Xr;
 /// </summary>
 public partial class XrPlayer : XROrigin3D, IPlayer
 {
+    // XR Tools' properties and methods, by name. Made once: passing a string makes a new StringName
+    // each call, which is garbage, and some of these are read or set every frame or physics tick.
+    private static readonly StringName IsActive = "is_active";
+    private static readonly StringName FloatHeight = "float_height";
+    private static readonly StringName OnGroundName = "on_ground";
+    private static readonly StringName Enabled = "enabled";
+    private static readonly StringName ControllerName = "controller";
+    private static readonly StringName DefaultPhysics = "default_physics";
+    private static readonly StringName StopOnSlope = "stop_on_slope";
+    private static readonly StringName StepSize = "step_size";
+    private static readonly StringName GetSceneInstance = "get_scene_instance";
+    private static readonly StringName Teleport = "teleport";
+    private static readonly StringName MaxSpeed = "max_speed";
+    private static readonly StringName TurnMode = "turn_mode";
+    private static readonly StringName StepTurnAngle = "step_turn_angle";
+    private static readonly StringName Speed = "speed";
+    private static readonly StringName Radius = "radius";
+
     private const float SnapTurnDegrees = 45f;
     private const float BoostFactor = 5f;
 
@@ -67,21 +85,21 @@ public partial class XrPlayer : XROrigin3D, IPlayer
 
     public void SetSwimming(bool swimming, float floatHeight)
     {
-        _swim.Set("is_active", swimming);
-        _swim.Set("float_height", floatHeight);
+        _swim.Set(IsActive, swimming);
+        _swim.Set(FloatHeight, floatHeight);
     }
 
     public bool Flying
     {
-        get => _fly.Get("is_active").AsBool();
+        get => _fly.Get(IsActive).AsBool();
         set
         {
-            _fly.Set("is_active", value);
+            _fly.Set(IsActive, value);
             _body.Velocity = Vector3.Zero;
         }
     }
 
-    public bool OnGround => _body.Get("on_ground").AsBool();
+    public bool OnGround => _body.Get(OnGroundName).AsBool();
 
     public bool Frozen
     {
@@ -98,16 +116,16 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         {
             _held = value;
             ApplyBodyEnabled();
-            _teleport.Set("enabled", !value && !_wristMenu.Visible);
+            _teleport.Set(Enabled, !value && !_wristMenu.Visible);
         }
     }
 
     private void ApplyBodyEnabled()
     {
         var enabled = !_held && (!_frozen || Flying);
-        if (_body.Get("enabled").AsBool() != enabled)
+        if (_body.Get(Enabled).AsBool() != enabled)
         {
-            _body.Set("enabled", enabled);
+            _body.Set(Enabled, enabled);
         }
     }
 
@@ -122,18 +140,18 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _pointer = GetNode<Node3D>("RightController/FunctionPointer");
         _fly = GetNode<Node3D>("MovementFly");
         _swim = GetNode<Node3D>("MovementSwim");
-        _swim.Set("controller", _leftController);
+        _swim.Set(ControllerName, _leftController);
         _vignette = GetNode<Node3D>("XRCamera3D/Vignette");
-        _fly.Set("controller", _leftController);
+        _fly.Set(ControllerName, _leftController);
 
         // XR Tools' way of not sliding down slopes pulls the body toward the ground's normal, which
         // leans uphill, and Godot moves a body standing on a floor along it by that pull's level
         // part: standing still, the player crept uphill at about 0.18 yards a second. With plain
         // gravity, Godot's own floor_stop_on_slope keeps them put, as for the desktop player.
-        _body.Get("default_physics").AsGodotObject().Set("stop_on_slope", false);
-        _teleport.Set("step_size", TeleportStepSize);
+        _body.Get(DefaultPhysics).AsGodotObject().Set(StopOnSlope, false);
+        _teleport.Set(StepSize, TeleportStepSize);
 
-        Menu = _wristMenu.Call("get_scene_instance").As<WorldMenu>();
+        Menu = _wristMenu.Call(GetSceneInstance).As<WorldMenu>();
         Menu.Player = this;
         Menu.CloseRequested += () => SetMenuOpen(false);
         SetMenuOpen(false);
@@ -164,15 +182,15 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     public void PlaceAt(Vector3 feet, bool keepVelocity = false)
     {
         _body.Velocity = keepVelocity ? _body.Velocity : Vector3.Zero;
-        _body.Call("teleport", new Transform3D(_body.GlobalBasis, feet));
+        _body.Call(Teleport, new Transform3D(_body.GlobalBasis, feet));
     }
 
     public void SetMenuOpen(bool open)
     {
         _wristMenu.Visible = open;
-        _wristMenu.Set("enabled", open);
-        _pointer.Set("enabled", open);
-        _teleport.Set("enabled", !open && !_held);
+        _wristMenu.Set(Enabled, open);
+        _pointer.Set(Enabled, open);
+        _teleport.Set(Enabled, !open && !_held);
     }
 
     private void ApplySettings()
@@ -181,10 +199,10 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         XRServer.WorldScale = scale;
 
         // XR Tools multiplies walking input by the world scale, so this is in real meters.
-        _walk.Set("max_speed", AppSettings.WalkSpeed / scale);
+        _walk.Set(MaxSpeed, AppSettings.WalkSpeed / scale);
 
-        _turn.Set("turn_mode", AppSettings.SmoothTurn ? SmoothTurnMode : SnapTurnMode);
-        _turn.Set("step_turn_angle", SnapTurnDegrees);
+        _turn.Set(TurnMode, AppSettings.SmoothTurn ? SmoothTurnMode : SnapTurnMode);
+        _turn.Set(StepTurnAngle, SnapTurnDegrees);
 
         // The menu is a child of the controller, whose position is scaled but whose size isn't.
         _wristMenu.Scale = Vector3.One * scale;
@@ -195,7 +213,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _lastVignetteSize = size;
     }
 
-    private void ApplyFlySpeed() => _fly.Set("speed", AppSettings.FlySpeed * (_boost ? BoostFactor : 1f));
+    private void ApplyFlySpeed() => _fly.Set(Speed, AppSettings.FlySpeed * (_boost ? BoostFactor : 1f));
 
     public override void _Process(double delta)
     {
@@ -209,7 +227,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         var weight = Mathf.Clamp(VignetteResponse * (float)delta, 0f, 1f);
         var target = moving ? Mathf.Lerp(VignetteWidestRadius, VignetteNarrowestRadius, _lastVignetteSize) : 1f;
         _vignetteRadius = !moving && _vignetteRadius > 0.99f ? 1f : Mathf.Lerp(_vignetteRadius, target, weight);
-        _vignette.Set("radius", _vignetteRadius);
+        _vignette.Set(Radius, _vignetteRadius);
     }
 
     private void OnLeftButtonPressed(string name)

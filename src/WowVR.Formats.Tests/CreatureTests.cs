@@ -622,6 +622,17 @@ public class ClientCreatureTests(ClientFixture client) : IClassFixture<ClientFix
         Assert.Contains(entry.Files, f => Source.Read($@"{entry.Directory}\{f.Name}") is { Length: > 0 });
     }
 
+    /// <summary>Some rows' folders start with a backslash, as the giant wing flaps' do, which archive paths don't.</summary>
+    [Fact]
+    public void SoundFoldersJoinFileNamesIntoArchivePaths()
+    {
+        var entries = Formats.Database.SoundEntryRecord.ReadAll(Source);
+        Assert.All(entries, e => Assert.False(e.Directory.StartsWith('\\') || e.Directory.EndsWith('\\'), $"sound {e.Id}: '{e.Directory}'"));
+
+        var wings = Assert.Single(entries, e => e.Files.Any(f => f.Name.Equals("GiantWingFlap1.wav", StringComparison.OrdinalIgnoreCase)));
+        Assert.True(Source.Read($@"{wings.Directory}\GiantWingFlap1.wav") is { Length: > 0 }, $"'{wings.Directory}'");
+    }
+
     [Theory]
     [InlineData(@"World\Azeroth\Elwynn\PassiveDoodads\CornCrop\corncrop1.m2", M2BillboardKind.LockModelZ)]
     public void BillboardedDoodadsAreBaked(string path, M2BillboardKind kind)

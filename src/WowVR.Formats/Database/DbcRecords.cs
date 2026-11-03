@@ -174,7 +174,8 @@ public sealed record SoundEntryRecord(int Id, IReadOnlyList<(string Name, int We
                         .Select(f => (Name: dbc.GetString(i, FileField + f), Weight: dbc.GetInt32(i, WeightField + f)))
                         .Where(f => f.Name.Length > 0)
                         .ToList(),
-                    dbc.GetString(i, DirectoryField),
+                    // A few rows start or end the folder with a backslash, which would double up when joined to a file name.
+                    dbc.GetString(i, DirectoryField).Trim('\\', '/'),
                     dbc.GetSingle(i, VolumeField),
                     dbc.GetSingle(i, MinDistanceField),
                     dbc.GetSingle(i, CutoffField)))

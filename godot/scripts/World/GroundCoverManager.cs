@@ -244,6 +244,7 @@ public partial class GroundCoverManager : Node
             {
                 Multimesh = mesh,
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Layers = TileManager.OutsideLayer,
                 VisibilityRangeEnd = VisibleRange,
                 VisibilityRangeEndMargin = FadeMargin,
                 VisibilityRangeFadeMode = FadeMode,

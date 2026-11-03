@@ -358,13 +358,28 @@ public partial class CreatureManager : Node
     {
         BillboardBones.Camera = GetViewport().GetCamera3D()?.GlobalTransform;
         var fullRate = AppSettings.FullRateAnimation;
+        var interior = _world.Interior;
         foreach (var entry in _nodes)
         {
             // Every creature in the scene animates: far ones update less often, so freezing them saved little.
             if (_tiles.TryGetValue(entry.Tile, out var state))
             {
                 MoveNode(entry, state, delta);
-                entry.Node.Animate(delta, fullRate ? 0 : AnimationInterval(entry.Distance));
+
+                // Inside a WMO with no view out, only creatures in its rooms in view can be seen. The
+                // rest keep walking, but aren't drawn or posed until they could be.
+                var node = entry.Node!;
+                var seen = interior is null || interior.Shows(node.GlobalPosition);
+                if (node.Visible != seen)
+                {
+                    node.Visible = seen;
+                }
+
+                if (seen)
+                {
+                    node.Animate(delta, fullRate ? 0 : AnimationInterval(entry.Distance));
+                }
+
                 if (entry.Distance < CreatureSoundPlayer.MaxDistance)
                 {
                     entry.Node.CheckSoundEvents();

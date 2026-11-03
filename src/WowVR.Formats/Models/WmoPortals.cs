@@ -93,6 +93,44 @@ public sealed class WmoPortals
 
     public int GroupCount => _links.Length;
 
+    /// <summary>From the last <see cref="Compute"/>: the camera was in one of the interior groups.</summary>
+    public bool CameraInside { get; private set; }
+
+    /// <summary>
+    /// From the last <see cref="Compute"/>: nothing outside this WMO can be seen, because the
+    /// camera is inside and no exterior group, which is open to the outside, is in view.
+    /// </summary>
+    public bool HidesOutside { get; private set; }
+
+    /// <summary>The box around the groups <paramref name="visible"/> shows, in the portals' space. Null when none is.</summary>
+    public (Vector3 Min, Vector3 Max)? VisibleBounds(bool[] visible)
+    {
+        (Vector3 Min, Vector3 Max)? result = null;
+        for (var i = 0; i < _bounds.Length; i++)
+        {
+            if (visible[i])
+            {
+                result = result is { } r ? (Vector3.Min(r.Min, _bounds[i].Min), Vector3.Max(r.Max, _bounds[i].Max)) : _bounds[i];
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Whether a point, in the portals' space, is in an interior group that <paramref name="visible"/> shows.</summary>
+    public bool InVisibleInterior(Vector3 point, bool[] visible)
+    {
+        for (var i = 0; i < _bounds.Length; i++)
+        {
+            if (visible[i] && _interior[i] && Contains(_bounds[i], point, 0f))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Fills in which groups show. Allocates nothing, because it runs every frame.
     /// </summary>
@@ -168,6 +206,13 @@ public sealed class WmoPortals
                     _stack.Push((link.Other, through));
                 }
             }
+        }
+
+        CameraInside = inside;
+        HidesOutside = inside;
+        for (var i = 0; inside && i < visible.Length; i++)
+        {
+            HidesOutside &= !(visible[i] && _exterior[i]);
         }
     }
 

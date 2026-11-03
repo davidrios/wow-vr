@@ -9,7 +9,8 @@ using Godot;
 namespace WowVR.Converters;
 
 /// <summary>Every copy of one model in one part of a tile.</summary>
-public sealed record DoodadBatch(MultiMesh MultiMesh, float VisibleRange, Vector3 Center, M2Asset Model, Transform3D[] Transforms);
+/// <param name="Interior">Lit as inside a WMO: these can be seen from inside one, so they stay drawn there.</param>
+public sealed record DoodadBatch(MultiMesh MultiMesh, float VisibleRange, Vector3 Center, M2Asset Model, Transform3D[] Transforms, bool Interior);
 
 /// <summary>A WMO on a tile, relative to the tile's corner.</summary>
 /// <param name="GroupDoodads">Doodads that show and hide with a group, by group.</param>
@@ -263,7 +264,8 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
             range,
             center / transforms.Count,
             model,
-            model.CollisionFaces.Length > 0 || model.Particles.Length > 0 ? transforms.Select(t => ToTransform3D(t)).ToArray() : []);
+            model.CollisionFaces.Length > 0 || model.Particles.Length > 0 ? transforms.Select(t => ToTransform3D(t)).ToArray() : [],
+            interior);
     }
 
     private static Transform3D ToTransform3D(in PlacementTransform t) => new(

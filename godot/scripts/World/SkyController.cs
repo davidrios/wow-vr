@@ -49,6 +49,7 @@ public partial class SkyController : Node
     private const float OcclusionLightAffect = 0.7f;
 
     private Action? _onSettings;
+    private bool _shadowsWanted;
 
     /// <summary>Yards from the camera that shadows reach, which is most of what they cost.</summary>
     private const float ShadowDistance = 150f;
@@ -147,11 +148,11 @@ public partial class SkyController : Node
         _sun.ShadowOpacity = ShadowOpacity;
         // For comparing frame times, without touching the player's saved setting.
         var noShadows = System.Array.IndexOf(OS.GetCmdlineUserArgs(), "--no-shadows") >= 0;
-        _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
+        _shadowsWanted = AppSettings.Shadows && !noShadows;
         var noOcclusion = System.Array.IndexOf(OS.GetCmdlineUserArgs(), "--no-ao") >= 0;
         _onSettings = () =>
         {
-            _sun.ShadowEnabled = AppSettings.Shadows && !noShadows;
+            _shadowsWanted = AppSettings.Shadows && !noShadows;
             _environment.SsaoEnabled = AppSettings.AmbientOcclusion && !noOcclusion;
             _environment.SsaoRadius = AppSettings.OcclusionSize;
             _environment.SsaoIntensity = AppSettings.OcclusionStrength;
@@ -221,6 +222,20 @@ public partial class SkyController : Node
         {
             _liquids.Add(liquid);
             ColorLiquid(liquid.Material, liquid.Kind);
+        }
+
+        // Inside a WMO with no view out, the sun reaches nothing drawn: indoor groups have their own
+        // light, and creatures there were in the shadow of the ground above. Its shadow maps cost
+        // a large share of a frame for nothing, so it goes out.
+        var outside = _tiles.Interior is null;
+        if (_sun.Visible != outside)
+        {
+            _sun.Visible = outside;
+        }
+
+        if (_sun.ShadowEnabled != _shadowsWanted)
+        {
+            _sun.ShadowEnabled = _shadowsWanted;
         }
 
         AnimateSkyboxes(delta);
@@ -377,7 +392,7 @@ public partial class SkyController : Node
                 if (loading.IsCompletedSuccessfully && loading.Result is { } loaded)
                 {
                     skybox.Materials = loaded.Materials;
-                    skybox.Node = new MeshInstance3D { Mesh = loaded.Mesh, Name = "Skybox", CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
+                    skybox.Node = new MeshInstance3D { Mesh = loaded.Mesh, Name = "Skybox", CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, Layers = TileManager.OutsideLayer };
                     AddChild(skybox.Node);
                 }
             }

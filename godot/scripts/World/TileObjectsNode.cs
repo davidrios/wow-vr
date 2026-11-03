@@ -49,9 +49,12 @@ public partial class TileObjectsNode : Node3D
 
     /// <summary>The copies of a model in one cell, with bounds around them to skip the whole cell quickly.</summary>
     /// <remarks>Not a record: a model's hash changes when it gets its interior mesh, which would lose this cell's dictionary entries.</remarks>
-    private sealed class DoodadCell(M2Asset model, Transform3D[] transforms, Aabb bounds)
+    private sealed class DoodadCell(M2Asset model, Transform3D[] transforms, Aabb bounds, uint layers)
     {
         public M2Asset Model { get; } = model;
+
+        /// <summary>The render layers its particles go on: the outside's unless it's in an indoor group.</summary>
+        public uint Layers { get; } = layers;
         public Transform3D[] Transforms { get; } = transforms;
         public Aabb Bounds { get; } = bounds;
     }
@@ -81,6 +84,7 @@ public partial class TileObjectsNode : Node3D
         public List<Node3D>[] Members { get; } = Enumerable.Range(0, portals.GroupCount).Select(_ => new List<Node3D>()).ToArray();
         public bool[] Visible { get; } = new bool[portals.GroupCount];
         public bool[] Shown { get; } = Enumerable.Repeat(true, portals.GroupCount).ToArray();
+        public WmoInterior? Interior { get; set; }
     }
 
     private readonly List<PortalWmo> _portalWmos = [];
@@ -93,6 +97,12 @@ public partial class TileObjectsNode : Node3D
     private int _pendingAtStart;
 
     public IPlayer Player { get; set; } = null!;
+
+    /// <summary>Told which WMO the camera is inside, when the outside can't be seen, and asked which one was last frame.</summary>
+    public TileManager Tiles { get; set; } = null!;
+
+    /// <summary>The layers of what's outside interiors, which isn't drawn while the camera is inside one.</summary>
+    private static uint Outside => TileManager.OutsideLayer;
 
     /// <summary>Collision around the player's position has caught up, so a ray there sees the buildings.</summary>
     public bool CollisionSettled => _collisionChecked && !_collisionWaiting
@@ -148,9 +158,11 @@ public partial class TileObjectsNode : Node3D
     {
         foreach (var batch in objects.Doodads)
         {
-            AddDoodadCell(batch);
+            // A WMO's doodads that no indoor group lists are here too, and those lit as inside can be seen from inside.
+            var layers = batch.Interior ? 1u : Outside;
+            AddDoodadCell(batch, layers);
 
-            _pending.Add(new PendingItem(batch.Center, () => AddChild(Ranged(new MultiMeshInstance3D { Multimesh = batch.MultiMesh }, batch.VisibleRange))));
+            _pending.Add(new PendingItem(batch.Center, () => AddChild(Ranged(new MultiMeshInstance3D { Multimesh = batch.MultiMesh, Layers = layers }, batch.VisibleRange))));
         }
 
         foreach (var wmo in objects.Wmos)
@@ -158,6 +170,7 @@ public partial class TileObjectsNode : Node3D
             // Only a transform, so it can go straight in.
             var node = new Node3D { Transform = wmo.Transform };
             AddChild(node);
+            Tiles.RegisterWmo(node, BoundsOf(wmo.Asset));
 
             PortalWmo? portalWmo = null;
             if (wmo.Asset.Portals is { } portals)
@@ -175,11 +188,15 @@ public partial class TileObjectsNode : Node3D
                 }
             }
 
+            // Indoor groups are what shows from inside, and only with portals can the camera be inside.
+            uint LayersOf(int groupIndex) => portalWmo is not null && wmo.Asset.Groups[groupIndex].Indoor ? 1u : Outside;
+
             foreach (var (groupIndex, batches) in wmo.GroupDoodads)
             {
                 foreach (var batch in batches)
                 {
-                    AddDoodadCell(batch);
+                    var layers = LayersOf(groupIndex);
+                    AddDoodadCell(batch, layers);
 
                     // Their transforms already include the WMO's, so they go beside its node.
                     _pending.Add(new PendingItem(batch.Center, () =>
@@ -188,6 +205,7 @@ public partial class TileObjectsNode : Node3D
                         {
                             Multimesh = batch.MultiMesh,
                             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                            Layers = layers,
                         }, batch.VisibleRange);
                         AddChild(item);
                         Track(item, groupIndex);
@@ -212,6 +230,7 @@ public partial class TileObjectsNode : Node3D
                         var item = new MeshInstance3D
                         {
                             Mesh = mesh,
+                            Layers = LayersOf(index),
                             VisibilityRangeEnd = group.Indoor ? mesh.GetAabb().Size.Length() + IndoorVisibleMargin : 0f,
                         };
                         node.AddChild(item);
@@ -238,6 +257,7 @@ public partial class TileObjectsNode : Node3D
                         {
                             Mesh = liquid,
                             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                            Layers = LayersOf(index),
                         };
                         node.AddChild(item);
                         Track(item, index);
@@ -272,7 +292,7 @@ public partial class TileObjectsNode : Node3D
     public override void _ExitTree() => AppSettings.Changed -= ApplySettings;
 
     /// <summary>Collision stays whether or not a doodad's group is showing.</summary>
-    private void AddDoodadCell(DoodadBatch batch)
+    private void AddDoodadCell(DoodadBatch batch, uint layers)
     {
         if (batch.Transforms.Length == 0)
         {
@@ -285,7 +305,7 @@ public partial class TileObjectsNode : Node3D
             bounds = bounds.Expand(transform.Origin);
         }
 
-        _doodadCells.Add(new DoodadCell(batch.Model, batch.Transforms, bounds));
+        _doodadCells.Add(new DoodadCell(batch.Model, batch.Transforms, bounds, layers));
     }
 
     /// <summary>How far this tile's next item is from the player, or infinity if it has none.</summary>
@@ -344,6 +364,22 @@ public partial class TileObjectsNode : Node3D
         return (clip.X, clip.Y, clip.W);
     }
 
+    /// <summary>How far apart, in yards, a WMO's groups in view and another WMO count as touching.</summary>
+    private const float TouchMargin = 2f;
+
+    /// <summary>Whether another WMO reaches the groups in view, so it may be seen through a doorway.</summary>
+    private bool TouchesAnotherWmo(PortalWmo wmo)
+    {
+        if (wmo.Portals.VisibleBounds(wmo.Visible) is not { } file)
+        {
+            return false;
+        }
+
+        // From the file's axes, Z up, to the node's, and then to the scene's.
+        var local = new Aabb(new Vector3(file.Min.X, file.Min.Z, -file.Min.Y), Vector3.Zero).Expand(new Vector3(file.Max.X, file.Max.Z, -file.Max.Y));
+        return Tiles.OtherWmoTouches((wmo.Node.GlobalTransform * local).Grow(TouchMargin), wmo.Node);
+    }
+
     /// <summary>Shows each portal WMO's groups that can be seen from the camera, in every mode the same way.</summary>
     private void UpdatePortals()
     {
@@ -360,6 +396,15 @@ public partial class TileObjectsNode : Node3D
             var cameraLocal = wmo.Node.ToLocal(camera.GlobalPosition);
             var cameraFile = new System.Numerics.Vector3(cameraLocal.X, -cameraLocal.Z, cameraLocal.Y);
             wmo.Portals.Compute(cameraFile, _toClip, wmo.Visible);
+            if (wmo.Portals.HidesOutside && !TouchesAnotherWmo(wmo))
+            {
+                Tiles.ReportInterior(wmo.Interior ??= new WmoInterior(wmo.Node, wmo.Portals, wmo.Visible));
+            }
+            else if (Tiles.Interior is { } interior && interior.Node != wmo.Node)
+            {
+                // Inside another WMO with no view out, none of this one can be seen.
+                System.Array.Clear(wmo.Visible);
+            }
 
             for (var group = 0; group < wmo.Visible.Length; group++)
             {
@@ -426,7 +471,9 @@ public partial class TileObjectsNode : Node3D
                     var holder = new Node3D { Transform = transform };
                     foreach (var particle in cell.Model.Particles)
                     {
-                        holder.AddChild(particle.NewNode(particle.Position));
+                        var node = particle.NewNode(particle.Position);
+                        node.Layers = cell.Layers;
+                        holder.AddChild(node);
                     }
 
                     AddChild(holder);

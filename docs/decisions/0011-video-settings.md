@@ -25,6 +25,7 @@ In the headset the frame rate fell below 90, and a maximized 4K desktop window r
 
   Presets, as FPS in Stormwind and Undercity: High 287 to 300, Medium 338 to 356, Low about 470. Before this work High was 132 to 165.
 - **Render scale upscales with FSR 1 on desktop only.** In VR each eye is scaled bilinearly: there's no anti-aliasing for FSR to build on, so its sharpening makes edges crawl, differently in each eye, and the headset resamples the image for its lenses anyway.
+- **Inside a WMO with no view out, the outside isn't drawn.** Portal culling knows when the camera is in an interior group and no exterior group is in view. Then the camera stops drawing the outside's render layer (terrain, liquids, outdoor doodads and groups, grass, skyboxes), other WMOs are hidden, the sun goes out (indoor groups have their own light, and creatures there were in the ground's shadow), and creatures not in a group in view are hidden and not posed. In Undercity on High this took a frame from 4.29 to 2.49 ms on desktop, and draw calls from 2,440 to 730.
 - **Settings are read from memory,** not the file each time, because creatures read theirs several times a second. `--settings=<file>` uses another file, so benchmarks don't touch the player's own.
 
 ## Consequences

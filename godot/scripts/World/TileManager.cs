@@ -51,6 +51,49 @@ public partial class TileManager : Node3D
     /// <summary>The physics layer terrain is on.</summary>
     public const uint TerrainLayer = 1;
 
+    /// <summary>
+    /// The render layer of what's outside interiors: terrain, liquids and doodads outdoors, WMOs'
+    /// outdoor groups, grass and skyboxes. While <see cref="Interior"/> is set the camera doesn't draw it.
+    /// </summary>
+    public const uint OutsideLayer = 1u << 3;
+
+    private WmoInterior? _reportedInterior;
+
+    /// <summary>
+    /// The WMO the camera is inside, when none of the outside can be seen from where it is, from the
+    /// last frame's portals. Then only its groups in view are drawn, and only creatures in them.
+    /// </summary>
+    public WmoInterior? Interior { get; private set; }
+
+    /// <summary>Called by a tile's objects when the camera is inside one of their WMOs with no view out.</summary>
+    public void ReportInterior(WmoInterior interior) => _reportedInterior = NoInteriorCulling ? null : interior;
+
+    private readonly List<(Node3D Node, Aabb Bounds)> _wmoBounds = [];
+
+    /// <summary>Remembers a WMO's box, in its node's space, so an interior can tell what it touches.</summary>
+    public void RegisterWmo(Node3D node, Aabb bounds) => _wmoBounds.Add((node, bounds));
+
+    /// <summary>
+    /// Whether a WMO other than <paramref name="except"/> reaches into a box in the scene. Portals
+    /// only join one WMO's own groups, and a doorway into a neighbouring WMO is a view out of it.
+    /// </summary>
+    public bool OtherWmoTouches(Aabb box, Node3D except)
+    {
+        _wmoBounds.RemoveAll(w => !IsInstanceValid(w.Node));
+        foreach (var (node, bounds) in _wmoBounds)
+        {
+            if (node != except && node.IsInsideTree() && (node.GlobalTransform * bounds).Intersects(box))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary><c>--no-interior-culling</c> always draws the outside, to compare.</summary>
+    private static readonly bool NoInteriorCulling = Array.IndexOf(OS.GetCmdlineUserArgs(), "--no-interior-culling") >= 0;
+
     private readonly Dictionary<(int X, int Y), MeshInstance3D?> _tiles = [];
     private readonly HashSet<(int X, int Y)> _failedTiles = [];
     private readonly ConcurrentQueue<((int X, int Y) Tile, ArrayMesh? Mesh, TerrainCollisionData? Collision, AdtTerrain? Terrain, ArrayMesh? Liquid)> _built = new();
@@ -304,6 +347,24 @@ public partial class TileManager : Node3D
     /// </summary>
     public bool CollisionSettled => _objects.Values.All(o => o.CollisionSettled);
 
+    /// <summary>
+    /// The camera stops drawing the outside while inside a WMO that hides it. The loading screen
+    /// sets the camera's mask while it covers the view, so this waits for it to finish.
+    /// </summary>
+    private void HideOutsideIfInside()
+    {
+        if (Covered || GetViewport().GetCamera3D() is not { } camera)
+        {
+            return;
+        }
+
+        var mask = Interior is null ? camera.CullMask | OutsideLayer : camera.CullMask & ~OutsideLayer;
+        if (mask != camera.CullMask)
+        {
+            camera.CullMask = mask;
+        }
+    }
+
     /// <summary>Waits for the ground, then stands on it: the highest, or the floor at about <paramref name="nearHeight"/>.</summary>
     public void PlacePlayerOnSurface(float? nearHeight = null)
     {
@@ -331,6 +392,11 @@ public partial class TileManager : Node3D
         {
             return;
         }
+
+        // Tiles report after this runs, so this frame uses what last frame's portals found.
+        Interior = _reportedInterior is { } reported && IsInstanceValid(reported.Node) ? reported : null;
+        _reportedInterior = null;
+        HideOutsideIfInside();
 
         var camera = GetViewport().GetCamera3D();
         if (camera is null)
@@ -516,6 +582,7 @@ public partial class TileManager : Node3D
             Name = $"Tile_{built.Tile.X}_{built.Tile.Y}",
             Mesh = built.Mesh,
             Position = TilePosition(built.Tile),
+            Layers = OutsideLayer,
         };
         ApplyDebugView(node);
         AddChild(node);
@@ -526,6 +593,7 @@ public partial class TileManager : Node3D
                 Name = "Liquid",
                 Mesh = built.Liquid,
                 CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Layers = OutsideLayer,
             });
         }
 
@@ -690,7 +758,7 @@ public partial class TileManager : Node3D
             return;
         }
 
-        var objects = new TileObjectsNode { Name = "Objects", Player = _player };
+        var objects = new TileObjectsNode { Name = "Objects", Player = _player, Tiles = this };
         objects.Fill(built.Objects ?? new TileObjects([], []));
         node.AddChild(objects);
         _objects[built.Tile] = objects;

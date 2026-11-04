@@ -91,6 +91,9 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
 
     public bool Held { private get; set; }
 
+    /// <summary>Used by checks: held keys as WoW's movement, X left and Y forward, instead of the keyboard.</summary>
+    public Vector2? ScriptedIntent { get; set; }
+
     /// <summary>Used by scripted walks: a world direction that replaces the keyboard.</summary>
     public Vector3? ScriptedWalk { get; set; }
 
@@ -439,6 +442,11 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     /// <summary>Forward and back, and strafing, from the keys and mouse buttons: Y forward, X left.</summary>
     private Vector2 Intent()
     {
+        if (ScriptedIntent is { } scripted)
+        {
+            return scripted;
+        }
+
         if (KeysTaken || Rooted)
         {
             return Vector2.Zero;

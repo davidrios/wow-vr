@@ -48,6 +48,14 @@ public sealed class CreatureSkeletonAsset
 
     /// <summary>The head's key bone, or -1, so the player's own body can hide it in first person and VR.</summary>
     public int HeadBone { get; init; } = -1;
+
+    /// <summary>The lower spine's key bone, whose descendants are the upper body, or -1.</summary>
+    public int SpineBone { get; init; } = -1;
+
+    /// <summary>The bones the palms' attachments hang on, or -1, for the VR body's hands.</summary>
+    public int RightPalmBone { get; init; } = -1;
+
+    public int LeftPalmBone { get; init; } = -1;
     public required Aabb Bounds { get; init; }
 
     /// <summary>By clip name, sorted by time. Clips with no sounds aren't listed.</summary>
@@ -82,6 +90,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
     /// <summary>Key bones of each hand's five fingers, as in WoWModelViewer's enums.h.</summary>
     private const int FirstRightFinger = 8;
     private const int HeadKeyBone = 6;
+    private const int SpineKeyBone = 4;
     private const int FirstLeftFinger = 13;
     private const int FingersPerHand = 5;
 
@@ -381,6 +390,9 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             Clips = clips,
             ClipSpeeds = clipSpeeds,
             HeadBone = Array.FindIndex(data.Bones, b => b.KeyBone == HeadKeyBone),
+            SpineBone = Array.FindIndex(data.Bones, b => b.KeyBone == SpineKeyBone),
+            RightPalmBone = data.Attachments.FirstOrDefault(a => a.Id == RightPalmAttachment) is { Bone: >= 0 } rightPalm ? rightPalm.Bone : -1,
+            LeftPalmBone = data.Attachments.FirstOrDefault(a => a.Id == LeftPalmAttachment) is { Bone: >= 0 } leftPalm ? leftPalm.Bone : -1,
             Bounds = bounds,
             ClipSounds = clipSounds,
             Billboards = data.Bones

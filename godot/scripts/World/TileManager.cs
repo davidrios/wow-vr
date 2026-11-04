@@ -175,6 +175,11 @@ public partial class TileManager : Node3D
         return areas[chunk.Z % WowCoords.ChunksPerTile * WowCoords.ChunksPerTile + chunk.X % WowCoords.ChunksPerTile];
     }
 
+    /// <summary>The tile a map without terrain puts its one WMO on, or null for a map with terrain.</summary>
+    private (int X, int Y)? _globalTile;
+
+    private ModelPlacement? _globalWmo;
+
     /// <summary>Starts streaming with the given Godot world position at the local origin.</summary>
     public void Start(IAssetSource source, WdtMap map, LiquidLibrary liquids, IPlayer player, double originX, double originZ, IGameObjectSource gameObjects)
     {
@@ -193,6 +198,16 @@ public partial class TileManager : Node3D
         Models = new ModelLibrary(source, liquids);
         _objectsBuilder = new TileObjectsBuilder(Models, map, gameObjects, GameObjectDisplayTable.Read(source));
         TerrainBuilder.LoadShared();
+        if (map.GlobalWmo is { } stored)
+        {
+            // A global WMO is placed from the map's middle, where its world coordinates start,
+            // not from the north-west corner as a tile's placements are.
+            var middle = new System.Numerics.Vector3((float)WowCoords.MapOrigin, 0, (float)WowCoords.MapOrigin);
+            var global = stored with { Position = stored.Position + middle, BoundsMin = stored.BoundsMin + middle, BoundsMax = stored.BoundsMax + middle };
+            _globalWmo = global;
+            _globalTile = global.OriginTile;
+            GD.Print($"{map.Directory} is one WMO, {global.Model}, at {global.Position} turned {global.Rotation}, on tile {_globalTile.Value.X}_{_globalTile.Value.Y}");
+        }
     }
 
     /// <summary>A Godot world position in this scene's local space.</summary>
@@ -202,6 +217,11 @@ public partial class TileManager : Node3D
     /// <summary>Whether the player can stand at a position in this scene's local space.</summary>
     public GroundState GroundAt(Vector3 local)
     {
+        if (_globalTile is { } global)
+        {
+            return _objects.TryGetValue(global, out var wmo) && wmo.Finished ? GroundState.Ready : GroundState.Loading;
+        }
+
         var chunk = ChunkAt(local);
         var tile = (X: chunk.X / WowCoords.ChunksPerTile, Y: chunk.Z / WowCoords.ChunksPerTile);
 
@@ -384,6 +404,10 @@ public partial class TileManager : Node3D
         _warpHeight = nearHeight;
         _guard.PlaceOnSurfaceWhenLoaded(nearHeight);
     }
+
+    /// <summary>A point in this scene's local space, in WoW coordinates.</summary>
+    public System.Numerics.Vector3 LocalToWow(Vector3 local) =>
+        WowCoords.ToWow(new System.Numerics.Vector3((float)(local.X + _originX), local.Y, (float)(local.Z + _originZ)));
 
     /// <summary>The map and the WoW position of the player's feet, as <c>--start=</c> takes them.</summary>
     public (string Map, double WowX, double WowY, float WowZ) PlayerLocation
@@ -620,7 +644,7 @@ public partial class TileManager : Node3D
 
     private void UnloadFarTiles((int X, int Y) center)
     {
-        foreach (var tile in _tiles.Keys.Where(t => Distance(t, center) > UnloadRadius).ToList())
+        foreach (var tile in _tiles.Keys.Where(t => Distance(t, center) > UnloadRadius && t != _globalTile).ToList())
         {
             TileRemoved?.Invoke(tile);
             _collision.RemoveTile(tile);
@@ -638,6 +662,12 @@ public partial class TileManager : Node3D
     {
         if (_building)
         {
+            return;
+        }
+
+        if (_globalTile is { } global)
+        {
+            StartGlobalWmo(global);
             return;
         }
 
@@ -664,6 +694,44 @@ public partial class TileManager : Node3D
         _tiles[tile] = null;
         _building = true;
         Task.Run(() => Build(tile));
+    }
+
+    /// <summary>
+    /// A map made of one WMO gets an empty tile node to hang it on, with no terrain, and its
+    /// objects build at once.
+    /// </summary>
+    private void StartGlobalWmo((int X, int Y) tile)
+    {
+        if (_tiles.ContainsKey(tile))
+        {
+            return;
+        }
+
+        var node = new MeshInstance3D { Name = $"Tile_{tile.X}_{tile.Y}", Position = TilePosition(tile), Layers = OutsideLayer };
+        AddChild(node);
+        _tiles[tile] = node;
+        var heights = new TerrainHeights(tile.X, tile.Y);
+        _heights[tile] = heights;
+        TileAdded?.Invoke(tile, node, heights);
+
+        var placement = _globalWmo!;
+        _buildingObjects = true;
+        Task.Run(() =>
+        {
+            TileObjects? objects = null;
+            try
+            {
+                var stopwatch = Stopwatch.StartNew();
+                objects = _objectsBuilder.BuildGlobal(placement, tile.X, tile.Y);
+                GD.Print($"{placement.Model} built in {stopwatch.ElapsedMilliseconds} ms: {objects.Doodads.Count} doodad batches");
+            }
+            catch (Exception e)
+            {
+                GD.PushError($"Could not build {placement.Model}: {e.Message}");
+            }
+
+            _builtObjects.Enqueue((tile, objects));
+        });
     }
 
     private void Build((int X, int Y) tile)

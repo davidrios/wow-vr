@@ -315,6 +315,12 @@ public partial class ServerWorld : Node
                 break;
             case SpeedChanged speeds:
                 Speeds = speeds.Speeds;
+                if (_player is DesktopPlayer runner)
+                {
+                    runner.RunSpeed = speeds.Speeds.Run;
+                    runner.RunBackSpeed = speeds.Speeds.RunBack;
+                }
+
                 break;
             case CanFlyChanged fly:
                 CanFly = fly.CanFly;
@@ -326,6 +332,11 @@ public partial class ServerWorld : Node
                 break;
             case RootChanged root:
                 Rooted = root.Rooted;
+                if (_player is DesktopPlayer held)
+                {
+                    held.Rooted = root.Rooted;
+                }
+
                 break;
             case InventoryChanged inventory:
                 Inventory = inventory;

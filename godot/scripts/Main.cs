@@ -581,7 +581,13 @@ public partial class Main : Node3D
                 var avatar = new PlayerAvatar { Name = "Avatar" };
                 AddChild(avatar);
                 avatar.Start(library, GlueScreens.AppearanceOf(session.Character), player, _player);
+                avatar.Server = server;
                 server.Avatar = avatar;
+                AddHud(server, new Interaction(server, creatures, tiles), tiles);
+                if (arguments.Any(a => a.StartsWith("--play-check")))
+                {
+                    AddChild(new PlayCheck { Server = server, Tiles = tiles, Player = _player, Creatures = creatures });
+                }
             }
 
             _loading?.Watch(tiles, creatures, player);
@@ -768,6 +774,38 @@ public partial class Main : Node3D
 
         var project = ProjectSettings.GlobalizePath(ProjectSpawnFolder);
         return System.IO.Directory.Exists(project) ? project : ProjectSettings.GlobalizePath(DefaultSpawnFolder);
+    }
+
+    /// <summary>
+    /// The HUD over the world: on desktop a layer over the window, in VR a panel above the left
+    /// wrist with a keyboard for chat. The desktop player clicks the world through it, and the
+    /// VR player points at it with the right hand.
+    /// </summary>
+    private void AddHud(ServerWorld server, Interaction interaction, TileManager tiles)
+    {
+        var hud = new GameHud { Name = "Hud", Hidden = () => tiles.Covered };
+        System.Numerics.Vector3 Here()
+        {
+            var (_, x, y, z) = tiles.PlayerLocation;
+            return new System.Numerics.Vector3((float)x, (float)y, z);
+        }
+
+        var player = (IPlayer)_player;
+        hud.MenuRequested += () => player.SetMenuOpen(true);
+        if (_player is DesktopPlayer desktop)
+        {
+            var layer = new CanvasLayer { Name = "HudLayer" };
+            AddChild(layer);
+            layer.AddChild(hud);
+            desktop.Hud = hud;
+            desktop.Interaction = interaction;
+        }
+        else if (_player is Xr.XrPlayer xr)
+        {
+            xr.AddHud(hud, interaction);
+        }
+
+        hud.Bind(server, Here);
     }
 
     /// <summary>Another map needs other tiles, sky and spawns throughout, so the whole world reloads.</summary>

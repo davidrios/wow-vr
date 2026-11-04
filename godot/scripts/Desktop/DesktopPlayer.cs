@@ -1,12 +1,18 @@
 using WowVR.Ui;
+using WowVR.World;
 using Godot;
 
 namespace WowVR.Desktop;
 
 /// <summary>
-/// Click to capture the mouse, Esc to release it. WASD walks, Shift goes faster, F toggles
-/// flying, Q/E go down/up while flying or swimming, Tab opens the menu, and the mouse wheel
-/// moves the camera out behind the character or back into first person.
+/// WoW's own controls. The mouse is a cursor: holding the right button looks around and turns
+/// the character, holding the left button looks around it without turning, and both together run
+/// forward. A left click selects what's under the cursor and a right click uses it: talks, loots,
+/// attacks or opens. W and S go forward and back, A and D turn (or strafe while the right button
+/// is held), Q and E strafe, Space jumps, Num Lock runs on its own, Tab picks the next enemy,
+/// Enter or / types in chat, B opens the bags, and the wheel moves the camera out behind the
+/// character or into first person. F toggles flying, where Space and X go up and down, and
+/// Shift goes faster. Esc closes windows, then clears the target, then opens the game menu.
 /// </summary>
 public partial class DesktopPlayer : CharacterBody3D, IPlayer
 {
@@ -18,11 +24,20 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     private const float FastFlyFactor = 5f;
     private const float MaxSlopeDegrees = 50f;
     private const float GroundSnapLength = 1f;
-    private const float Gravity = 19f;
+    private const float Gravity = 19.29f;
     private const float SwimSpeed = 4.7f;
     private const float SwimResponse = 4f;
     private const float Buoyancy = 2f;
     private const float MaxRise = 2.5f;
+
+    /// <summary>A jump's upward speed, in yards a second, as the game's.</summary>
+    private const float JumpSpeed = 7.96f;
+
+    /// <summary>Turning with A and D, in radians a second: half a turn a second, as the game's.</summary>
+    private const float KeyTurnRate = Mathf.Pi;
+
+    /// <summary>A mouse press that moves less than this, in pixels, is a click rather than a drag.</summary>
+    private const float ClickSlop = 6f;
 
     /// <summary>How high a step can be, in yards. A capsule can't climb one by itself.</summary>
     private const float StepHeight = 1.2f;
@@ -42,11 +57,26 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     private CollisionShape3D _shape = null!;
     private CanvasLayer _menuLayer = null!;
     private float _pitch;
+
+    /// <summary>How far the camera is turned around the character by the left button, in radians.</summary>
+    private float _orbit;
     private bool _frozen;
     private bool _swimming;
     private float _floatHeight;
+    private bool _leftHeld;
+    private bool _rightHeld;
+    private Vector2 _pressAt;
+    private float _dragged;
+    private Vector2 _cursorBeforeDrag;
+    private bool _autoRun;
 
     public WorldMenu Menu { get; private set; } = null!;
+
+    /// <summary>The HUD while playing on a server, whose chat line takes the keys while typing.</summary>
+    public GameHud? Hud { get; set; }
+
+    /// <summary>Selecting and using things under the cursor, while playing on a server.</summary>
+    public Interaction? Interaction { get; set; }
 
     public Vector3 Feet => GlobalPosition;
 
@@ -64,12 +94,25 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     /// <summary>Used by scripted walks: a world direction that replaces the keyboard.</summary>
     public Vector3? ScriptedWalk { get; set; }
 
+    /// <summary>The server's speeds for this character, in yards a second, or the game's defaults.</summary>
+    public float RunSpeed { get; set; } = AppSettings.WalkSpeed;
+
+    public float RunBackSpeed { get; set; } = 4.5f;
+
+    /// <summary>Held in place by the server, as when stunned or dead.</summary>
+    public bool Rooted { get; set; }
+
+    /// <summary>How the character is moving against the way it faces, for its animation: X left, Y forward.</summary>
+    public Vector2 MoveIntent { get; private set; }
+
+    public bool Jumping { get; private set; }
+
     public float PitchDegrees
     {
         set
         {
             _pitch = Mathf.DegToRad(value);
-            _boom.Rotation = new Vector3(_pitch, 0, 0);
+            ApplyBoom();
         }
     }
 
@@ -101,6 +144,7 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
             Engine.PhysicsTicksPerSecond = Mathf.RoundToInt(refreshRate);
         }
 
+        Input.MouseMode = Input.MouseModeEnum.Visible;
         AppSettings.Changed += ApplySettings;
         ApplySettings();
     }
@@ -155,7 +199,7 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         _uiMode = on;
         Held = on;
         _camera.Current = !on;
-        Input.MouseMode = on ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+        Input.MouseMode = Input.MouseModeEnum.Visible;
     }
 
     public void SetMenuOpen(bool open)
@@ -166,7 +210,7 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         }
 
         _menuLayer.Visible = open;
-        Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+        ReleaseMouse();
     }
 
     private void ApplySettings()
@@ -179,40 +223,170 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         _shape.Position = new Vector3(0, _capsule.Height / 2, 0);
     }
 
+    private void ApplyBoom() => _boom.Rotation = new Vector3(_pitch, _orbit, 0);
+
+    /// <summary>Keys the chat line or a menu has, which shouldn't move the character.</summary>
+    private bool KeysTaken => _menuLayer.Visible || _uiMode || Hud?.Typing == true;
+
     public override void _UnhandledInput(InputEvent @event)
     {
+        if (_uiMode)
+        {
+            return;
+        }
+
         switch (@event)
         {
-            case InputEventMouseButton { Pressed: true } when !_menuLayer.Visible && !_uiMode:
-                Input.MouseMode = Input.MouseModeEnum.Captured;
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right } button when !_menuLayer.Visible:
+                OnMouseButton(button);
                 break;
 
-            // Esc opens and closes the game menu, as in the game.
-            case InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.Escape } when !_uiMode:
-                SetMenuOpen(!_menuLayer.Visible);
-                break;
-
-            case InputEventKey when _uiMode:
-                break;
-
-            case InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.Tab }:
-                SetMenuOpen(!_menuLayer.Visible);
-                break;
-
-            case InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.F }:
-                Flying = !Flying;
-                break;
-
-            case InputEventMouseMotion motion when Input.MouseMode == Input.MouseModeEnum.Captured:
-                RotateY(-motion.Relative.X * MouseSensitivity);
-                _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * MouseSensitivity, -Mathf.Pi / 2, Mathf.Pi / 2);
-                _boom.Rotation = new Vector3(_pitch, 0, 0);
-                break;
-
-            case InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelUp or MouseButton.WheelDown } wheel
-                when Input.MouseMode == Input.MouseModeEnum.Captured && HasBody:
+            case InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelUp or MouseButton.WheelDown } wheel when HasBody && !_menuLayer.Visible:
                 Zoom = _zoom + (wheel.ButtonIndex == MouseButton.WheelDown ? ZoomStep : -ZoomStep);
                 break;
+
+            case InputEventMouseMotion motion when _leftHeld || _rightHeld:
+                _dragged += motion.Relative.Length();
+                var turn = -motion.Relative.X * MouseSensitivity;
+                if (_rightHeld)
+                {
+                    RotateY(turn);
+                }
+                else
+                {
+                    _orbit += turn;
+                }
+
+                _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * MouseSensitivity, -Mathf.Pi / 2, Mathf.Pi / 2);
+                ApplyBoom();
+                break;
+
+            case InputEventKey { Pressed: true, Echo: false } key:
+                OnKey(key);
+                break;
+        }
+    }
+
+    private void OnKey(InputEventKey key)
+    {
+        if (key.PhysicalKeycode == Key.Escape)
+        {
+            if (Hud?.CloseTopWindow() == true)
+            {
+                return;
+            }
+
+            if (!_menuLayer.Visible && Interaction is { } interaction && interaction.World.Target != 0)
+            {
+                interaction.World.SetTarget(0);
+                return;
+            }
+
+            SetMenuOpen(!_menuLayer.Visible);
+            return;
+        }
+
+        if (KeysTaken)
+        {
+            return;
+        }
+
+        switch (key.PhysicalKeycode)
+        {
+            case Key.Enter or Key.KpEnter when Hud is not null:
+                Hud.OpenChat();
+                GetViewport().SetInputAsHandled();
+                break;
+            case Key.Slash when Hud is not null:
+                Hud.OpenChat("/");
+                GetViewport().SetInputAsHandled();
+                break;
+            case Key.Tab when Interaction is not null:
+                Interaction.TargetNextEnemy(Feet, -GlobalBasis.Z);
+                break;
+            case Key.Tab:
+                SetMenuOpen(!_menuLayer.Visible);
+                break;
+            case Key.B when Hud is not null:
+                Hud.ToggleBags();
+                break;
+            case Key.F:
+                Flying = !Flying;
+                break;
+            case Key.Numlock:
+                _autoRun = !_autoRun;
+                break;
+            case Key.Space when !Flying && !_swimming && IsOnFloor() && !Rooted && !Held:
+                Velocity = Velocity with { Y = JumpSpeed };
+                Jumping = true;
+                break;
+        }
+    }
+
+    private void OnMouseButton(InputEventMouseButton button)
+    {
+        var wasHeld = _leftHeld || _rightHeld;
+        if (button.ButtonIndex == MouseButton.Left)
+        {
+            _leftHeld = button.Pressed;
+        }
+        else
+        {
+            _rightHeld = button.Pressed;
+            if (button.Pressed && _orbit != 0)
+            {
+                // Turning with the right button faces the character where the camera looks, as in WoW.
+                RotateY(_orbit);
+                _orbit = 0;
+                ApplyBoom();
+            }
+        }
+
+        if (button.Pressed && !wasHeld)
+        {
+            _pressAt = button.Position;
+            _dragged = 0;
+            _cursorBeforeDrag = GetViewport().GetMousePosition();
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+        else if (!button.Pressed && !_leftHeld && !_rightHeld)
+        {
+            ReleaseMouse();
+            if (_dragged < ClickSlop)
+            {
+                Click(button.ButtonIndex == MouseButton.Right);
+            }
+        }
+    }
+
+    private void ReleaseMouse()
+    {
+        if (Input.MouseMode == Input.MouseModeEnum.Captured)
+        {
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+            Input.WarpMouse(_cursorBeforeDrag);
+        }
+
+        _leftHeld = _rightHeld = false;
+    }
+
+    /// <summary>A click without dragging: selects with the left button, uses with the right.</summary>
+    private void Click(bool right)
+    {
+        if (Interaction is null)
+        {
+            return;
+        }
+
+        var from = _camera.ProjectRayOrigin(_pressAt);
+        var direction = _camera.ProjectRayNormal(_pressAt);
+        if (right)
+        {
+            Interaction.Use(from, direction);
+        }
+        else
+        {
+            Interaction.Select(from, direction);
         }
     }
 
@@ -221,9 +395,11 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         if (Held || (_frozen && !Flying))
         {
             Velocity = Vector3.Zero;
+            MoveIntent = Vector2.Zero;
             return;
         }
 
+        TurnWithKeys((float)delta);
         if (Flying)
         {
             Fly();
@@ -239,32 +415,83 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         }
 
         MoveAndSlide();
+        if (IsOnFloor() && Velocity.Y <= 0)
+        {
+            Jumping = false;
+        }
+    }
+
+    /// <summary>A and D turn the character, unless the right button is held, when they strafe.</summary>
+    private void TurnWithKeys(float delta)
+    {
+        if (KeysTaken || _rightHeld || Rooted)
+        {
+            return;
+        }
+
+        var turn = Axis(Key.D, Key.A);
+        if (turn != 0)
+        {
+            RotateY(turn * KeyTurnRate * delta);
+        }
+    }
+
+    /// <summary>Forward and back, and strafing, from the keys and mouse buttons: Y forward, X left.</summary>
+    private Vector2 Intent()
+    {
+        if (KeysTaken || Rooted)
+        {
+            return Vector2.Zero;
+        }
+
+        var forward = Axis(Key.S, Key.W);
+        if (forward != 0)
+        {
+            _autoRun = false;
+        }
+
+        if ((_leftHeld && _rightHeld) || _autoRun)
+        {
+            forward = 1f;
+        }
+
+        var left = Axis(Key.E, Key.Q);
+        if (_rightHeld)
+        {
+            left += Axis(Key.D, Key.A);
+        }
+
+        return new Vector2(Mathf.Clamp(left, -1, 1), forward);
     }
 
     private void Fly()
     {
-        var input = _menuLayer.Visible
-            ? Vector3.Zero
-            : new Vector3(Axis(Key.A, Key.D), Axis(Key.Q, Key.E), Axis(Key.W, Key.S));
+        var intent = Intent();
+        var up = KeysTaken ? 0f : Axis(Key.X, Key.Space);
+        MoveIntent = intent;
         var speed = AppSettings.FlySpeed * (Input.IsPhysicalKeyPressed(Key.Shift) ? FastFlyFactor : 1f);
 
-        Velocity = input == Vector3.Zero ? Vector3.Zero : _camera.GlobalBasis * input.Normalized() * speed;
+        // Forward goes where the camera looks, as the game's flying does; Space and X go straight up and down.
+        var direction = (_camera.GlobalBasis * new Vector3(-intent.X, 0, -intent.Y)) + (Vector3.Up * up);
+        Velocity = direction == Vector3.Zero ? Vector3.Zero : direction.Normalized() * speed;
     }
 
     /// <summary>Goes where the camera looks, and floats up when left alone. The numbers match movement_swim.gd.</summary>
     private void Swim(float delta)
     {
-        var input = _menuLayer.Visible
-            ? Vector3.Zero
-            : new Vector3(Axis(Key.A, Key.D), Axis(Key.Q, Key.E), Axis(Key.W, Key.S));
+        var intent = Intent();
+        MoveIntent = intent;
+        var up = KeysTaken ? 0f : Axis(Key.X, Key.Space);
+        var input = new Vector3(-intent.X, 0, -intent.Y);
         if (ScriptedWalk is { } scripted)
         {
             input = GlobalBasis.Inverse() * scripted;
         }
 
-        var target = input == Vector3.Zero ? Vector3.Zero : _camera.GlobalBasis * input.Normalized() * SwimSpeed;
+        var direction = (_camera.GlobalBasis * input) + (Vector3.Up * up);
+        var target = direction == Vector3.Zero ? Vector3.Zero : direction.Normalized() * (intent.Y < 0 ? SwimSpeed / 2 : SwimSpeed);
         var feet = GlobalPosition.Y;
-        if (input == Vector3.Zero)
+        if (direction == Vector3.Zero)
         {
             target.Y = Mathf.Clamp((_floatHeight - feet) * Buoyancy, -MaxRise, MaxRise);
         }
@@ -279,12 +506,36 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
 
     private void Walk(float delta)
     {
-        var direction = ScriptedWalk ?? WalkInput();
-        var speed = AppSettings.WalkSpeed * (Input.IsPhysicalKeyPressed(Key.Shift) ? FastWalkFactor : 1f);
+        Vector3 direction;
+        float speed;
+        if (ScriptedWalk is { } scripted)
+        {
+            direction = scripted;
+            speed = AppSettings.WalkSpeed;
+            MoveIntent = Vector2.Up;
+        }
+        else
+        {
+            var intent = Intent();
+            MoveIntent = intent;
+            direction = intent == Vector2.Zero ? Vector3.Zero : GlobalBasis * new Vector3(-intent.X, 0, -intent.Y).Normalized();
+            speed = intent.Y < 0 ? RunBackSpeed : RunSpeed;
+            if (Input.IsPhysicalKeyPressed(Key.Shift) && !KeysTaken)
+            {
+                speed *= FastWalkFactor;
+            }
+        }
+
+        // In the air, the way it was going carries on, as the game's jumps do.
+        if (!IsOnFloor() && Jumping)
+        {
+            Velocity = Velocity with { Y = Velocity.Y - Gravity * delta };
+            return;
+        }
 
         Velocity = new Vector3(
             direction.X * speed,
-            IsOnFloor() ? 0 : Velocity.Y - Gravity * delta,
+            IsOnFloor() ? Mathf.Max(Velocity.Y, 0) : Velocity.Y - Gravity * delta,
             direction.Z * speed);
     }
 
@@ -321,17 +572,6 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         {
             GlobalPosition = over.Origin + landing.GetTravel();
         }
-    }
-
-    private Vector3 WalkInput()
-    {
-        if (_menuLayer.Visible)
-        {
-            return Vector3.Zero;
-        }
-
-        var input = new Vector3(Axis(Key.A, Key.D), 0, Axis(Key.W, Key.S));
-        return input == Vector3.Zero ? input : GlobalBasis * input.Normalized();
     }
 
     private static float Axis(Key negative, Key positive) =>

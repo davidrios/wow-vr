@@ -8,6 +8,8 @@ namespace WowVR.Net;
 /// </summary>
 public sealed partial class RealmSession
 {
+    private const ushort MsgCorpseQuery = 0x216;
+
     /// <summary>While moving, the server hears where the player is this often.</summary>
     private static readonly TimeSpan MovingHeartbeat = TimeSpan.FromMilliseconds(500);
 
@@ -49,6 +51,11 @@ public sealed partial class RealmSession
     {
         if (!IsOpen || !_inWorld || _worldPortPending)
         {
+            if (LogMoves && _worldPortPending)
+            {
+                _log("move held: waiting for the world port");
+            }
+
             return;
         }
 
@@ -115,9 +122,16 @@ public sealed partial class RealmSession
         }
     }
 
+    private static readonly bool LogMoves = Environment.GetEnvironmentVariable("WOWVR_NET_LOG_MOVES") == "1";
+
     private void SendMove(ushort opcode, MovementInfo move)
     {
         move.Time = Now;
+        if (LogMoves)
+        {
+            _log($"move 0x{opcode:X3} flags {move.Flags} at ({move.Position.X:F1}, {move.Position.Y:F1}, {move.Position.Z:F1}) facing {move.Orientation:F2}");
+        }
+
         var w = new PacketWriter().Packed(Character.Guid);
         move.Write(w);
         _ = SendQuietly(opcode, w.ToArray());
@@ -265,7 +279,22 @@ public sealed partial class RealmSession
 
     /// <summary>A line only this client shows, as the game does for errors.</summary>
     private void Notice(string text, bool error) =>
-        Events.Enqueue(new ChatReceived(new ChatLine(error ? ChatKind.Error : ChatKind.Notice, "", text)));
+        Events.Enqueue(new ChatReceived(new ChatLine(error ? ChatKind.Error : ChatKind.Notice, "", StripCodes(text))));
+
+    private bool _askedCorpse;
+
+    private void ReadCorpse(byte[] data)
+    {
+        var r = new PacketReader(data);
+        if (r.U8() == 0)
+        {
+            return;
+        }
+
+        var map = r.U32();
+        var position = new Vector3(r.F32(), r.F32(), r.F32());
+        Events.Enqueue(new CorpseAt(position, map));
+    }
 
     /// <summary>Tells the server what the player has selected, which spells and some commands act on.</summary>
     public void Select(ulong guid) => _ = SendQuietly(Opcodes.CMSG_SET_SELECTION, new PacketWriter().U64(guid).ToArray());
@@ -596,6 +625,9 @@ public sealed partial class RealmSession
                 Notice($"You {(received == 0 ? "loot" : "receive")}: {name}{(count > 1 ? $" x{count}" : "")}", false);
                 break;
             }
+            case MsgCorpseQuery:
+                ReadCorpse(p.Data);
+                break;
             case Opcodes.SMSG_SPIRIT_HEALER_CONFIRM:
                 Events.Enqueue(new SpiritHealerOffer(new PacketReader(p.Data).U64()));
                 break;
@@ -1419,6 +1451,17 @@ public sealed partial class RealmSession
             obj.Field(UpdateFields.PlayerFlags));
         _self = stats;
         Events.Enqueue(new SelfChanged(stats));
+
+        // A ghost needs to know where its body lies, which may be too far for the server to show.
+        if (stats.IsGhost && !_askedCorpse)
+        {
+            _askedCorpse = true;
+            _ = SendQuietly(MsgCorpseQuery, []);
+        }
+        else if (!stats.IsGhost)
+        {
+            _askedCorpse = false;
+        }
         _inventoryDirty = true;
     }
 

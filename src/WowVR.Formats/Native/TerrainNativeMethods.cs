@@ -39,6 +39,9 @@ internal static unsafe partial class TerrainNativeMethods
     [LibraryImport(Library, EntryPoint = "wa_wdt_read")]
     internal static partial WaStatus WdtRead(byte* data, nuint length, byte* tiles, out uint flags);
 
+    [LibraryImport(Library, EntryPoint = "wa_wdt_global_wmo")]
+    internal static partial WaStatus WdtGlobalWmo(byte* data, nuint length, out WaBuffer name, out WaPlacement placement);
+
     [LibraryImport(Library, EntryPoint = "wa_adt_open")]
     internal static partial nint AdtOpen(byte* data, nuint length, int bigAlpha);
 

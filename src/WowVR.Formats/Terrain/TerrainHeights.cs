@@ -24,6 +24,13 @@ public sealed class TerrainHeights
     /// <summary>The liquid layers of the chunks that have any.</summary>
     private readonly Dictionary<int, List<LiquidLayer>> _liquids = [];
 
+    /// <summary>A tile with no terrain, as a map made of one WMO has: no liquid, and height 0.</summary>
+    public TerrainHeights(int tileX, int tileY)
+    {
+        _tileX = tileX;
+        _tileY = tileY;
+    }
+
     public TerrainHeights(AdtTerrain terrain, int tileX, int tileY)
     {
         _tileX = tileX;

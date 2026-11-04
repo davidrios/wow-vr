@@ -61,7 +61,13 @@ public sealed class BillboardBones(IReadOnlyList<(int Bone, M2BillboardKind Kind
                     break;
             }
 
+            // A bone scaled away, as some death clips do, has nothing to turn.
             var scale = pose.Basis.Scale;
+            if (scale.X < 1e-4f || scale.Y < 1e-4f || scale.Z < 1e-4f || !x.IsFinite() || !y.IsFinite() || !z.IsFinite())
+            {
+                continue;
+            }
+
             skeleton.SetBoneGlobalPose(bone, new Transform3D(new Basis(x * scale.X, y * scale.Y, z * scale.Z), pose.Origin));
         }
     }

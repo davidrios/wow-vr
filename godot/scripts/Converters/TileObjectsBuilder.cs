@@ -56,9 +56,47 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
 
         foreach (var placement in terrain.Wmos)
         {
-            if (!OwnedBy(placement, tile) || library.GetWmo(placement.Model) is not { } wmo)
+            if (OwnedBy(placement, tile))
             {
-                continue;
+                AddWmo(cells, wmos, placement, tileX, tileY);
+            }
+        }
+
+        AddGameObjects(cells, wmos, terrain, tileX, tileY);
+        return new TileObjects(Batches(cells), wmos);
+    }
+
+    /// <summary>The one WMO a map without terrain is made of, as the objects of the tile it stands on.</summary>
+    public TileObjects BuildGlobal(ModelPlacement placement, int tileX, int tileY)
+    {
+        library.TrimCaches();
+        var cells = new Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light, System.Numerics.Vector3 Direction)>>();
+        var wmos = new List<WmoInstance>();
+        AddWmo(cells, wmos, placement, tileX, tileY);
+        return new TileObjects(Batches(cells), wmos);
+    }
+
+    private List<DoodadBatch> Batches(Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light, System.Numerics.Vector3 Direction)>> cells)
+    {
+        var batches = new List<DoodadBatch>();
+        foreach (var (cell, transforms) in cells)
+        {
+            if (library.GetM2(cell.Model) is { } model)
+            {
+                batches.Add(BuildBatch(model, transforms, cell.Interior));
+            }
+        }
+
+        return batches;
+    }
+
+    /// <summary>A WMO and its doodads: those in a group go with the group, the rest join the tile's cells.</summary>
+    private void AddWmo(Dictionary<(int X, int Z, string Model, bool Interior), List<(PlacementTransform Transform, System.Numerics.Vector3 Light, System.Numerics.Vector3 Direction)>> cells, List<WmoInstance> wmos, ModelPlacement placement, int tileX, int tileY)
+    {
+        {
+            if (library.GetWmo(placement.Model) is not { } wmo)
+            {
+                return;
             }
 
             var transform = WowCoords.TilePlacement(placement.Position, placement.Rotation, 1f, tileX, tileY);
@@ -98,19 +136,6 @@ public sealed class TileObjectsBuilder(ModelLibrary library, WdtMap map, IGameOb
 
             wmos.Add(new WmoInstance(wmo, ToTransform3D(transform), groupDoodads));
         }
-
-        AddGameObjects(cells, wmos, terrain, tileX, tileY);
-
-        var batches = new List<DoodadBatch>();
-        foreach (var (cell, transforms) in cells)
-        {
-            if (library.GetM2(cell.Model) is { } model)
-            {
-                batches.Add(BuildBatch(model, transforms, cell.Interior));
-            }
-        }
-
-        return new TileObjects(batches, wmos);
     }
 
     /// <summary>Spawned objects join the tile's doodads, which gives them streaming and collision.</summary>

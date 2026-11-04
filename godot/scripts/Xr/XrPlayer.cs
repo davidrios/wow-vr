@@ -1,4 +1,5 @@
 using WowVR.Ui;
+using WowVR.World;
 using Godot;
 
 namespace WowVR.Xr;
@@ -6,7 +7,10 @@ namespace WowVR.Xr;
 /// <summary>
 /// The VR player. Left stick moves and left Y toggles flying; clicking the stick boosts flight.
 /// Left trigger aims a teleport, right stick turns, left X opens the wrist menu, and right
-/// trigger clicks in it. Movement itself is XR Tools' providers under the controllers.
+/// trigger clicks in it. On a server, the HUD floats above the left wrist, the right trigger
+/// also selects what the laser points at in the world, right A uses it (talks, loots, attacks,
+/// opens), and right B types in chat with the virtual keyboard. Movement itself is XR Tools'
+/// providers under the controllers.
 /// </summary>
 public partial class XrPlayer : XROrigin3D, IPlayer
 {
@@ -68,6 +72,17 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     private Node3D _pointer = null!;
     private Node3D _vignette = null!;
     private Node3D _wristMenu = null!;
+    private XRController3D _rightController = null!;
+    private Node3D? _hudPanel;
+    private Node3D? _keyboard;
+    private GameHud? _hud;
+    private Interaction? _interaction;
+
+    /// <summary>The panels' layer, which the laser pointer collides with.</summary>
+    private const uint PointerLayer = 5242880;
+
+    /// <summary>Where each controller is, for the body's hands to follow.</summary>
+    public (Node3D Left, Node3D Right) Controllers => (_leftController, _rightController);
     private bool _boost;
     private bool _frozen;
     private bool _held;
@@ -157,6 +172,8 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         SetMenuOpen(false);
 
         _leftController.ButtonPressed += OnLeftButtonPressed;
+        _rightController = GetNode<XRController3D>("RightController");
+        _rightController.ButtonPressed += OnRightButtonPressed;
         AppSettings.Changed += ApplySettings;
         ApplySettings();
 
@@ -207,7 +224,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
 
         _wristMenu.Visible = open;
         _wristMenu.Set(Enabled, open);
-        _pointer.Set(Enabled, open || _uiMode);
+        _pointer.Set(Enabled, open || _uiMode || _hud is not null);
         _teleport.Set(Enabled, !open && !_held);
     }
 
@@ -248,6 +265,88 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _vignette.Set(Radius, _vignetteRadius);
     }
 
+    /// <summary>
+    /// The HUD on a panel above the left wrist, turned toward the face when the wrist is raised,
+    /// with the laser on to point at it and at the world.
+    /// </summary>
+    public void AddHud(GameHud hud, Interaction interaction)
+    {
+        (_hud, _interaction) = (hud, interaction);
+        var panel = GD.Load<PackedScene>("res://addons/godot-xr-tools/objects/viewport_2d_in_3d.tscn").Instantiate<Node3D>();
+        panel.Name = "HudPanel";
+        panel.Set("screen_size", new Vector2(0.48f, 0.48f * GameHud.PanelSize.Y / GameHud.PanelSize.X));
+        panel.Set("viewport_size", (Vector2)GameHud.PanelSize);
+        panel.Set("collision_layer", PointerLayer);
+        _leftController.AddChild(panel);
+        panel.Set("transparent", 1);
+        panel.Set("unshaded", true);
+        panel.Position = new Vector3(0.05f, 0.22f, -0.1f);
+        panel.RotationDegrees = new Vector3(-35f, 0f, 0f);
+        panel.Scale = Vector3.One * AppSettings.WorldScale;
+        panel.GetNode<SubViewport>("Viewport").TransparentBg = true;
+        panel.GetNode<SubViewport>("Viewport").AddChild(hud);
+        _hudPanel = panel;
+
+        _keyboard = GD.Load<PackedScene>("res://addons/godot-xr-tools/objects/virtual_keyboard.tscn").Instantiate<Node3D>();
+        _keyboard.Set("collision_layer", PointerLayer);
+        _keyboard.Visible = false;
+        AddChild(_keyboard);
+        hud.TextFocusChanged += focused =>
+        {
+            _keyboard.Visible = focused;
+            _keyboard.Set(Enabled, focused);
+            if (focused)
+            {
+                PlaceKeyboard();
+            }
+        };
+        hud.MenuRequested += () => SetMenuOpen(true);
+        _pointer.Set(Enabled, true);
+    }
+
+    /// <summary>Below and in front of the eyes, tilted up, where a keyboard would be on a desk.</summary>
+    private void PlaceKeyboard()
+    {
+        var eyes = Eyes;
+        var forward = -eyes.Basis.Z with { Y = 0 };
+        forward = forward.LengthSquared() < 1e-4f ? Vector3.Forward : forward.Normalized();
+        var scale = AppSettings.WorldScale;
+        _keyboard!.GlobalPosition = eyes.Origin + (forward * 0.45f * scale) + (Vector3.Down * 0.45f * scale);
+        _keyboard.LookAt(eyes.Origin with { Y = _keyboard.GlobalPosition.Y }, Vector3.Up);
+        _keyboard.RotateObjectLocal(Vector3.Up, Mathf.Pi);
+        _keyboard.RotateObjectLocal(Vector3.Right, -0.6f);
+        _keyboard.Scale = Vector3.One * 0.45f * scale;
+    }
+
+    /// <summary>Whether the laser is on a panel or the keyboard, which takes its clicks.</summary>
+    private bool PointingAtPanel => _pointer.Get("target").AsGodotObject() is CollisionObject3D target && (target.CollisionLayer & PointerLayer) != 0;
+
+    private void OnRightButtonPressed(string name)
+    {
+        if (_interaction is null || _uiMode || _held)
+        {
+            return;
+        }
+
+        var aim = _rightController.GlobalTransform;
+        switch (name)
+        {
+            case "trigger_click" when !PointingAtPanel && !_wristMenu.Visible:
+                _interaction.Select(aim.Origin, -aim.Basis.Z);
+                break;
+            case "ax_button":
+                if (!_interaction.Use(aim.Origin, -aim.Basis.Z) && _interaction.World.Target != 0)
+                {
+                    _interaction.World.Use(_interaction.World.Target);
+                }
+
+                break;
+            case "by_button":
+                _hud?.OpenChat();
+                break;
+        }
+    }
+
     private void OnLeftButtonPressed(string name)
     {
         switch (name)
@@ -278,6 +377,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         }
 
         _leftController.ButtonPressed -= OnLeftButtonPressed;
+        _rightController.ButtonPressed -= OnRightButtonPressed;
         AppSettings.Changed -= ApplySettings;
     }
 

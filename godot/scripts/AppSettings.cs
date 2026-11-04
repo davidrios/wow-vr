@@ -342,6 +342,14 @@ public static class AppSettings
         set => Write(LoginSection, "character", value);
     }
 
+    private const string HudSection = "hud";
+
+    /// <summary>Where the player moved a piece of the HUD, in its own pixels, or null where it was never moved.</summary>
+    public static Vector2? HudPosition(string name) =>
+        Config.HasSectionKey(HudSection, name) ? Read(HudSection, name, Vector2.Zero).AsVector2() : null;
+
+    public static void SetHudPosition(string name, Vector2 position) => Write(HudSection, name, position);
+
     private const string ServerSection = "server";
 
     /// <summary>

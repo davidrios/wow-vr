@@ -78,13 +78,20 @@ public partial class GameHud : Control
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Ignore;
 
-        _playerFrame = new UnitFrame();
+        _playerFrame = new UnitFrame { PlaceKey = "player_frame" };
         AddChild(_playerFrame);
         _playerFrame.Position = new Vector2(16, 16);
 
-        _targetFrame = new UnitFrame { Visible = false };
+        _targetFrame = new UnitFrame { Visible = false, PlaceKey = "target_frame" };
         AddChild(_targetFrame);
         _targetFrame.Position = new Vector2(316, 16);
+
+        // Once laid out, so they're kept on screen by their real size.
+        Callable.From(() =>
+        {
+            _playerFrame.RestorePlace();
+            _targetFrame.RestorePlace();
+        }).CallDeferred();
 
         _screenText = new Label
         {
@@ -941,15 +948,26 @@ public partial class UnitFrame : PanelContainer
     private Label _healthText = null!;
     private Label _powerText = null!;
 
+    /// <summary>The name its place is saved under once dragged; null for a frame that stays put.</summary>
+    public string? PlaceKey { get; init; }
+
+    private Vector2? _grab;
+
     public override void _Ready()
     {
         CustomMinimumSize = new Vector2(280, 0);
         AddThemeStyleboxOverride("panel", GlueTheme.Box(GlueTheme.Panel, 8, 10, GlueTheme.Edge));
-        MouseFilter = MouseFilterEnum.Ignore;
-        var box = new VBoxContainer();
+        MouseFilter = PlaceKey is null ? MouseFilterEnum.Ignore : MouseFilterEnum.Stop;
+        if (PlaceKey is not null)
+        {
+            TooltipText = "Drag to move";
+            MouseDefaultCursorShape = CursorShape.Move;
+        }
+
+        var box = new VBoxContainer { MouseFilter = MouseFilterEnum.Pass };
         box.AddThemeConstantOverride("separation", 4);
         AddChild(box);
-        var top = new HBoxContainer();
+        var top = new HBoxContainer { MouseFilter = MouseFilterEnum.Pass };
         box.AddChild(top);
         _name = new Label { SizeFlagsHorizontal = SizeFlags.ExpandFill, ClipText = true };
         top.AddChild(_name);
@@ -958,6 +976,50 @@ public partial class UnitFrame : PanelContainer
         top.AddChild(_status);
         (_health, _healthText) = Bar(box, new Color(0.1f, 0.75f, 0.1f), 20);
         (_power, _powerText) = Bar(box, new Color(0.15f, 0.35f, 0.95f), 14);
+    }
+
+    /// <summary>The key its place is saved under: the desktop window and the VR panel differ in size, so each has its own.</summary>
+    private string? SavedKey => PlaceKey is null ? null : GetViewport() is SubViewport ? PlaceKey + "_vr" : PlaceKey;
+
+    /// <summary>Puts it back where it was last left, kept on screen.</summary>
+    public void RestorePlace()
+    {
+        if (SavedKey is { } key && AppSettings.HudPosition(key) is { } saved)
+        {
+            Position = Clamped(saved);
+        }
+    }
+
+    private Vector2 Clamped(Vector2 at)
+    {
+        var area = GetParentAreaSize();
+        return new Vector2(Mathf.Clamp(at.X, 0, Mathf.Max(area.X - Size.X, 0)), Mathf.Clamp(at.Y, 0, Mathf.Max(area.Y - Size.Y, 0)));
+    }
+
+    /// <summary>Dragged with the left button, by the mouse or the VR laser, and left where it's let go.</summary>
+    public override void _GuiInput(InputEvent e)
+    {
+        if (PlaceKey is null)
+        {
+            return;
+        }
+
+        switch (e)
+        {
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } press:
+                _grab = press.Position;
+                AcceptEvent();
+                break;
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: false } when _grab is not null:
+                _grab = null;
+                AppSettings.SetHudPosition(SavedKey!, Position);
+                AcceptEvent();
+                break;
+            case InputEventMouseMotion motion when _grab is { } grab:
+                Position = Clamped(Position + motion.Position - grab);
+                AcceptEvent();
+                break;
+        }
     }
 
     private static (ProgressBar, Label) Bar(Container parent, Color color, int height)

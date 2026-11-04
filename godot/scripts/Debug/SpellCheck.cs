@@ -73,6 +73,8 @@ public partial class SpellCheck : Node
                 _hud.ToggleBags();
                 Next();
                 break;
+            case 1 when _stepAge > 2 && !DragFrame():
+                break;
             case 1 when _stepAge > 2 && !DragToBar():
                 break;
             case 1 when _stepAge > 2:
@@ -354,6 +356,65 @@ public partial class SpellCheck : Node
         }
 
         return false;
+    }
+
+    private int _frameStep;
+    private Vector2 _frameFrom;
+    private Vector2 _frameWas;
+    private Ui.UnitFrame? _frame;
+    private static readonly Vector2 FrameMove = new(300, 200);
+
+    /// <summary>Drags the player's frame 300 by 200 pixels with real mouse events, checks it moved and was saved, and puts it back. True when done.</summary>
+    private bool DragFrame()
+    {
+        void Mouse(InputEvent e) => Input.ParseInputEvent(e);
+        switch (_frameStep)
+        {
+            case 0:
+                _frame = Descendants(_hud!).OfType<Ui.UnitFrame>().FirstOrDefault(f => f.PlaceKey == "player_frame");
+                if (_frame is null)
+                {
+                    Fail("no player frame");
+                    _frameStep = 99;
+                    return true;
+                }
+
+                _frameWas = _frame.Position;
+                _frameFrom = _frame.GetGlobalRect().GetCenter();
+                Mouse(new InputEventMouseMotion { Position = _frameFrom, GlobalPosition = _frameFrom });
+                Mouse(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true, ButtonMask = MouseButtonMask.Left, Position = _frameFrom, GlobalPosition = _frameFrom });
+                _frameStep++;
+                return false;
+            case <= 10:
+                var at = _frameFrom + FrameMove * (_frameStep / 10f);
+                Mouse(new InputEventMouseMotion { Position = at, GlobalPosition = at, Relative = FrameMove / 10f, ButtonMask = MouseButtonMask.Left });
+                _frameStep++;
+                return false;
+            case 11:
+                var to = _frameFrom + FrameMove;
+                Mouse(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = false, Position = to, GlobalPosition = to });
+                _frameStep++;
+                return false;
+            case 12:
+                var moved = _frame!.Position - _frameWas;
+                var saved = AppSettings.HudPosition("player_frame");
+                if (moved.DistanceTo(FrameMove) < 2 && saved is { } place && place.DistanceTo(_frame.Position) < 1)
+                {
+                    GD.Print($"Spell check: PASS the player frame dragged by {moved} and saved at {place}");
+                }
+                else
+                {
+                    Fail($"dragging the player frame moved it by {moved}, saved {saved}");
+                }
+
+                Shot("frame");
+                _frame.Position = _frameWas;
+                AppSettings.SetHudPosition("player_frame", _frameWas);
+                _frameStep++;
+                return true;
+            default:
+                return true;
+        }
     }
 
     private const int DragSlot = 10;

@@ -17,6 +17,7 @@ shape = SubResource("Shape_body")
 current = true
 
 [node name="MenuLayer" type="CanvasLayer" parent="."]
+layer = 2
 visible = false
 
 [node name="WorldMenu" parent="MenuLayer" instance=ExtResource("2_menu")]

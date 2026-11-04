@@ -1077,6 +1077,17 @@ public sealed partial class RealmSession
 
     private void AnnounceGameObject(TrackedObject obj)
     {
+        if (!_announced.Add(obj.Guid))
+        {
+            return;
+        }
+
+        Events.Enqueue(new GameObjectAppeared(GameObjectInfoOf(obj)));
+    }
+
+    /// <summary>What the game needs to draw and use a game object, from what the server sent and its template.</summary>
+    private GameObjectInfo GameObjectInfoOf(TrackedObject obj)
+    {
         if (!_gameObjectTemplates.TryGetValue(obj.Entry, out var template))
         {
             template = ("", 0u, 0u, new uint[24]);
@@ -1084,14 +1095,9 @@ public sealed partial class RealmSession
 
         var rotation = obj.Rotation ?? Quaternion.CreateFromAxisAngle(Vector3.UnitZ, obj.Orientation);
         var bytes1 = obj.Field(UpdateFields.GameObjectBytes1);
-        if (!_announced.Add(obj.Guid))
-        {
-            return;
-        }
-
-        Events.Enqueue(new GameObjectAppeared(new GameObjectInfo(
+        return new GameObjectInfo(
             obj.Guid, obj.Entry, template.Item1, obj.DisplayId, (bytes1 >> 8) & 0xFF, obj.Position, rotation, obj.Scale,
-            obj.Field(UpdateFields.GameObjectFlags), bytes1 & 0xFF, obj.PathProgress, template.Item4)));
+            obj.Field(UpdateFields.GameObjectFlags), bytes1 & 0xFF, obj.PathProgress, template.Item4);
     }
 
     private void ReadGossip(byte[] data)
@@ -1488,6 +1494,12 @@ public sealed partial class RealmSession
         if (obj.Type is ObjectType.Item or ObjectType.Container)
         {
             _inventoryDirty = true;
+        }
+
+        // A door opening or a chest's state: the game draws it again.
+        if (obj.Type == ObjectType.GameObject && _announced.Contains(obj.Guid))
+        {
+            Events.Enqueue(new GameObjectAppeared(GameObjectInfoOf(obj)));
         }
     }
 

@@ -101,6 +101,9 @@ public partial class ServerWorld : Node
 
     public bool Rooted { get; private set; }
 
+    /// <summary>The server's other game objects, drawn as it shows them.</summary>
+    public ServerObjects? Objects { get; set; }
+
     /// <summary>The ships and zeppelins, which carry the player and need their movement sent relative to them.</summary>
     public Transports? Transports { get; set; }
 
@@ -164,7 +167,7 @@ public partial class ServerWorld : Node
         {
             _sinceReport = 0;
             var (_, x, y, z) = _tiles.PlayerLocation;
-            GD.Print($"Server: {Creatures} creatures in view, {_creatures.NodeCount} placed, {_moves} moves since the last report; player at ({x:F0}, {y:F0}, {z:F0}); nearest {_creatures.NearestLive}");
+            GD.Print($"Server: {Creatures} creatures in view, {_creatures.NodeCount} placed, {Objects?.Shown ?? 0} objects ({Objects?.Count ?? 0} drawn), {_moves} moves since the last report; player at ({x:F0}, {y:F0}, {z:F0}); nearest {_creatures.NearestLive}");
             _moves = 0;
         }
     }
@@ -363,13 +366,21 @@ public partial class ServerWorld : Node
                 GameObjects[appeared.Object.Guid] = appeared.Object;
                 if (appeared.Object.Type == Transports.MapObjectTransport)
                 {
-                    Transports?.Add(appeared.Object);
+                    if (Transports?.Has(appeared.Object.Guid) == false)
+                    {
+                        Transports.Add(appeared.Object);
+                    }
+                }
+                else
+                {
+                    Objects?.Show(appeared.Object);
                 }
 
                 break;
             case GameObjectGone gone:
                 GameObjects.Remove(gone.Guid);
                 Transports?.Remove(gone.Guid);
+                Objects?.Hide(gone.Guid);
                 break;
             case BoardedTransport boarded:
                 GD.Print($"The server has the player aboard transport {boarded.Transport:X} at {boarded.Offset}");

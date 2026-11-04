@@ -544,7 +544,8 @@ public partial class Main : Node3D
 
             AddChild(tiles);
             _tiles = tiles;
-            tiles.Start(source, map, liquids, player, start.X, start.Z, ChooseGameObjectSource(OS.GetCmdlineUserArgs(), mapId));
+            // On a server, its own objects are drawn instead, as it shows them.
+            tiles.Start(source, map, liquids, player, start.X, start.Z, session is null ? ChooseGameObjectSource(OS.GetCmdlineUserArgs(), mapId) : new NoGameObjects());
             sky.SetCelestialTextures(tiles.Models);
 
             var ambience = new ZoneAmbience { Name = "ZoneAmbience" };
@@ -577,6 +578,10 @@ public partial class Main : Node3D
                 AddChild(transports);
                 transports.Start(tiles, player, _player, source, mapId);
                 server.Transports = transports;
+                var serverObjects = new ServerObjects { Name = "ServerObjects" };
+                AddChild(serverObjects);
+                serverObjects.Start(tiles, source);
+                server.Objects = serverObjects;
                 server.Start(session, creatures, tiles, displays, _player, factions, triggers);
                 server.WorldChanging += ChangeMap;
                 _server = server;

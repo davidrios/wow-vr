@@ -394,8 +394,37 @@ public partial class CreatureNode : Node3D
         (_clip, _rate) = (clip, rate);
     }
 
+    /// <summary>
+    /// Plays a sequence once and holds its last pose, as a door opening, or goes straight to that
+    /// pose for one already open when it appears. False when the model has no such sequence.
+    /// </summary>
+    public bool PlayAndHold(int sequence, bool atEnd)
+    {
+        if (ClipFor(sequence) is not { } clip)
+        {
+            return false;
+        }
+
+        _holding = true;
+        _player.Play(clip, atEnd ? 0 : BlendSeconds);
+        if (atEnd)
+        {
+            _player.Seek(_player.CurrentAnimationLength, update: true);
+        }
+
+        _clip = clip;
+        return true;
+    }
+
+    private bool _holding;
+
     private void OnClipFinished()
     {
+        if (_holding)
+        {
+            return;
+        }
+
         if (_dead)
         {
             // Lies still, on the last pose of dying, or the model's own lying-dead loop.

@@ -92,6 +92,12 @@ public partial class PlayCheck : Node
             return;
         }
 
+        if (arguments.FirstOrDefault(a => a.StartsWith("--door="))?["--door=".Length..] is { } door)
+        {
+            AddDoorSteps(door);
+            return;
+        }
+
         if (_afterMapChange is { } changed)
         {
             AddSync($"position after .tele {changed}");
@@ -892,6 +898,98 @@ public partial class PlayCheck : Node
     private bool _leveled;
     private uint _level;
     private System.Numerics.Vector3 _portalFrom;
+
+    public ServerObjects? Objects { get; init; }
+
+    /// <summary>Goes to a game object by its entry, then opens and closes it as right-clicking it does, watching its clip.</summary>
+    private void AddDoorSteps(string entry)
+    {
+        Step("gm on", _ =>
+        {
+            if (First)
+            {
+                Server.Say(".gm on");
+            }
+
+            return true;
+        });
+        Step($"go to object {entry}", age =>
+        {
+            if (First)
+            {
+                Server.Say($".go gameobject id {entry}");
+            }
+
+            return age > 8 && Loaded ? true : null;
+        });
+        ulong door = 0;
+        Step("an animated object in view", age =>
+        {
+            var feet = Tiles.LocalToWow(((IPlayer)Player).Feet);
+            var found = Objects?.Animated
+                .Select(a => (a.Guid, a.Name, a.State, a.Clip, Distance: System.Numerics.Vector3.Distance(Server.GameObjects[a.Guid].Position, feet)))
+                .OrderBy(a => a.Distance).FirstOrDefault();
+            if (found is not { Guid: not 0 } nearest)
+            {
+                return age > 10 ? false : null;
+            }
+
+            door = nearest.Guid;
+            Note($"  {nearest.Name}: state {nearest.State}, clip {nearest.Clip}, {nearest.Distance:F0} yd away");
+            return true;
+        });
+        Step("next to it", age =>
+        {
+            if (First)
+            {
+                var at = Server.GameObjects[door].Position;
+                Server.Say(FormattableString.Invariant($".go xyz {at.X + 2.5f:F1} {at.Y:F1} {at.Z + 0.5f:F1}"));
+            }
+
+            if (age > 4 && Loaded)
+            {
+                Shot("door-before");
+                return true;
+            }
+
+            return null;
+        });
+        string Clip() => Objects!.Animated.First(a => a.Guid == door).Clip;
+        uint State() => Server.GameObjects[door].State;
+        foreach (var (name, sequence) in new[] { ("opens", "146_"), ("closes", "148_") })
+        {
+            Step($"it {name} when used", age =>
+            {
+                if (First)
+                {
+                    // A door with a lever beside it is opened with the lever, as players do.
+                    _stateBefore = State();
+                    var at = Server.GameObjects[door].Position;
+                    var lever = Server.GameObjects.Values.FirstOrDefault(o => o.Type == 1 && o.Guid != door && System.Numerics.Vector3.Distance(o.Position, at) < 10);
+                    Note($"  using {(lever is null ? "it" : lever.Name)}");
+                    Server.UseGameObject(lever?.Guid ?? door);
+                }
+
+                if (State() != _stateBefore && Clip().StartsWith(sequence) && age > 2)
+                {
+                    Note($"  state {_stateBefore} to {State()}, clip {Clip()}");
+                    Shot($"door-{name}");
+                    return true;
+                }
+
+                if (age > 10)
+                {
+                    // Some levers only open: the server keeps their door open after.
+                    Note($"  state {State()}, clip {Clip()}{(State() == _stateBefore && name == "closes" ? ": the server keeps it open" : "")}");
+                    return State() == _stateBefore && name == "closes";
+                }
+
+                return null;
+            });
+        }
+    }
+
+    private uint _stateBefore;
 
     private void AddPlaySteps()
     {

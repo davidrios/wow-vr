@@ -27,11 +27,17 @@ public static class M2SequenceIds
     public const int SwimRight = 44;
     public const int SwimBackwards = 45;
 
+    /// <summary>A door's, chest's or lever's: opening, standing open, closing and standing closed.</summary>
+    public const int Open = 146;
+    public const int Opened = 147;
+    public const int Close = 148;
+    public const int Closed = 149;
+
     /// <summary>Played once rather than looped.</summary>
-    public static bool PlaysOnce(int id) => id is Stand or Death or AttackUnarmed or Attack1H or Attack2H or JumpStart or JumpEnd;
+    public static bool PlaysOnce(int id) => id is Stand or Death or AttackUnarmed or Attack1H or Attack2H or JumpStart or JumpEnd or Open or Close;
 
     /// <summary>The sequences this game plays beyond standing, walking and running.</summary>
-    public static readonly int[] Extra = [Death, Dead, WalkBackwards, AttackUnarmed, Attack1H, Attack2H, ReadyUnarmed, Ready1H, JumpStart, Jump, JumpEnd, Fall, SwimIdle, Swim, SwimLeft, SwimRight, SwimBackwards];
+    public static readonly int[] Extra = [Death, Dead, WalkBackwards, AttackUnarmed, Attack1H, Attack2H, ReadyUnarmed, Ready1H, JumpStart, Jump, JumpEnd, Fall, SwimIdle, Swim, SwimLeft, SwimRight, SwimBackwards, Open, Close];
 
     /// <summary>Not played as such: its first pose is what a hand's fingers hold while it has something in it.</summary>
     public const int HandsClosed = 15;

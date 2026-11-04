@@ -115,6 +115,10 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         return Build(look, weapons, $"creature display {displayId}");
     }
 
+    /// <summary>A model by its path, with the textures it names itself, as a game object's. Null if it can't be made.</summary>
+    public CreatureAsset? BuildModel(string path) =>
+        Build(new CreatureLook(path, 1f, new Dictionary<int, string>(), null, []), [], path);
+
     /// <summary>A player character, with its body texture painted from its skin, face, hair and gear. Null if it can't be made.</summary>
     public CreatureAsset? BuildCharacter(CharacterAppearance appearance)
     {

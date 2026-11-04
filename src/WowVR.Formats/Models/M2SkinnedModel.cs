@@ -9,6 +9,29 @@ public static class M2SequenceIds
     public const int Stand = 0;
     public const int Walk = 4;
     public const int Run = 5;
+    public const int Death = 1;
+    public const int Dead = 6;
+    public const int WalkBackwards = 13;
+    public const int AttackUnarmed = 16;
+    public const int Attack1H = 17;
+    public const int Attack2H = 18;
+    public const int ReadyUnarmed = 25;
+    public const int Ready1H = 26;
+    public const int JumpStart = 37;
+    public const int Jump = 38;
+    public const int JumpEnd = 39;
+    public const int Fall = 40;
+    public const int SwimIdle = 41;
+    public const int Swim = 42;
+    public const int SwimLeft = 43;
+    public const int SwimRight = 44;
+    public const int SwimBackwards = 45;
+
+    /// <summary>Played once rather than looped.</summary>
+    public static bool PlaysOnce(int id) => id is Stand or Death or AttackUnarmed or Attack1H or Attack2H or JumpStart or JumpEnd;
+
+    /// <summary>The sequences this game plays beyond standing, walking and running.</summary>
+    public static readonly int[] Extra = [Death, Dead, WalkBackwards, AttackUnarmed, Attack1H, Attack2H, ReadyUnarmed, Ready1H, JumpStart, Jump, JumpEnd, Fall, SwimIdle, Swim, SwimLeft, SwimRight, SwimBackwards];
 
     /// <summary>Not played as such: its first pose is what a hand's fingers hold while it has something in it.</summary>
     public const int HandsClosed = 15;

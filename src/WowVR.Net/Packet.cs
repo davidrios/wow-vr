@@ -70,5 +70,30 @@ public sealed class PacketWriter
     public PacketWriter CString(string s) { _ms.Write(Encoding.UTF8.GetBytes(s)); _ms.WriteByte(0); return this; }
 
     public byte[] ToArray() => _ms.ToArray();
+
+    /// <summary>A GUID as a mask byte followed by its non-zero bytes.</summary>
+    public static void PackedGuid(PacketWriter w, ulong guid)
+    {
+        byte mask = 0;
+        Span<byte> bytes = stackalloc byte[8];
+        var count = 0;
+        for (var i = 0; i < 8; i++)
+        {
+            var b = (byte)(guid >> (i * 8));
+            if (b != 0)
+            {
+                mask |= (byte)(1 << i);
+                bytes[count++] = b;
+            }
+        }
+
+        w.U8(mask).Bytes(bytes[..count]);
+    }
+
+    public PacketWriter Packed(ulong guid)
+    {
+        PackedGuid(this, guid);
+        return this;
+    }
     public int Length => (int)_ms.Length;
 }

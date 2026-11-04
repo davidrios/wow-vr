@@ -22,6 +22,29 @@ public sealed class TrackedObject(ulong guid, ObjectType type)
 
     public float RunSpeed { get; set; } = 7f;
 
+    public float RunBackSpeed { get; set; } = 4.5f;
+
+    public float SwimSpeed { get; set; } = 4.722222f;
+
+    public float SwimBackSpeed { get; set; } = 2.5f;
+
+    public float FlightSpeed { get; set; } = 7f;
+
+    public float FlightBackSpeed { get; set; } = 4.5f;
+
+    public MoveFlags MoveFlags { get; set; }
+
+    /// <summary>What it rides, and where on it, while <see cref="MoveFlags"/> has <see cref="MoveFlags.OnTransport"/>.</summary>
+    public ulong TransportGuid { get; set; }
+
+    public Vector3 TransportOffset { get; set; }
+
+    /// <summary>A game object's rotation, as a quaternion in WoW axes, when the server gives one.</summary>
+    public Quaternion? Rotation { get; set; }
+
+    /// <summary>A transport's progress along its path, in milliseconds, when it was created.</summary>
+    public uint PathProgress { get; set; }
+
     /// <summary>What it's doing now. Standing where it is, until the server says it's moving.</summary>
     public MovePath? Path { get; set; }
 
@@ -35,6 +58,10 @@ public sealed class TrackedObject(ulong guid, ObjectType type)
     public float Scale => Fields.TryGetValue(UpdateFields.ObjectScale, out var bits) ? BitConverter.UInt32BitsToSingle(bits) : 1f;
 
     public uint DisplayId => Type == ObjectType.GameObject ? Field(UpdateFields.GameObjectDisplayId) : Field(UpdateFields.UnitDisplayId);
+
+    public ulong Field64(int index) => Field(index) | ((ulong)Field(index + 1) << 32);
+
+    public bool IsUnit => Type is ObjectType.Unit or ObjectType.Player;
 }
 
 /// <summary>
@@ -59,6 +86,9 @@ public sealed class ObjectTracker
     public event Action<TrackedObject>? Moved;
 
     public event Action<TrackedObject>? Removed;
+
+    /// <summary>Fields of an object already known changed.</summary>
+    public event Action<TrackedObject>? ValuesChanged;
 
     /// <summary>Blocks that couldn't be read, which stop the rest of their packet being read.</summary>
     public int Errors { get; private set; }
@@ -133,6 +163,11 @@ public sealed class ObjectTracker
             {
                 var obj = Objects.GetValueOrDefault(r.PackedGuid());
                 ReadValues(r, obj);
+                if (obj is not null)
+                {
+                    ValuesChanged?.Invoke(obj);
+                }
+
                 break;
             }
             case 1: // movement
@@ -212,10 +247,12 @@ public sealed class ObjectTracker
             r.U32(); // time
             obj.Position = Vec(r);
             obj.Orientation = r.F32();
+            obj.MoveFlags = (MoveFlags)moveFlags;
             if ((moveFlags & 0x200) != 0) // on a transport
             {
-                r.PackedGuid();
-                r.Skip(16);
+                obj.TransportGuid = r.PackedGuid();
+                obj.TransportOffset = Vec(r);
+                r.F32();
                 r.U32();
                 r.U8();
                 if ((moveFlags2 & 0x400) != 0)
@@ -242,7 +279,12 @@ public sealed class ObjectTracker
 
             obj.WalkSpeed = r.F32();
             obj.RunSpeed = r.F32();
-            r.Skip(7 * 4); // back, swim, swim back, flight, flight back, turn and pitch rates
+            obj.RunBackSpeed = r.F32();
+            obj.SwimSpeed = r.F32();
+            obj.SwimBackSpeed = r.F32();
+            obj.FlightSpeed = r.F32();
+            obj.FlightBackSpeed = r.F32();
+            r.Skip(2 * 4); // turn and pitch rates
             obj.Path = MovePath.Standing(obj.Position, obj.Orientation);
             obj.PathElapsed = 0;
             if ((moveFlags & 0x8000000) != 0) // spline enabled
@@ -252,9 +294,9 @@ public sealed class ObjectTracker
         }
         else if ((flags & 0x100) != 0) // position
         {
-            r.PackedGuid();
+            obj.TransportGuid = r.PackedGuid();
             obj.Position = Vec(r);
-            r.Skip(12);
+            obj.TransportOffset = Vec(r);
             obj.Orientation = r.F32();
             r.F32();
         }
@@ -279,9 +321,9 @@ public sealed class ObjectTracker
             r.PackedGuid();
         }
 
-        if ((flags & 0x02) != 0)
+        if ((flags & 0x02) != 0) // transport
         {
-            r.U32();
+            obj.PathProgress = r.U32();
         }
 
         if ((flags & 0x80) != 0)
@@ -290,9 +332,9 @@ public sealed class ObjectTracker
             r.F32();
         }
 
-        if ((flags & 0x200) != 0)
+        if ((flags & 0x200) != 0) // rotation
         {
-            r.U64();
+            obj.Rotation = UnpackRotation((long)r.U64());
         }
     }
 
@@ -435,6 +477,57 @@ public sealed class ObjectTracker
         var y = (int)(packed << 10) >> 21;
         var z = (int)packed >> 22;
         return new Vector3(x, y, z) * 0.25f;
+    }
+
+    /// <summary>A game object's rotation packed as 22 bits of X and 21 each of Y and Z, with W made positive.</summary>
+    internal static Quaternion UnpackRotation(long packed)
+    {
+        const float xScale = 1f / (1 << 21);
+        const float yzScale = 1f / (1 << 20);
+        var x = (packed >> 42) * xScale;
+        var y = ((packed << 22) >> 43) * yzScale;
+        var z = ((packed << 43) >> 43) * yzScale;
+        var w = 1f - (x * x) - (y * y) - (z * z);
+        return new Quaternion(x, y, z, w > 0f ? MathF.Sqrt(w) : 0f);
+    }
+
+    /// <summary>
+    /// Another player's movement as the server passed it on: where it is and how it's moving
+    /// now. Its path heads on the way it's going for a couple of seconds, until the next word.
+    /// </summary>
+    public void ApplyMovement(ulong guid, MovementInfo info)
+    {
+        if (!Objects.TryGetValue(guid, out var obj))
+        {
+            return;
+        }
+
+        obj.Position = info.Position;
+        obj.Orientation = info.Orientation;
+        obj.MoveFlags = info.Flags;
+        obj.TransportGuid = info.TransportGuid;
+        obj.TransportOffset = info.TransportOffset;
+        var forward = (info.Flags & MoveFlags.Forward) != 0 ? 1f : (info.Flags & MoveFlags.Backward) != 0 ? -1f : 0f;
+        var side = (info.Flags & MoveFlags.StrafeLeft) != 0 ? 1f : (info.Flags & MoveFlags.StrafeRight) != 0 ? -1f : 0f;
+        if (forward != 0 || side != 0)
+        {
+            var back = forward < 0;
+            var speed = (info.Flags & MoveFlags.Swimming) != 0 ? (back ? obj.SwimBackSpeed : obj.SwimSpeed)
+                : (info.Flags & MoveFlags.Flying) != 0 ? (back ? obj.FlightBackSpeed : obj.FlightSpeed)
+                : (info.Flags & MoveFlags.Walking) != 0 ? obj.WalkSpeed
+                : back ? obj.RunBackSpeed : obj.RunSpeed;
+            const float ahead = 2f;
+            var angle = info.Orientation + MathF.Atan2(side, forward);
+            var end = info.Position + (new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0f) * speed * ahead);
+            obj.Path = new MovePath([info.Position, end], ahead, info.Orientation, false, holdFacing: true);
+        }
+        else
+        {
+            obj.Path = MovePath.Standing(info.Position, info.Orientation);
+        }
+
+        obj.PathElapsed = 0;
+        Moved?.Invoke(obj);
     }
 
     private static Vector3 Vec(PacketReader r) => new(r.F32(), r.F32(), r.F32());

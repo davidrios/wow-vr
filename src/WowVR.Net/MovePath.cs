@@ -13,8 +13,10 @@ public sealed class MovePath
 
     /// <param name="facing">Where it faces at the end, in radians turning left from north, if the server says.</param>
     /// <param name="cyclic">Starts over at the end, as flying patrols do.</param>
-    public MovePath(IReadOnlyList<Vector3> points, double duration, float? facing = null, bool cyclic = false)
+    /// <param name="holdFacing">Faces <paramref name="facing"/> all along, as a player strafing or walking backwards does.</param>
+    public MovePath(IReadOnlyList<Vector3> points, double duration, float? facing = null, bool cyclic = false, bool holdFacing = false)
     {
+        HoldsFacing = holdFacing && facing is not null;
         // The server's own copies of the end points, which keep its splines' maths simple, would make zero-length legs.
         var kept = new List<Vector3>(points.Count);
         foreach (var point in points)
@@ -47,6 +49,8 @@ public sealed class MovePath
     public float? Facing { get; }
 
     public bool Cyclic { get; }
+
+    public bool HoldsFacing { get; }
 
     public IReadOnlyList<Vector3> Points => _points;
 
@@ -88,7 +92,7 @@ public sealed class MovePath
         var to = _points[leg];
         var span = _distances[leg] - _distances[leg - 1];
         var t = span > 0 ? (distance - _distances[leg - 1]) / span : 1f;
-        return (Vector3.Lerp(from, to, t), FacingAlong(from, to), true);
+        return (Vector3.Lerp(from, to, t), HoldsFacing ? Facing!.Value : FacingAlong(from, to), true);
     }
 
     /// <summary>WoW's Y runs west, so the angle from X toward Y turns left from north.</summary>

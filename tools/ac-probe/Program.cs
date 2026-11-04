@@ -4,6 +4,7 @@
 //   dotnet run --project tools/ac-probe -- [--host=192.168.15.17] [--char=Name] [--seconds=30] [--moves] [--walk]
 //
 // The account comes from WOWVR_AC_USER and WOWVR_AC_PASS, or --user= and --pass=.
+// --say="line;line" sends chat lines or commands 1.5 seconds apart, and prints what comes back.
 // --walk sends the character 60 yards north and back, to see what the server shows on the way.
 
 using System.Diagnostics;
@@ -54,6 +55,8 @@ var units = new Dictionary<ulong, (UnitInfo Info, MovePath Path, double Since)>(
 int appeared = 0, moved = 0, gone = 0;
 var me = start;
 var lastSent = 0.0;
+var says = new Queue<string>((opts.GetValueOrDefault("say") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries));
+var nextSay = 3.0;
 while (clock.Elapsed.TotalSeconds < seconds)
 {
     while (session.Events.TryDequeue(out var e))
@@ -78,10 +81,42 @@ while (clock.Elapsed.TotalSeconds < seconds)
                 gone++;
                 units.Remove(g.Guid);
                 break;
+            case ChatReceived chat:
+                Log($"chat {chat.Line.Kind} {chat.Line.Sender}: {chat.Line.Text}");
+                break;
+            case ScreenMessage message:
+                Log($"screen: {message.Text}");
+                break;
+            case SelfChanged self:
+                Log($"self: health {self.Stats.Unit.Health}/{self.Stats.Unit.MaxHealth}, {self.Stats.Unit.PowerType} {self.Stats.Unit.Power}/{self.Stats.Unit.MaxPower}, level {self.Stats.Unit.Level}, money {RealmSession.Money(self.Stats.Money)}, flags 0x{self.Stats.PlayerFlags:X}{(self.Stats.IsGhost ? " ghost" : "")}");
+                break;
+            case Teleported t:
+                me = t.Position;
+                Log($"teleported to ({t.Position.X:F1}, {t.Position.Y:F1}, {t.Position.Z:F1})");
+                break;
+            case WorldChanged w:
+                me = w.Position;
+                Log($"new world: map {w.Map} at ({w.Position.X:F1}, {w.Position.Y:F1}, {w.Position.Z:F1})");
+                session.AckWorldPort();
+                break;
+            case InventoryChanged inv:
+                Log($"inventory: {inv.Items.Count} items, bags {string.Join(",", inv.Bags.Select(b => $"{b.Bag}:{b.Slots}"))}");
+                break;
+            case GameObjectAppeared go when printMoves:
+                Log($"  object {go.Object.Name} entry {go.Object.Entry} type {go.Object.Type} display {go.Object.DisplayId}");
+                break;
             case SessionClosed c:
                 Log($"closed: {c.Reason}");
                 return 1;
         }
+    }
+
+    if (says.Count > 0 && clock.Elapsed.TotalSeconds > nextSay)
+    {
+        nextSay = clock.Elapsed.TotalSeconds + 1.5;
+        var line = says.Dequeue();
+        Log($"say: {line}");
+        session.Say(line);
     }
 
     if (walk && clock.Elapsed.TotalSeconds - lastSent > 0.5)

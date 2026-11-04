@@ -34,6 +34,9 @@ public partial class PlayerAvatar : Node3D
     private float _facing;
     private bool _placed;
 
+    /// <summary>The WoW orientation the body faces, which the server hears in VR.</summary>
+    public float Facing => _facing;
+
     public void Start(CreatureLibrary library, CharacterAppearance appearance, IPlayer player, Node3D playerNode)
     {
         _player = player;

@@ -39,8 +39,14 @@ public sealed record CharacterInfo(
 /// <summary>What a new character looks like. The server checks every choice against its own rules.</summary>
 public sealed record CharacterCreation(string Name, byte Race, byte Class, byte Sex, byte Skin, byte Face, byte HairStyle, byte HairColor, byte FacialHair);
 
-/// <summary>A creature as the game needs it. Items are item ids, for the right hand, left hand and ranged slot.</summary>
-public sealed record UnitInfo(ulong Guid, uint Entry, string Name, uint DisplayId, float Scale, uint[] Items, MovePath Path, double PathElapsed);
+/// <summary>A creature or another player as the game needs it. Items are item ids, for the right hand, left hand and ranged slot.</summary>
+public sealed record UnitInfo(ulong Guid, uint Entry, string Name, uint DisplayId, float Scale, uint[] Items, MovePath Path, double PathElapsed)
+{
+    public ObjectType Type { get; init; } = ObjectType.Unit;
+
+    /// <summary>Its health, level and so on when it appeared.</summary>
+    public UnitStats? Stats { get; init; }
+}
 
 public abstract record SessionEvent;
 
@@ -62,7 +68,7 @@ public sealed record LogoutAnswer(string? Refused, bool Instant);
 /// thread: what it learns waits in <see cref="Events"/> for the game to take on its own
 /// thread, and the game says where the player went with <see cref="SendPosition"/>.
 /// </summary>
-public sealed class RealmSession : IDisposable
+public sealed partial class RealmSession : IDisposable
 {
     public const int MaxCharacters = 10;
 
@@ -96,6 +102,7 @@ public sealed class RealmSession : IDisposable
         _objects.Created += OnCreated;
         _objects.Moved += OnMoved;
         _objects.Removed += OnRemoved;
+        _objects.ValuesChanged += OnValuesChanged;
     }
 
     public Realm Realm { get; }
@@ -343,20 +350,8 @@ public sealed class RealmSession : IDisposable
     }
 
     /// <summary>Tells the server where the player is, in WoW coordinates, so it shows what's around them there.</summary>
-    public void SendPosition(Vector3 position, float orientation)
-    {
-        if (!IsOpen || !_inWorld)
-        {
-            return;
-        }
-
-        var w = new PacketWriter();
-        WritePackedGuid(w, Character.Guid);
-        w.U32(0).U16(0).U32((uint)_clock.ElapsedMilliseconds)
-            .F32(position.X).F32(position.Y).F32(position.Z).F32(orientation)
-            .U32(0); // fall time
-        _ = SendQuietly(Opcodes.MSG_MOVE_HEARTBEAT, w.ToArray());
-    }
+    public void SendPosition(Vector3 position, float orientation) =>
+        UpdateMovement(new MovementInfo { Position = position, Orientation = orientation });
 
     public void Dispose()
     {
@@ -419,6 +414,7 @@ public sealed class RealmSession : IDisposable
                 var p = await _world.ReceiveAsync(_stop.Token);
                 Handle(p);
                 ReleaseUnnamed();
+                SendInventoryIfChanged();
 
                 // Back at the character list: what comes next is answers to its questions, read by them.
                 if (p.Opcode == Opcodes.SMSG_LOGOUT_COMPLETE)
@@ -516,6 +512,9 @@ public sealed class RealmSession : IDisposable
             case Opcodes.SMSG_CREATURE_QUERY_RESPONSE:
                 ReadCreatureName(p.Data);
                 break;
+            default:
+                HandlePlay(p);
+                break;
             case Opcodes.SMSG_LOGOUT_RESPONSE:
             {
                 var r = new PacketReader(p.Data);
@@ -538,6 +537,40 @@ public sealed class RealmSession : IDisposable
 
     private void OnCreated(TrackedObject obj)
     {
+        if (obj.Guid == Character.Guid)
+        {
+            AnnounceSelf(obj);
+            return;
+        }
+
+        switch (obj.Type)
+        {
+            case ObjectType.GameObject:
+                OnGameObjectCreated(obj);
+                return;
+            case ObjectType.Item or ObjectType.Container:
+                _inventoryDirty = true;
+                return;
+            case ObjectType.Corpse:
+                if (obj.Field64(UpdateFields.CorpseOwner) == Character.Guid)
+                {
+                    Events.Enqueue(new CorpseAt(obj.Position, MapId));
+                }
+
+                return;
+            case ObjectType.Player when obj.Path is not null:
+                if (_playerNames.ContainsKey(obj.Guid))
+                {
+                    Announce(obj);
+                }
+                else
+                {
+                    AskPlayerName(obj.Guid, _ => Announce(obj));
+                }
+
+                return;
+        }
+
         if (obj.Type != ObjectType.Unit || obj.Path is null)
         {
             return;
@@ -568,9 +601,15 @@ public sealed class RealmSession : IDisposable
     private void OnRemoved(TrackedObject obj)
     {
         _waitingForName.Remove(obj.Guid);
+        _waitingGameObjects.Remove(obj.Guid);
         if (_announced.Remove(obj.Guid))
         {
-            Events.Enqueue(new UnitGone(obj.Guid));
+            Events.Enqueue(obj.Type == ObjectType.GameObject ? new GameObjectGone(obj.Guid) : new UnitGone(obj.Guid));
+        }
+
+        if (obj.Type is ObjectType.Item or ObjectType.Container)
+        {
+            _inventoryDirty = true;
         }
     }
 
@@ -605,7 +644,7 @@ public sealed class RealmSession : IDisposable
 
     private void Announce(TrackedObject obj)
     {
-        if (!_announced.Add(obj.Guid))
+        if (!_objects.Objects.ContainsKey(obj.Guid) || !_announced.Add(obj.Guid))
         {
             return;
         }
@@ -616,26 +655,12 @@ public sealed class RealmSession : IDisposable
             items[i] = obj.Field(UpdateFields.UnitVirtualItems + i);
         }
 
-        var name = _creatureNames.GetValueOrDefault(obj.Entry, "");
-        Events.Enqueue(new UnitAppeared(new UnitInfo(obj.Guid, obj.Entry, name, obj.DisplayId, obj.Scale, items, obj.Path!, obj.PathElapsed)));
-    }
-
-    private static void WritePackedGuid(PacketWriter w, ulong guid)
-    {
-        byte mask = 0;
-        Span<byte> bytes = stackalloc byte[8];
-        var count = 0;
-        for (var i = 0; i < 8; i++)
+        var name = NameOf(obj);
+        Events.Enqueue(new UnitAppeared(new UnitInfo(obj.Guid, obj.Entry, name, obj.DisplayId, obj.Scale, items, obj.Path!, obj.PathElapsed)
         {
-            var b = (byte)(guid >> (i * 8));
-            if (b != 0)
-            {
-                mask |= (byte)(1 << i);
-                bytes[count++] = b;
-            }
-        }
-
-        w.U8(mask).Bytes(bytes[..count]);
+            Type = obj.Type,
+            Stats = UnitStats.From(obj, name),
+        }));
     }
 
     private static (string Host, int Port) SplitAddress(string address)

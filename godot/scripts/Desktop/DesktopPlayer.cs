@@ -109,6 +109,8 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
 
     public void SetSwimming(bool swimming, float floatHeight) => (_swimming, _floatHeight) = (swimming, floatHeight);
 
+    public bool Swimming => _swimming;
+
     public void PlaceAt(Vector3 feet, bool keepVelocity = false)
     {
         GlobalPosition = feet;

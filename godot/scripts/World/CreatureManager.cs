@@ -90,6 +90,8 @@ public partial class CreatureManager : Node
         public bool LightFound { get; set; }
         public CreatureSoundSet? Sounds { get; set; }
         public double NextFidget { get; set; }
+        public bool Dead { get; set; }
+        public bool Selected { get; set; }
     }
 
     private sealed record TileState(Node3D Node, TerrainHeights Heights, Node3D Container, List<Entry> Entries);
@@ -166,6 +168,44 @@ public partial class CreatureManager : Node
         if (_live.TryGetValue(guid, out var entry))
         {
             entry.Motion = motion;
+        }
+    }
+
+    /// <summary>The server says it died or came back, and whether the player has it selected.</summary>
+    public void SetLiveState(long guid, bool dead, bool selected)
+    {
+        if (_live.TryGetValue(guid, out var entry))
+        {
+            entry.Dead = dead;
+            entry.Selected = selected;
+            entry.Node?.SetState(dead, selected);
+        }
+    }
+
+    /// <summary>It swung at something.</summary>
+    public void PlayAttack(long guid)
+    {
+        if (_live.TryGetValue(guid, out var entry))
+        {
+            entry.Node?.PlayAttack();
+        }
+    }
+
+    /// <summary>A server unit's node, if it's in the scene.</summary>
+    public CreatureNode? LiveNode(long guid) => _live.TryGetValue(guid, out var entry) ? entry.Node : null;
+
+    /// <summary>The server's units that are in the scene, for picking.</summary>
+    public IEnumerable<(long Guid, CreatureNode Node)> LiveNodes
+    {
+        get
+        {
+            foreach (var (guid, entry) in _live)
+            {
+                if (entry.Node is { } node && node.Visible)
+                {
+                    yield return (guid, node);
+                }
+            }
         }
     }
 
@@ -412,6 +452,7 @@ public partial class CreatureManager : Node
             }
             node.Scale = Vector3.One * Math.Max(entry.Spawn.Scale, 0.01f);
             entry.Node = node;
+            node.SetState(entry.Dead, entry.Selected);
             entry.Sounds = asset.Sounds;
             entry.NextFidget = _clock + NextFidgetDelay(entry);
             node.SoundEvent += sound => PlaySound(entry, sound.Kind, sound.Index);

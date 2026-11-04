@@ -159,6 +159,13 @@ public partial class Main : Node3D
             {
                 ShowLogin();
             }
+            else if (_carry is { } carry)
+            {
+                // The server moved the character to another map: the same session goes on there.
+                _carry = null;
+                _login = (carry.Auth, carry.Realms, carry.Host);
+                BeginWorld(carry.Session, askServer: false);
+            }
             else
             {
                 BeginWorld(null, askServer: true);
@@ -173,6 +180,11 @@ public partial class Main : Node3D
     /// </summary>
     private static bool ShowsLogin()
     {
+        if (_carry is not null)
+        {
+            return false;
+        }
+
         if (_return is not null)
         {
             return true;
@@ -248,6 +260,25 @@ public partial class Main : Node3D
     private sealed record Return(RealmSession? Session, AuthClient? Auth, List<Realm> Realms, string Host);
 
     private static Return? _return;
+
+    /// <summary>A session going on to another map, which the next load of this scene enters.</summary>
+    private sealed record Carry(RealmSession Session, AuthClient? Auth, List<Realm> Realms, string Host);
+
+    private static Carry? _carry;
+
+    /// <summary>The server moved the character to another map: the scene loads again with it there.</summary>
+    private void ChangeMap(WorldChanged changed)
+    {
+        if (_server?.Release() is not { } session)
+        {
+            return;
+        }
+
+        SaveLastPlace();
+        _carry = new Carry(session, _login.Auth, _login.Realms, _login.Host);
+        ((IPlayer)_player).SetMenuOpen(false);
+        BehindLoadingScreen("", () => GetTree().CallDeferred(SceneTree.MethodName.ReloadCurrentScene));
+    }
 
     /// <summary>The login the world was entered from, to go back to.</summary>
     private (AuthClient? Auth, List<Realm> Realms, string Host) _login = (null, [], "");
@@ -485,6 +516,8 @@ public partial class Main : Node3D
             var mapId = opening.Record.Id;
             var (map, lights, zones, liquids, displays, footsteps) = await Task.Run(() =>
                 (WdtMap.Read(source, startMap), LightTable.Read(source), ZoneTable.Read(source), new LiquidLibrary(source), CreatureDisplayTable.Read(source), FootstepTable.Read(source)));
+            var (factions, triggers) = session is null ? ([], []) : await Task.Run(() =>
+                (FactionTemplateRecord.ReadAll(source), AreaTriggerRecord.ReadAll(source).ToList()));
             GD.Print($"Client opened: {map.TileCountWithData} tiles in {startMap}");
 
             GetNode("Floor").QueueFree();
@@ -540,13 +573,15 @@ public partial class Main : Node3D
             {
                 var server = new ServerWorld { Name = "Server" };
                 AddChild(server);
-                server.Start(session, creatures, tiles, displays, _player);
+                server.Start(session, creatures, tiles, displays, _player, factions, triggers);
+                server.WorldChanging += ChangeMap;
                 _server = server;
 
                 // The character's own body, as the character list showed it.
                 var avatar = new PlayerAvatar { Name = "Avatar" };
                 AddChild(avatar);
                 avatar.Start(library, GlueScreens.AppearanceOf(session.Character), player, _player);
+                server.Avatar = avatar;
             }
 
             _loading?.Watch(tiles, creatures, player);

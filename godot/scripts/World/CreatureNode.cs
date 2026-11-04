@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using WowVR.Converters;
 using WowVR.Formats;
+using WowVR.Formats.Models;
 using Godot;
 
 namespace WowVR.World;
@@ -119,11 +120,7 @@ public partial class CreatureNode : Node3D
         _player = new AnimationPlayer { RootNode = new NodePath(".."), CallbackModeProcess = AnimationMixer.AnimationCallbackModeProcess.Manual };
         _body.AddChild(_player);
         _player.AddAnimationLibrary("", asset.Animations);
-        _player.AnimationFinished += _ =>
-        {
-            _clip = "";
-            PlayNextIdle();
-        };
+        _player.AnimationFinished += _ => OnClipFinished();
 
         if (name.Length > 0)
         {
@@ -223,6 +220,213 @@ public partial class CreatureNode : Node3D
         }
     }
 
+    private bool _dead;
+    private bool _selected;
+    private bool _oneShot;
+    private Color _nameColor = new(1f, 0.9f, 0.3f);
+    private MeshInstance3D? _ring;
+
+    /// <summary>Set by the player's body, which chooses its own clips with <see cref="PlayMotion"/>.</summary>
+    private bool _motionChosen;
+
+    /// <summary>The unit's height, for picking it and placing what floats over it.</summary>
+    public float Height => _asset.Skeleton.Bounds.End.Y * _asset.Scale * Scale.Y;
+
+    /// <summary>How wide it is, for picking it.</summary>
+    public float Radius => Mathf.Max(Mathf.Max(_asset.Skeleton.Bounds.Size.X, _asset.Skeleton.Bounds.Size.Z) * 0.5f * _asset.Scale * Scale.X, 0.4f);
+
+    public bool IsDead => _dead;
+
+    /// <summary>
+    /// Dead units fall and lie still, and the selected one shows its name and a ring at its feet
+    /// in <paramref name="color"/>, the way it stands toward the player.
+    /// </summary>
+    public void SetState(bool dead, bool selected, Color? color = null)
+    {
+        if (color is { } c && c != _nameColor)
+        {
+            _nameColor = c;
+            if (_name is not null)
+            {
+                _name.Modulate = c;
+            }
+
+            if (_ring?.MaterialOverride is StandardMaterial3D ringMaterial)
+            {
+                ringMaterial.AlbedoColor = c;
+            }
+        }
+
+        if (selected != _selected)
+        {
+            _selected = selected;
+            if (selected && _ring is null)
+            {
+                var radius = Radius / Mathf.Max(Scale.X, 0.01f);
+                _ring = new MeshInstance3D
+                {
+                    Name = "SelectionRing",
+                    Mesh = new TorusMesh { InnerRadius = radius * 0.9f, OuterRadius = radius, Rings = 32, RingSegments = 4 },
+                    Scale = new Vector3(1f, 0.05f, 1f),
+                    Position = Vector3.Up * 0.05f,
+                    CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                    MaterialOverride = new StandardMaterial3D
+                    {
+                        ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                        AlbedoColor = _nameColor,
+                    },
+                };
+                AddChild(_ring);
+            }
+
+            if (_ring is not null)
+            {
+                _ring.Visible = selected;
+            }
+        }
+
+        if (dead == _dead)
+        {
+            return;
+        }
+
+        _dead = dead;
+        _oneShot = false;
+        if (dead)
+        {
+            if (ClipFor(M2SequenceIds.Death) is { } death)
+            {
+                Play(death, 1f);
+            }
+            else if (ClipFor(M2SequenceIds.Dead) is { } lying)
+            {
+                Play(lying, 1f);
+            }
+        }
+        else
+        {
+            _moving = false;
+            PlayNextIdle();
+        }
+    }
+
+    /// <summary>Swings once, then goes back to what it was doing.</summary>
+    public void PlayAttack()
+    {
+        if (_dead || (ClipFor(M2SequenceIds.Attack1H) ?? ClipFor(M2SequenceIds.AttackUnarmed) ?? ClipFor(M2SequenceIds.Attack2H)) is not { } attack)
+        {
+            return;
+        }
+
+        _oneShot = true;
+        Play(attack, 1f);
+    }
+
+    /// <summary>The clip for a sequence id, or null when the model has none.</summary>
+    public string? ClipFor(int sequence) => sequence switch
+    {
+        M2SequenceIds.Walk => _asset.Skeleton.WalkClip,
+        M2SequenceIds.Run => _asset.Skeleton.RunClip ?? _asset.Skeleton.WalkClip,
+        _ => _asset.Skeleton.Clips.GetValueOrDefault(sequence),
+    };
+
+    /// <summary>How fast a clip moves at its own rate, in yards a second, or 0.</summary>
+    public float ClipSpeed(int sequence) => sequence switch
+    {
+        M2SequenceIds.Walk => _asset.Skeleton.WalkSpeed * _asset.Scale,
+        M2SequenceIds.Run => (_asset.Skeleton.RunClip is null ? _asset.Skeleton.WalkSpeed : _asset.Skeleton.RunSpeed) * _asset.Scale,
+        _ => _asset.Skeleton.ClipSpeeds.GetValueOrDefault(sequence) * _asset.Scale,
+    };
+
+    /// <summary>
+    /// For the player's body: plays a sequence by id, at the rate that matches <paramref name="speed"/>
+    /// when it moves, or idles with Stand. Falls back to running or standing when the model lacks it.
+    /// </summary>
+    public void PlayMotion(int sequence, float speed, float? rateOverride = null)
+    {
+        _motionChosen = true;
+        if (_dead || _oneShot)
+        {
+            return;
+        }
+
+        if (sequence == M2SequenceIds.Stand)
+        {
+            if (_moving || _clip.Length == 0)
+            {
+                _moving = false;
+                PlayNextIdle();
+            }
+
+            return;
+        }
+
+        var clip = ClipFor(sequence);
+        if (clip is null)
+        {
+            sequence = sequence is not M2SequenceIds.SwimIdle && speed > 0.1f ? M2SequenceIds.Run : M2SequenceIds.Stand;
+            if (sequence == M2SequenceIds.Stand)
+            {
+                PlayMotion(sequence, 0);
+                return;
+            }
+
+            clip = ClipFor(sequence);
+            if (clip is null)
+            {
+                return;
+            }
+        }
+
+        var clipSpeed = ClipSpeed(sequence);
+        var rate = rateOverride ?? (clipSpeed > 0.1f && speed > 0.1f ? speed / clipSpeed : 1f);
+        _moving = true;
+        if (clip != _clip || Math.Abs(rate - _rate) > 0.05 * _rate)
+        {
+            _player.Play(clip, clip != _clip ? BlendSeconds : 0, (float)rate);
+            (_clip, _rate) = (clip, rate);
+        }
+    }
+
+    private void Play(string clip, float rate)
+    {
+        _player.Play(clip, BlendSeconds, rate);
+        (_clip, _rate) = (clip, rate);
+    }
+
+    private void OnClipFinished()
+    {
+        if (_dead)
+        {
+            // Lies still, on the last pose of dying, or the model's own lying-dead loop.
+            if (ClipFor(M2SequenceIds.Dead) is { } lying && _clip != lying)
+            {
+                Play(lying, 1f);
+            }
+
+            return;
+        }
+
+        var wasOneShot = _oneShot;
+        _oneShot = false;
+        _clip = "";
+        if (wasOneShot && _moving && !_motionChosen && _stride is { } s)
+        {
+            Play(s.Clip, (float)s.Rate);
+            return;
+        }
+
+        if (wasOneShot && _moving)
+        {
+            // The body picks its clip again on its next frame.
+            _moving = false;
+        }
+
+        PlayNextIdle();
+    }
+
+    private (string Clip, double Rate)? _stride;
+
     /// <summary>Applies where the creature should be. The world clock decides this, and only its turning is smoothed.</summary>
     public void Move(Vector3 position, float orientation, bool moving, float walkSpeed, float distance, double delta)
     {
@@ -242,7 +446,18 @@ public partial class CreatureNode : Node3D
 
         _placed = true;
 
+        if (_name is not null && _name.Visible != (_selected || (AppSettings.NamePlates && distance < NameRange)))
+        {
+            _name.Visible = !_name.Visible;
+        }
+
+        if (_dead || _oneShot || _motionChosen)
+        {
+            return;
+        }
+
         var stride = moving ? Stride(walkSpeed) : null;
+        _stride = stride;
         if (moving != _moving || (stride is { } wanted && wanted.Clip != _clip))
         {
             _moving = moving;
@@ -262,11 +477,6 @@ public partial class CreatureNode : Node3D
             _player.Play(same.Clip, BlendSeconds, (float)same.Rate);
             _rate = same.Rate;
         }
-
-        if (_name is not null && _name.Visible != (AppSettings.NamePlates && distance < NameRange))
-        {
-            _name.Visible = !_name.Visible;
-        }
     }
 
     /// <summary>
@@ -285,6 +495,9 @@ public partial class CreatureNode : Node3D
 
         return skeleton.WalkClip is { } walkClip ? (walkClip, walk > 0f ? speed / walk : 1f) : null;
     }
+
+    /// <summary>Stands still rather than fidgeting, for the player's own body in VR.</summary>
+    public bool NoIdle { get; set; }
 
     private int _hiddenBone = -1;
     private const float HiddenScale = 1e-3f;
@@ -323,8 +536,21 @@ public partial class CreatureNode : Node3D
 
     private void PlayNextIdle()
     {
-        if (_moving)
+        if (_moving || _dead || _oneShot)
         {
+            return;
+        }
+
+        if (NoIdle)
+        {
+            // Holds the first frame of standing, so the body does not fidget around the player in VR.
+            if (_asset.Skeleton.IdleClips.Length > 0)
+            {
+                var stand = _asset.Skeleton.IdleClips[0].Name;
+                _player.Play(stand, BlendSeconds, 0f);
+                _clip = stand;
+            }
+
             return;
         }
 

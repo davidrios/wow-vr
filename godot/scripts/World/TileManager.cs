@@ -228,6 +228,18 @@ public partial class TileManager : Node3D
         PlacePlayerOnSurface();
     }
 
+    /// <summary>Jumps to where the server put the player, standing on the floor nearest that height.</summary>
+    public void TeleportTo(float wowX, float wowY, float wowZ)
+    {
+        var target = WowCoords.ToGodot(new System.Numerics.Vector3(wowX, wowY, wowZ));
+        _originX = target.X;
+        _originZ = target.Z;
+        RepositionTiles();
+
+        _player.PlaceAt(new Vector3(0, target.Y, 0));
+        PlacePlayerOnSurface(target.Y);
+    }
+
     /// <summary>
     /// Once after each warp, places the player again and says so. The first placement can come
     /// before the collision near where it lands, which leaves the player under a floor.

@@ -40,6 +40,12 @@ public sealed class CreatureSkeletonAsset
     public string? RunClip { get; init; }
     public float RunSpeed { get; init; }
 
+    /// <summary>Other sequences by their id, first variation only: dying, swimming, jumping, attacking.</summary>
+    public Dictionary<int, string> Clips { get; init; } = [];
+
+    /// <summary>How fast each of <see cref="Clips"/> moves, in yards a second at its own rate.</summary>
+    public Dictionary<int, float> ClipSpeeds { get; init; } = [];
+
     /// <summary>The head's key bone, or -1, so the player's own body can hide it in first person and VR.</summary>
     public int HeadBone { get; init; } = -1;
     public required Aabb Bounds { get; init; }
@@ -274,7 +280,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
 
     private static bool IsPlayed(M2Sequence sequence) =>
         (sequence.Id == M2SequenceIds.Stand && sequence.Variation < MaxIdleClips)
-        || (sequence.Id is M2SequenceIds.Walk or M2SequenceIds.Run or M2SequenceIds.HandsClosed && sequence.Variation == 0);
+        || (sequence.Variation == 0 && (sequence.Id is M2SequenceIds.Walk or M2SequenceIds.Run or M2SequenceIds.HandsClosed || Array.IndexOf(M2SequenceIds.Extra, sequence.Id) >= 0));
 
     private static CreatureSkeletonAsset BuildSkeleton(M2SkinnedModel data)
     {
@@ -294,6 +300,8 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         var clipSounds = new Dictionary<string, ClipSoundEvent[]>();
         var library = new AnimationLibrary();
         var idle = new List<IdleClip>();
+        var clips = new Dictionary<int, string>();
+        var clipSpeeds = new Dictionary<int, float>();
         string? walk = null;
         var walkSpeed = 0f;
         string? run = null;
@@ -345,6 +353,12 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                 run = name;
                 runSpeed = sequence.MovementSpeed;
             }
+
+            if (sequence.Variation == 0 && Array.IndexOf(M2SequenceIds.Extra, sequence.Id) >= 0)
+            {
+                clips[sequence.Id] = name;
+                clipSpeeds[sequence.Id] = sequence.MovementSpeed;
+            }
         }
 
         if (!hasBounds || bounds.Size.Y < MinBoundsSize)
@@ -364,6 +378,8 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             WalkSpeed = walkSpeed,
             RunClip = run != walk ? run : null,
             RunSpeed = runSpeed,
+            Clips = clips,
+            ClipSpeeds = clipSpeeds,
             HeadBone = Array.FindIndex(data.Bones, b => b.KeyBone == HeadKeyBone),
             Bounds = bounds,
             ClipSounds = clipSounds,
@@ -439,7 +455,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             Length = Math.Max(clip.Sequence.DurationSeconds, 0.001f),
 
             // Stand's variations choose what's next when they end. Everything else loops.
-            LoopMode = clip.Sequence.Id == M2SequenceIds.Stand ? Animation.LoopModeEnum.None : Animation.LoopModeEnum.Linear,
+            LoopMode = M2SequenceIds.PlaysOnce(clip.Sequence.Id) ? Animation.LoopModeEnum.None : Animation.LoopModeEnum.Linear,
         };
 
         for (var bone = 0; bone < bones.Length; bone++)

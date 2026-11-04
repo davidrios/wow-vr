@@ -288,9 +288,8 @@ public partial class PlayCheck : Node
             }
 
             _vendorNpc = (ulong)vendor.Guid;
-            // The command acts on the selected unit, so nothing must be.
-            Server.SetTarget(0);
-            Server.Session.Select(0);
+            // The command acts on the selected player, so the character selects itself.
+            Server.Session.Select(Server.Session.SelfGuid);
             Server.Say(".modify money 100000");
             Note($"  going to {Server.Units[_vendorNpc].Name}");
             GoNextTo(vendor.Node);

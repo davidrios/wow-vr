@@ -143,7 +143,7 @@ public sealed partial class CreatureDisplayTable
     private readonly Dictionary<int, ExtraRow> _extras = [];
     private readonly Dictionary<int, ItemRow> _items = [];
     private readonly Dictionary<int, HelmetVisRow> _helmetVis = [];
-    private readonly Dictionary<int, int> _itemDisplays = [];
+    private readonly Dictionary<int, (int Display, int InventoryType)> _itemDisplays = [];
     private readonly Dictionary<(int Race, int Class, int Sex), (int Display, int Type)[]> _startOutfits = [];
     private readonly Dictionary<int, (int Male, int Female)> _raceDisplays = [];
     private readonly Dictionary<(int Race, int Sex, int Section, int Variation, int Color), int> _sectionFlags = [];
@@ -309,7 +309,7 @@ public sealed partial class CreatureDisplayTable
         {
             for (var i = 0; i < dbc.RecordCount; i++)
             {
-                table._itemDisplays[dbc.GetInt32(i, 0)] = dbc.GetInt32(i, 5);
+                table._itemDisplays[dbc.GetInt32(i, 0)] = (dbc.GetInt32(i, 5), dbc.GetInt32(i, 6));
             }
 
             return null;
@@ -340,7 +340,10 @@ public sealed partial class CreatureDisplayTable
     private const int StartOutfitItems = 24;
 
     /// <summary>An item's ItemDisplayInfo row, or 0 for an item the client doesn't know.</summary>
-    public int ItemDisplayOf(int item) => _itemDisplays.GetValueOrDefault(item);
+    public int ItemDisplayOf(int item) => _itemDisplays.GetValueOrDefault(item).Display;
+
+    /// <summary>Where an item is worn, as Item.dbc's InventoryType, or 0 for an item the client doesn't know.</summary>
+    public int ItemInventoryTypeOf(int item) => _itemDisplays.GetValueOrDefault(item).InventoryType;
 
     /// <summary>The displays whose model path contains some text, for finding examples.</summary>
     public IEnumerable<int> DisplaysOfModel(string text, bool characterOnly = false) =>

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using WowVR.Desktop;
 using WowVR.Formats;
 using WowVR.Formats.Database;
@@ -275,6 +276,9 @@ public partial class ServerWorld : Node
                 }
 
                 break;
+            case PlayerLookChanged changed:
+                _creatures.Redress((long)changed.Guid, AppearanceOf(changed.Look));
+                break;
             case UnitMoved moved:
                 _creatures.SetLiveMotion((long)moved.Guid, new ServerMotion(moved.Path, _creatures.Clock - moved.PathElapsed));
                 _moves++;
@@ -448,6 +452,19 @@ public partial class ServerWorld : Node
             Scale = unit.Scale,
             WalkSpeed = unit.Path.Speed > 0f ? unit.Path.Speed : CreatureMotion.WalkSpeed,
             Weapons = [_displays.ItemDisplayOf((int)unit.Items[0]), _displays.ItemDisplayOf((int)unit.Items[1])],
+            Character = unit.Look is { } look ? AppearanceOf(look) : null,
+        };
+    }
+
+    /// <summary>Another player as a character to paint, dressed from Item.dbc as the client does.</summary>
+    private CharacterAppearance AppearanceOf(PlayerLook look)
+    {
+        var (equipment, types) = _displays.DressFromItems(look.Items.Select(i => (int)i).ToArray());
+        return new CharacterAppearance(look.Race, look.Sex, look.Skin, look.Face, look.HairStyle, look.HairColor, look.FacialHair, equipment)
+        {
+            InventoryTypes = types,
+            HideHelm = look.HidesHelm,
+            HideCloak = look.HidesCloak,
         };
     }
 

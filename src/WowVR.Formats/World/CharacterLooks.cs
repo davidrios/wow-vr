@@ -66,6 +66,10 @@ public sealed record CharacterAppearance(int Race, int Sex, int Skin, int Face, 
 
     /// <summary>What the hands hold, right then left, as <c>CreatureLibrary</c> takes weapons.</summary>
     public int[] Weapons => [Worn(EquipmentSlot.MainHand), Worn(EquipmentSlot.OffHand)];
+
+    /// <summary>The same for characters that look the same, for sharing what's built from it.</summary>
+    public string Key =>
+        $"{Race}:{Sex}:{Skin}:{Face}:{HairStyle}:{HairColor}:{FacialHair}:{(HideHelm ? 1 : 0)}{(HideCloak ? 1 : 0)}:{string.Join(',', Equipment)}:{string.Join(',', InventoryTypes)}";
 }
 
 /// <summary>How many of each choice a race and sex have, for making a character.</summary>
@@ -246,6 +250,27 @@ public sealed partial class CreatureDisplayTable
 
             equipment[(int)slot] = display;
             types[(int)slot] = type;
+        }
+
+        return (equipment, types);
+    }
+
+    /// <summary>
+    /// What a character wears when the server says it by item, one per <see cref="EquipmentSlot"/>
+    /// as another player's visible items are: Item.dbc gives each item's look and inventory type.
+    /// Items the client doesn't know are left off.
+    /// </summary>
+    public (int[] Equipment, int[] InventoryTypes) DressFromItems(IReadOnlyList<int> items)
+    {
+        var equipment = new int[(int)EquipmentSlot.Count];
+        var types = new int[(int)EquipmentSlot.Count];
+        for (var slot = 0; slot < equipment.Length && slot < items.Count; slot++)
+        {
+            if (items[slot] > 0)
+            {
+                equipment[slot] = ItemDisplayOf(items[slot]);
+                types[slot] = equipment[slot] > 0 ? ItemInventoryTypeOf(items[slot]) : 0;
+            }
         }
 
         return (equipment, types);

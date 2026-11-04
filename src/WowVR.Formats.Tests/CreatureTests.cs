@@ -847,6 +847,31 @@ public class ClientCreatureTests(ClientFixture client) : IClassFixture<ClientFix
         Assert.Equal(0, table.ItemDisplayOf(int.MaxValue));
     }
 
+    /// <summary>
+    /// Another player's visible items are item ids: Item.dbc dresses them, saying a robe is a robe.
+    /// 1899 is a one-handed sword, 6096 an apprentice's shirt and 56 an apprentice's robe.
+    /// </summary>
+    [Fact]
+    public void PlayersAreDressedFromTheirItems()
+    {
+        var table = CreatureDisplayTable.Read(Source);
+        var items = new int[19];
+        items[(int)EquipmentSlot.Shirt] = 6096;
+        items[(int)EquipmentSlot.Chest] = 56;
+        items[(int)EquipmentSlot.MainHand] = 1899;
+        items[(int)EquipmentSlot.Legs] = int.MaxValue;
+
+        var (equipment, types) = table.DressFromItems(items);
+
+        Assert.Equal(table.ItemDisplayOf(1899), equipment[(int)EquipmentSlot.MainHand]);
+        Assert.Equal(20, types[(int)EquipmentSlot.Chest]);
+        Assert.Equal(4, types[(int)EquipmentSlot.Shirt]);
+        Assert.Equal(0, equipment[(int)EquipmentSlot.Legs]);
+        var look = table.ResolveCharacter(new CharacterAppearance(5, 1, 0, 0, 0, 0, 0, equipment) { InventoryTypes = types });
+        Assert.NotNull(look);
+        Assert.Contains(look.BodyLayers!, l => l.Region == BodyRegion.LegUpper && l.Layer >= 10);
+    }
+
     /// <summary>An undead warrior in a mix of gear, as a character list gives one: every piece of the body texture is found.</summary>
     [Fact]
     public void PlayerCharactersPaintTheirBody()

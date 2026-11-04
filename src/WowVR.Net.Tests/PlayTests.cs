@@ -50,6 +50,33 @@ public class PlayTests
         Assert.Equal(info.TransportTime, read.TransportTime);
     }
 
+    /// <summary>An undead woman with her helm hidden, a sword and a shirt, as her update fields say.</summary>
+    [Fact]
+    public void PlayerLookReadsTheUpdateFields()
+    {
+        var obj = new TrackedObject(0x42, ObjectType.Player);
+        obj.Fields[UpdateFields.UnitBytes0] = 5 | (1 << 8) | (1 << 16) | (1u << 24);
+        obj.Fields[UpdateFields.PlayerBytes] = 3 | (4 << 8) | (5 << 16) | (6u << 24);
+        obj.Fields[UpdateFields.PlayerBytes2] = 2 | (1 << 24);
+        obj.Fields[UpdateFields.PlayerFlags] = 0x400;
+        obj.Fields[UpdateFields.PlayerVisibleItem1 + (2 * 3)] = 45;
+        obj.Fields[UpdateFields.PlayerVisibleItem1 + (2 * 3) + 1] = 999; // its enchantment
+        obj.Fields[UpdateFields.PlayerVisibleItem1 + (2 * 15)] = 1899;
+
+        var look = PlayerLook.From(obj);
+
+        Assert.Equal((5, 1, 3, 4, 5, 6, 2), ((int)look.Race, (int)look.Sex, (int)look.Skin, (int)look.Face, (int)look.HairStyle, (int)look.HairColor, (int)look.FacialHair));
+        Assert.True(look.HidesHelm);
+        Assert.False(look.HidesCloak);
+        Assert.Equal(45u, look.Items[3]);
+        Assert.Equal(1899u, look.Items[15]);
+        Assert.Equal(17, look.Items.Count(i => i == 0));
+        Assert.True(look.SameAs(PlayerLook.From(obj)));
+
+        obj.Fields[UpdateFields.PlayerVisibleItem1 + (2 * 15)] = 0;
+        Assert.False(look.SameAs(PlayerLook.From(obj)));
+    }
+
     [Theory]
     [InlineData(MoveFlags.None, MoveFlags.Forward, Opcodes.MSG_MOVE_START_FORWARD)]
     [InlineData(MoveFlags.Forward, MoveFlags.None, Opcodes.MSG_MOVE_STOP)]

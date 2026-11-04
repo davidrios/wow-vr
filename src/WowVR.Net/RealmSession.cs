@@ -46,11 +46,48 @@ public sealed record UnitInfo(ulong Guid, uint Entry, string Name, uint DisplayI
 
     /// <summary>Its health, level and so on when it appeared.</summary>
     public UnitStats? Stats { get; init; }
+
+    /// <summary>How another player looks, for drawing them as a character. Null for creatures.</summary>
+    public PlayerLook? Look { get; init; }
+}
+
+/// <summary>
+/// How another player looks, from their update fields: race and sex as ChrRaces numbers them, the
+/// CharSections choices, and the item shown in each of the 19 equipment slots, 0 for none.
+/// </summary>
+public sealed record PlayerLook(byte Race, byte Sex, byte Skin, byte Face, byte HairStyle, byte HairColor, byte FacialHair, uint[] Items, bool HidesHelm, bool HidesCloak)
+{
+    public const int Slots = 19;
+
+    public static PlayerLook From(TrackedObject obj)
+    {
+        var bytes0 = obj.Field(UpdateFields.UnitBytes0);
+        var bytes = obj.Field(UpdateFields.PlayerBytes);
+        var bytes2 = obj.Field(UpdateFields.PlayerBytes2);
+        var flags = obj.Field(UpdateFields.PlayerFlags);
+        var items = new uint[Slots];
+        for (var slot = 0; slot < Slots; slot++)
+        {
+            items[slot] = obj.Field(UpdateFields.PlayerVisibleItem1 + (2 * slot));
+        }
+
+        return new PlayerLook(
+            (byte)bytes0, (byte)(bytes0 >> 16),
+            (byte)bytes, (byte)(bytes >> 8), (byte)(bytes >> 16), (byte)(bytes >> 24),
+            (byte)bytes2, items, (flags & 0x400) != 0, (flags & 0x800) != 0);
+    }
+
+    /// <summary>Equal in every choice and item, which a record's own equality isn't for the array.</summary>
+    public bool SameAs(PlayerLook? other) =>
+        other is not null && this with { Items = [] } == other with { Items = [] } && Items.AsSpan().SequenceEqual(other.Items);
 }
 
 public abstract record SessionEvent;
 
 public sealed record UnitAppeared(UnitInfo Unit) : SessionEvent;
+
+/// <summary>Another player put something on or took it off, or changed how they look.</summary>
+public sealed record PlayerLookChanged(ulong Guid, PlayerLook Look) : SessionEvent;
 
 /// <summary>A unit set off on a new path, or stopped, which is a path of one point.</summary>
 public sealed record UnitMoved(ulong Guid, MovePath Path, double PathElapsed) : SessionEvent;
@@ -86,6 +123,9 @@ public sealed partial class RealmSession : IDisposable
     private readonly HashSet<uint> _askedNames = [];
     private readonly Dictionary<ulong, (TrackedObject Unit, TimeSpan Since)> _waitingForName = [];
     private readonly HashSet<ulong> _announced = [];
+
+    /// <summary>How each other player shown looked last, to tell when that changes.</summary>
+    private readonly Dictionary<ulong, PlayerLook> _playerLooks = [];
     private readonly Action<string> _log;
     private uint _pingSerial;
     private bool _inWorld;
@@ -607,6 +647,7 @@ public sealed partial class RealmSession : IDisposable
     {
         _waitingForName.Remove(obj.Guid);
         _waitingGameObjects.Remove(obj.Guid);
+        _playerLooks.Remove(obj.Guid);
         if (_announced.Remove(obj.Guid))
         {
             Events.Enqueue(obj.Type == ObjectType.GameObject ? new GameObjectGone(obj.Guid) : new UnitGone(obj.Guid));
@@ -661,10 +702,18 @@ public sealed partial class RealmSession : IDisposable
         }
 
         var name = NameOf(obj);
+        PlayerLook? look = null;
+        if (obj.Type == ObjectType.Player)
+        {
+            look = PlayerLook.From(obj);
+            _playerLooks[obj.Guid] = look;
+        }
+
         Events.Enqueue(new UnitAppeared(new UnitInfo(obj.Guid, obj.Entry, name, obj.DisplayId, obj.Scale, items, obj.Path!, obj.PathElapsed)
         {
             Type = obj.Type,
             Stats = UnitStats.From(obj, name),
+            Look = look,
         }));
     }
 

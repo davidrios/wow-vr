@@ -64,6 +64,10 @@ public sealed record CreatureSpawn
     [JsonPropertyName("weapons")]
     public int[] Weapons { get; init; } = [];
 
+    /// <summary>Another player's looks, which it's drawn from instead of <see cref="DisplayId"/>. Only a server gives one.</summary>
+    [JsonIgnore]
+    public CharacterAppearance? Character { get; init; }
+
     public float X => Pos[0];
 
     public float Y => Pos[1];

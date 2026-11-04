@@ -171,6 +171,23 @@ public partial class CreatureManager : Node
         }
     }
 
+    /// <summary>
+    /// Another player changed what they wear: they're built again in their new looks, where they
+    /// are and going the same way. The old body goes at once and the new one comes when built.
+    /// </summary>
+    public void Redress(long guid, CharacterAppearance character)
+    {
+        if (!_live.TryGetValue(guid, out var entry) || entry.Spawn.Character?.Key == character.Key)
+        {
+            return;
+        }
+
+        var (motion, dead, selected) = (entry.Motion, entry.Dead, entry.Selected);
+        AddLive(entry.Spawn with { Character = character }, motion);
+        SetLiveState(guid, dead, selected);
+        _rankTimer = 0;
+    }
+
     /// <summary>The server says it died or came back, and whether the player has it selected.</summary>
     public void SetLiveState(long guid, bool dead, bool selected)
     {
@@ -376,8 +393,10 @@ public partial class CreatureManager : Node
         StartNextAsset();
     }
 
-    /// <summary>Creatures look alike when they share a display and what they hold.</summary>
-    private static string AssetKey(CreatureSpawn spawn) => $"{spawn.DisplayId}:{string.Join(',', spawn.Weapons)}";
+    /// <summary>Creatures look alike when they share a display and what they hold, and players when they share every choice and item.</summary>
+    private static string AssetKey(CreatureSpawn spawn) => spawn.Character is { } character
+        ? $"character:{character.Key}"
+        : $"{spawn.DisplayId}:{string.Join(',', spawn.Weapons)}";
 
     /// <summary>Models load one at a time, nearest first.</summary>
     private void StartNextAsset()
@@ -392,14 +411,14 @@ public partial class CreatureManager : Node
             var key = AssetKey(entry.Spawn);
             if (!_assets.ContainsKey(key))
             {
-                var (display, weapons) = (entry.Spawn.DisplayId, entry.Spawn.Weapons);
+                var (display, weapons, character) = (entry.Spawn.DisplayId, entry.Spawn.Weapons, entry.Spawn.Character);
                 _building = true;
                 Task.Run(() =>
                 {
                     CreatureAsset? asset = null;
                     try
                     {
-                        asset = _library.Build(display, weapons);
+                        asset = character is not null ? _library.BuildCharacter(character) : _library.Build(display, weapons);
                     }
                     catch (Exception e)
                     {

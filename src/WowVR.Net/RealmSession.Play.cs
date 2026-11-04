@@ -1491,6 +1491,13 @@ public sealed partial class RealmSession
             Events.Enqueue(new UnitChanged(UnitStats.From(obj, NameOf(obj))));
         }
 
+        if (obj.Type == ObjectType.Player && _announced.Contains(obj.Guid)
+            && PlayerLook.From(obj) is var look && !look.SameAs(_playerLooks.GetValueOrDefault(obj.Guid)))
+        {
+            _playerLooks[obj.Guid] = look;
+            Events.Enqueue(new PlayerLookChanged(obj.Guid, look));
+        }
+
         if (obj.Type is ObjectType.Item or ObjectType.Container)
         {
             _inventoryDirty = true;

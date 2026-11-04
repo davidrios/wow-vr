@@ -216,6 +216,9 @@ public sealed record GameObjectAppeared(GameObjectInfo Object) : SessionEvent;
 
 public sealed record GameObjectGone(ulong Guid) : SessionEvent;
 
+/// <summary>The server has the player aboard a transport, at this offset on it in its own axes, as after crossing to another map on it.</summary>
+public sealed record BoardedTransport(ulong Transport, Vector3 Offset) : SessionEvent;
+
 /// <summary>Where the player's corpse lies, while they're a ghost.</summary>
 public sealed record CorpseAt(Vector3 Position, uint Map) : SessionEvent;
 

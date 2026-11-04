@@ -101,6 +101,9 @@ public partial class ServerWorld : Node
 
     public bool Rooted { get; private set; }
 
+    /// <summary>The ships and zeppelins, which carry the player and need their movement sent relative to them.</summary>
+    public Transports? Transports { get; set; }
+
     /// <summary>The body the player stands in, whose facing goes to the server in VR.</summary>
     public PlayerAvatar? Avatar { get; set; }
 
@@ -358,9 +361,19 @@ public partial class ServerWorld : Node
                 break;
             case GameObjectAppeared appeared:
                 GameObjects[appeared.Object.Guid] = appeared.Object;
+                if (appeared.Object.Type == Transports.MapObjectTransport)
+                {
+                    Transports?.Add(appeared.Object);
+                }
+
                 break;
             case GameObjectGone gone:
                 GameObjects.Remove(gone.Guid);
+                Transports?.Remove(gone.Guid);
+                break;
+            case BoardedTransport boarded:
+                GD.Print($"The server has the player aboard transport {boarded.Transport:X} at {boarded.Offset}");
+                Transports?.Board(boarded.Transport, boarded.Offset);
                 break;
             case CorpseAt corpse:
                 Corpse = corpse.Position;
@@ -446,6 +459,11 @@ public partial class ServerWorld : Node
         _lastFeet = feet;
         _hasLastFeet = true;
 
+        if (Transports?.Riding is not null)
+        {
+            velocity -= Transports.DeckVelocity;
+        }
+
         var facing = Facing;
         var forward = new Vector3(-Mathf.Sin(facing), 0, -Mathf.Cos(facing));
         var left = new Vector3(-Mathf.Cos(facing), 0, Mathf.Sin(facing));
@@ -501,6 +519,15 @@ public partial class ServerWorld : Node
             FallTime = falling ? (uint)(_offGround * 1000) : 0,
             JumpVerticalSpeed = falling ? -velocity.Y : 0,
         };
+        if (Transports?.RideOffset(move.Position, move.Orientation) is { } ride)
+        {
+            move.Flags |= MoveFlags.OnTransport;
+            move.TransportGuid = ride.Guid;
+            move.TransportOffset = ride.Offset;
+            move.TransportOrientation = ride.Orientation;
+            move.TransportTime = (uint)Time.GetTicksMsec();
+        }
+
         _wasFalling = falling;
         _session.UpdateMovement(move);
     }

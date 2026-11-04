@@ -1,6 +1,7 @@
 using WowVR.Formats.Assets;
 using WowVR.Formats.Database;
 using WowVR.Formats.Terrain;
+using WowVR.Formats.World;
 using Xunit;
 
 namespace WowVR.Formats.Tests;
@@ -64,5 +65,35 @@ public class InstanceDataTests(ClientFixture client) : IClassFixture<ClientFixtu
         Assert.True(stormwindGuard.IsFriendlyTo(human));
         Assert.False(stormwindGuard.IsHostileTo(human));
         Assert.True(stormwindGuard.IsHostileTo(orc));
+    }
+
+    [Fact]
+    public void TransportPathsBetweenContinentsTakeMinutesAndStopAtDocks()
+    {
+        var paths = TaxiPathNodeRecord.ReadAll(Source);
+        var crossing = paths.Where(p => p.Select(n => n.Map).Distinct().Count() == 2 && p.Any(n => n.Flags == 2)).ToList();
+        Assert.NotEmpty(crossing);
+
+        foreach (var nodes in crossing)
+        {
+            // The usual speed and acceleration of ships and zeppelins.
+            var path = TransportPath.Build(nodes.ToList(), 30f, 1f);
+            Assert.NotNull(path);
+            Assert.InRange(path.Period, 60_000u, 1_800_000u);
+            Assert.Equal(2, path.Maps.Count());
+
+            // Somewhere along the cycle it stands still at a dock for a while.
+            var still = 0;
+            var last = path.At(0).Position;
+            for (ulong t = 1000; t < path.Period; t += 1000)
+            {
+                var here = path.At(t);
+                Assert.True(float.IsFinite(here.Position.X) && float.IsFinite(here.Orientation));
+                still += System.Numerics.Vector3.Distance(here.Position, last) < 0.01f ? 1 : 0;
+                last = here.Position;
+            }
+
+            Assert.True(still >= 5, $"path {nodes.Key} never stops");
+        }
     }
 }

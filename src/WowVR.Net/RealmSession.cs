@@ -540,6 +540,11 @@ public sealed partial class RealmSession : IDisposable
         if (obj.Guid == Character.Guid)
         {
             AnnounceSelf(obj);
+            if ((obj.MoveFlags & MoveFlags.OnTransport) != 0 && obj.TransportGuid != 0)
+            {
+                Events.Enqueue(new BoardedTransport(obj.TransportGuid, obj.TransportOffset));
+            }
+
             return;
         }
 

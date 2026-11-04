@@ -419,7 +419,7 @@ public partial class GameHud : Control
         close.CustomMinimumSize = new Vector2(40, 36);
         close.Pressed += CloseDialog;
         header.AddChild(close);
-        var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(440, 420), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+        var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(440, 340), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
         outer.AddChild(scroll);
         _dialogBody = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         scroll.AddChild(_dialogBody);

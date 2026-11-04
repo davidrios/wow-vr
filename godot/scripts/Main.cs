@@ -573,6 +573,10 @@ public partial class Main : Node3D
             {
                 var server = new ServerWorld { Name = "Server" };
                 AddChild(server);
+                var transports = new Transports { Name = "Transports" };
+                AddChild(transports);
+                transports.Start(tiles, player, _player, source, mapId);
+                server.Transports = transports;
                 server.Start(session, creatures, tiles, displays, _player, factions, triggers);
                 server.WorldChanging += ChangeMap;
                 _server = server;
@@ -584,9 +588,9 @@ public partial class Main : Node3D
                 avatar.Server = server;
                 server.Avatar = avatar;
                 AddHud(server, new Interaction(server, creatures, tiles), tiles);
-                if (arguments.Any(a => a.StartsWith("--play-check")))
+                if (arguments.Any(a => a.StartsWith("--play-check") || a.StartsWith("--ride-check")))
                 {
-                    AddChild(new PlayCheck { Server = server, Tiles = tiles, Player = _player, Creatures = creatures });
+                    AddChild(new PlayCheck { Server = server, Tiles = tiles, Player = _player, Creatures = creatures, Transports = transports });
                 }
             }
 

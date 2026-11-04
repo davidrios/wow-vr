@@ -23,6 +23,9 @@ public partial class PlayCheck : Node
 {
     private const double GiveUpSeconds = 240;
 
+    /// <summary>A ride waits for its transport to come in, then crosses: a few minutes each.</summary>
+    private const double RideGiveUpSeconds = 1200;
+
     /// <summary>The server and the client agree on where the player is within this, in yards.</summary>
     private const float SyncYards = 3f;
 
@@ -64,6 +67,21 @@ public partial class PlayCheck : Node
         var arguments = OS.GetCmdlineUserArgs();
         var map = arguments.FirstOrDefault(a => a.StartsWith("--play-check="))?["--play-check=".Length..];
         Step("world loaded", _ => Loaded ? true : null);
+        var ride = arguments.FirstOrDefault(a => a.StartsWith("--ride-check="))?["--ride-check=".Length..];
+        if (_riding is { } crossed)
+        {
+            _riding = null;
+            Step($"aboard {crossed} on the new map", age => Transports?.Riding is not null ? true : age > 60 ? false : null);
+            AddSync($"position aboard {crossed} on the new map");
+            return;
+        }
+
+        if (ride is not null)
+        {
+            AddRideSteps(ride);
+            return;
+        }
+
         if (_afterMapChange is { } changed)
         {
             AddSync($"position after .tele {changed}");
@@ -137,6 +155,63 @@ public partial class PlayCheck : Node
         _stepAge = 0;
     }
 
+    /// <summary>Waits for the named transport to dock on this map, steps aboard, and stays on until the server takes it to its other map.</summary>
+    private void AddRideSteps(string name)
+    {
+        Step("gm on", _ =>
+        {
+            if (First)
+            {
+                Server.Say(".gm on");
+            }
+
+            return true;
+        });
+        ulong guid = 0;
+        Step($"{name} docked here", age =>
+        {
+            var docked = Transports?.All.FirstOrDefault(t => t.Name.Contains(name, StringComparison.OrdinalIgnoreCase) && t.Here && t.Docked);
+            if (docked is not { Guid: not 0 } found)
+            {
+                return age > 600 ? false : null;
+            }
+
+            guid = found.Guid;
+            Note($"  {found.Name} docked at ({found.Position.X:F1}, {found.Position.Y:F1}, {found.Position.Z:F1})");
+            return true;
+        });
+        Step($"aboard {name}", age =>
+        {
+            if (First)
+            {
+                var at = Transports!.All.First(t => t.Guid == guid).Position;
+                Server.Say(FormattableString.Invariant($".go xyz {at.X:F1} {at.Y:F1} {at.Z + 12:F1}"));
+            }
+
+            if (Transports!.Riding == guid)
+            {
+                Note($"  standing on it after {age:F0} s");
+                return true;
+            }
+
+            return age > 30 ? false : null;
+        });
+        Step("server takes the player to the other map", age =>
+        {
+            if (First)
+            {
+                _riding = name;
+            }
+
+            if (Transports!.Riding != guid && age > 5 && age % 10 < GetProcessDeltaTime())
+            {
+                Note($"  fell off at {age:F0} s");
+            }
+
+            return age > 900 ? false : null;
+        });
+    }
+
     private void AddPlaySteps()
     {
         Step("talk to the nearest NPC", TalkToNearestNpc);
@@ -186,6 +261,11 @@ public partial class PlayCheck : Node
 
     public required CreatureManager Creatures { get; init; }
 
+    public Transports? Transports { get; init; }
+
+    /// <summary>Carries a ride check across the reload onto the transport's other map.</summary>
+    private static string? _riding;
+
     private UnitStats? _npc;
 
     /// <summary>Goes next to the nearest friendly NPC the server shows, then talks to it.</summary>
@@ -223,22 +303,54 @@ public partial class PlayCheck : Node
             Server.Use(_npc.Guid);
         }
 
-        if (_dialog is { } shown)
+        if (_dialog is { } shown && _shownAt < 0)
         {
             Note($"  {shown.GetType().Name}");
-            return true;
+            _shownAt = age;
+        }
+
+        // A moment for the window to draw, for --shots, and the bags beside it.
+        if (_shownAt >= 0 && age > _shownAt + 1)
+        {
+            Shot("npc");
+            GetParent().GetNodeOrNull<Ui.GameHud>("HudLayer/Hud")?.ToggleBags();
+            _shownAt = double.MaxValue;
+        }
+
+        if (_shownAt == double.MaxValue && age > 0)
+        {
+            if (_bagsShot++ == 3)
+            {
+                Shot("bags");
+                return true;
+            }
+
+            return null;
         }
 
         return age > 10 ? false : null;
     }
 
     private bool _talked;
+    private double _shownAt = -1;
+    private int _bagsShot;
+
+    /// <summary>With <c>--shots=folder</c>, saves the view, which shows game assets, so don't commit it.</summary>
+    private void Shot(string name)
+    {
+        var folder = OS.GetCmdlineUserArgs().FirstOrDefault(a => a.StartsWith("--shots="))?["--shots=".Length..];
+        if (folder is not null)
+        {
+            GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(folder, $"play-{name}.png"));
+        }
+    }
 
     public override void _Process(double delta)
     {
         _age += delta;
         _stepAge += delta;
-        if (_age > GiveUpSeconds)
+        var giveUp = OS.GetCmdlineUserArgs().Any(a => a.StartsWith("--ride-check")) ? RideGiveUpSeconds : GiveUpSeconds;
+        if (_age > giveUp)
         {
             Finish($"gave up at {(_steps.Count > 0 ? _steps.Peek().Name : "the end")}");
             return;

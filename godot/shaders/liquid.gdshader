@@ -51,7 +51,8 @@ const float MAX_REFLECTION = 0.206;
 const float BLOTCH_STRENGTH = 0.28;
 const float FRAME_STRENGTH = 0.10;
 const float RIPPLE_LINE_WIDTH = 0.045;
-const float RIPPLE_STRENGTH = 0.2;
+// Kept almost imperceptible, at the user's request.
+const float RIPPLE_STRENGTH = 0.02;
 // Ripple lines fade out over this range of texture repeats per pixel, before they can alias.
 const float RIPPLE_FADE_START = 0.02;
 const float RIPPLE_FADE_END = 0.09;

@@ -34,16 +34,12 @@ public sealed record VoidLook(string SkyModel, Color Top, Color Horizon, Color F
 }
 
 /// <summary>
-/// A zone's sky around the head, at infinity, with a thick fog in its colors where the sky has no
-/// ground, for the voids behind the login and loading screens. It shows once the client is open.
+/// A zone's skybox around the head, at infinity, for the voids behind the login and loading screens.
+/// It shows once the client is open.
 /// </summary>
 public partial class CosmicSky : Node3D
 {
-    private const float FogRadius = 300f;
-
     private (ShaderMaterial Material, M2Effect Effect)[] _materials = [];
-    private ShaderMaterial? _fog;
-    private MeshInstance3D? _fogSphere;
     private double _seconds;
     private float _weight = 1f;
 
@@ -51,8 +47,8 @@ public partial class CosmicSky : Node3D
     public uint Layers { get; init; } = 1;
 
     /// <summary>
-    /// Its sky's render priority, to draw it among other see-through things, with the fog one above,
-    /// or null to stay behind everything with the fog behind what's solid.
+    /// Its first batch's render priority, to draw it among other see-through things, or null to stay
+    /// behind everything. Each batch takes the next one up.
     /// </summary>
     public int? Priority { get; init; }
 
@@ -67,33 +63,13 @@ public partial class CosmicSky : Node3D
             {
                 material.SetShaderParameter("skybox_weight", value);
             }
-
-            _fog?.SetShaderParameter("fade", value);
         }
     }
 
     public void Load(ModelLibrary models, VoidLook look)
     {
-        // Over everything, as the loading screen is, or behind what's solid, as on the login stage.
-        _fog = new ShaderMaterial { Shader = GD.Load<Shader>(Priority is null ? "res://shaders/void_fog.gdshader" : "res://shaders/loading_fog.gdshader") };
-        // Just after the sky either way: otherwise, centered on the eye, it would sort in front of
-        // everything else see-through, like the stage's glowing floor.
-        _fog.RenderPriority = Priority is { } priority ? priority + 1 : (int)RenderingServer.MaterialRenderPriorityMin + 1;
-
-        _fog.SetShaderParameter("horizon_color", look.Horizon);
-        _fog.SetShaderParameter("fog_color", look.Fog);
-        _fogSphere = new MeshInstance3D
-        {
-            Name = "Fog",
-            Mesh = new SphereMesh { Radius = FogRadius, Height = FogRadius * 2f, Material = _fog },
-            Layers = Layers,
-            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
-            TopLevel = true,
-        };
-        AddChild(_fogSphere);
-        Weight = _weight;
-
-        Task.Run(() => models.GetM2(look.SkyModel) is { } asset ? models.SkyboxMeshOf(asset) : ((ArrayMesh, (ShaderMaterial, M2Effect)[])?)null)
+        var firstPriority = Priority ?? (int)RenderingServer.MaterialRenderPriorityMin;
+        Task.Run(() => models.GetM2(look.SkyModel) is { } asset ? models.SkyboxMeshOf(asset, firstPriority: firstPriority) : ((ArrayMesh, (ShaderMaterial, M2Effect)[])?)null)
             .ContinueWith(loaded => Callable.From(() =>
             {
                 if (!IsInstanceValid(this) || !loaded.IsCompletedSuccessfully || loaded.Result is not { } sky)
@@ -102,14 +78,6 @@ public partial class CosmicSky : Node3D
                 }
 
                 _materials = sky.Item2;
-                foreach (var (material, _) in _materials)
-                {
-                    if (Priority is { } priority)
-                    {
-                        material.RenderPriority = priority;
-                    }
-                }
-
                 AddChild(new MeshInstance3D { Mesh = sky.Item1, Name = "Sky", Layers = Layers, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
                 Weight = _weight;
             }).CallDeferred());
@@ -124,12 +92,6 @@ public partial class CosmicSky : Node3D
             {
                 ModelLibrary.ApplyEffect(material, effect, _seconds);
             }
-        }
-
-        // Around the head wherever it goes, as the sky is.
-        if (_fogSphere is not null && GetViewport().GetCamera3D() is { } camera)
-        {
-            _fogSphere.GlobalPosition = camera.GlobalPosition;
         }
     }
 }

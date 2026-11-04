@@ -14,10 +14,11 @@ namespace WowVR.Ui;
 public partial class LoadingScreen : Node3D
 {
     private const uint ScreenLayer = 1u << 19;
-    private const int BackdropPriority = 124;
+    // Over the world and XR Tools' fade (50), under its vignette (99) and the FPS display (98 to 100).
+    private const int BackdropPriority = 59;
 
-    /// <summary>The sky draws over the stars, and its fog, one higher, over the sky's lower edge.</summary>
-    private const int SkyPriority = 125;
+    /// <summary>The sky's first batch draws over the backdrop, and each batch after it one higher.</summary>
+    private const int SkyPriority = 60;
     private const int PanelPriority = 127;
 
     private const float BackdropRadius = 400f;

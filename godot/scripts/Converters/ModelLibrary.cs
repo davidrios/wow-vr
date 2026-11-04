@@ -553,17 +553,22 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         }
     }
 
-    /// <summary>A model's mesh as a skybox, with its own materials, since the weight is per sky.</summary>
-    public (ArrayMesh Mesh, (ShaderMaterial Material, M2Effect Effect)[] Materials) SkyboxMeshOf(M2Asset model, bool behindClouds = false)
+    /// <summary>
+    /// A model's mesh as a skybox, with its own materials, since the weight is per sky. Its batches
+    /// take render priorities from <paramref name="firstPriority"/> up, one each, to draw in order as the
+    /// client does: Godot sorts see-through surfaces of one instance by an unstable sort, so with a
+    /// shared priority their order changes as other things come into view, and a planet flickers.
+    /// </summary>
+    public (ArrayMesh Mesh, (ShaderMaterial Material, M2Effect Effect)[] Materials) SkyboxMeshOf(M2Asset model, bool behindClouds = false, int firstPriority = (int)RenderingServer.MaterialRenderPriorityMin)
     {
         var mesh = (ArrayMesh)model.Mesh.Duplicate();
         var materials = new List<(ShaderMaterial, M2Effect)>();
         for (var i = 0; i < model.Materials.Length && i < mesh.GetSurfaceCount(); i++)
         {
             var source = model.Materials[i];
-            var effect = source.Effect ?? (source.Blend == ModelBlend.Opaque ? PlainOpaque : PlainMod);
-            if (BuildEffectMaterial(source with { Unlit = true }, effect, indoor: false, creature: false, skybox: true, behindClouds) is { } material)
+            var effect = source.Effect ?? (source.Blend == ModelBlend.Opaque ? PlainOpaque : PlainMod);            if (BuildEffectMaterial(source with { Unlit = true }, effect, indoor: false, creature: false, skybox: true, behindClouds) is { } material)
             {
+                material.RenderPriority = Math.Min(firstPriority + i, (int)RenderingServer.MaterialRenderPriorityMax);
                 mesh.SurfaceSetMaterial(i, material);
                 materials.Add((material, effect));
             }
@@ -659,12 +664,6 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         }
 
         var result = new ShaderMaterial { Shader = EffectShader(material, effect, indoor, creature, skybox, behindClouds) };
-        if (skybox)
-        {
-            // Before anything else that's transparent, since it's behind everything.
-            result.RenderPriority = (int)RenderingServer.MaterialRenderPriorityMin;
-        }
-
         if (ReferenceEquals(effect, PlainMod))
         {
             result.SetShaderParameter("alpha_key", PlainAlphaKey);

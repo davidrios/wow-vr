@@ -208,6 +208,18 @@ public partial class CreatureManager : Node
         }
     }
 
+    /// <summary>Where a server unit is now, in WoW coordinates, standing on what's under it once that's known.</summary>
+    public System.Numerics.Vector3? LivePosition(long guid)
+    {
+        if (!_live.TryGetValue(guid, out var entry))
+        {
+            return null;
+        }
+
+        var now = entry.Motion.At(_clock);
+        return new System.Numerics.Vector3((float)now.X, (float)now.Y, entry.HasHeight ? entry.Height : now.Z ?? entry.Height);
+    }
+
     /// <summary>A server unit's node, if it's in the scene.</summary>
     public CreatureNode? LiveNode(long guid) => _live.TryGetValue(guid, out var entry) ? entry.Node : null;
 

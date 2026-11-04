@@ -318,6 +318,21 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _keyboard.Scale = Vector3.One * 0.45f * scale;
     }
 
+    /// <summary>The right controller's laser, while it isn't on a panel or the menu.</summary>
+    public (Vector3 From, Vector3 Direction)? PointerRay
+    {
+        get
+        {
+            if (_interaction is null || PointingAtPanel || _wristMenu.Visible || _uiMode)
+            {
+                return null;
+            }
+
+            var aim = _rightController.GlobalTransform;
+            return (aim.Origin, -aim.Basis.Z);
+        }
+    }
+
     /// <summary>Whether the laser is on a panel or the keyboard, which takes its clicks.</summary>
     private bool PointingAtPanel => _pointer.Get("target").AsGodotObject() is CollisionObject3D target && (target.CollisionLayer & PointerLayer) != 0;
 
@@ -331,6 +346,13 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         var aim = _rightController.GlobalTransform;
         switch (name)
         {
+            // Aiming a ground spell: the trigger casts it where the laser meets the ground, B puts it away.
+            case "trigger_click" when !PointingAtPanel && !_wristMenu.Visible && _interaction.Ground is { Aiming: true } ground:
+                ground.Confirm(aim.Origin, -aim.Basis.Z);
+                break;
+            case "by_button" when _interaction.Ground is { Aiming: true }:
+                _interaction.World.CancelAiming();
+                break;
             case "trigger_click" when !PointingAtPanel && !_wristMenu.Visible:
                 _interaction.Select(aim.Origin, -aim.Basis.Z);
                 break;

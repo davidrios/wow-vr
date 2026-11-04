@@ -133,6 +133,9 @@ public sealed partial class CreatureDisplayTable
     {
         /// <summary>Texture pieces for a character's body, by <see cref="BodyRegion"/> from arm upper to foot. Empty for none.</summary>
         public string[] Regions { get; init; } = [];
+
+        /// <summary>The bag icon's name in Interface\Icons, without the extension. Empty for none.</summary>
+        public string Icon { get; init; } = "";
     }
 
     /// <summary>What a helmet hides. Each is a mask of the races it hides that on, by bit 1 &lt;&lt; race.</summary>
@@ -221,6 +224,7 @@ public sealed partial class CreatureDisplayTable
                     [dbc.GetInt32(i, 13), dbc.GetInt32(i, 14)])
                 {
                     Regions = [.. Enumerable.Range(15, 8).Select(f => dbc.GetString(i, f))],
+                    Icon = dbc.GetString(i, 5),
                 };
             }
 
@@ -341,6 +345,13 @@ public sealed partial class CreatureDisplayTable
 
     /// <summary>An item's ItemDisplayInfo row, or 0 for an item the client doesn't know.</summary>
     public int ItemDisplayOf(int item) => _itemDisplays.GetValueOrDefault(item).Display;
+
+    /// <summary>
+    /// The icon file an ItemDisplayInfo row shows in bags and windows, as
+    /// <c>Interface\Icons\Name.blp</c>, or null for a display without one.
+    /// </summary>
+    public string? ItemIconPath(int display) =>
+        _items.TryGetValue(display, out var item) && item.Icon.Length > 0 ? $@"Interface\Icons\{item.Icon}.blp" : null;
 
     /// <summary>Where an item is worn, as Item.dbc's InventoryType, or 0 for an item the client doesn't know.</summary>
     public int ItemInventoryTypeOf(int item) => _itemDisplays.GetValueOrDefault(item).InventoryType;

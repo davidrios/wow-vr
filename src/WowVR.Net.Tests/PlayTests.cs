@@ -50,6 +50,26 @@ public class PlayTests
         Assert.Equal(info.TransportTime, read.TransportTime);
     }
 
+    /// <summary>A button packs its id in 24 bits and its kind above: Fireball, then a Hearthstone.</summary>
+    [Fact]
+    public void ActionButtonsPackAsTheServerSavesThem()
+    {
+        Assert.Equal(new ActionButton(133, ActionKind.Spell), ActionButton.Unpack(133));
+        Assert.Equal(new ActionButton(6948, ActionKind.Item), ActionButton.Unpack(0x80000000 | 6948));
+        Assert.Equal(0x80000000u | 6948, new ActionButton(6948, ActionKind.Item).Packed);
+        Assert.True(ActionButton.Unpack(0).IsEmpty);
+    }
+
+    [Theory]
+    [InlineData(97, "Out of range")]
+    [InlineData(67, "Spell is not ready yet")]
+    [InlineData(60, "Not here")]
+    [InlineData(187, "Unknown")]
+    public void CastFailuresReadAsSentences(byte reason, string text) => Assert.Equal(text, CastResults.Describe(reason));
+
+    [Fact]
+    public void QuietFailuresSayNothing() => Assert.Null(CastResults.Describe(CastResults.DontReport));
+
     /// <summary>An undead woman with her helm hidden, a sword and a shirt, as her update fields say.</summary>
     [Fact]
     public void PlayerLookReadsTheUpdateFields()

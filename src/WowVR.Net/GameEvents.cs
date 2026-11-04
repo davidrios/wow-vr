@@ -227,3 +227,40 @@ public sealed record SpiritHealerOffer(ulong Npc) : SessionEvent;
 
 /// <summary>Someone offers to resurrect the player.</summary>
 public sealed record ResurrectOffer(ulong From, string Name) : SessionEvent;
+
+/// <summary>Every spell the player knows now, as the server lists them: the highest rank of each, and passives.</summary>
+public sealed record SpellsKnown(IReadOnlyList<uint> Spells) : SessionEvent;
+
+/// <summary>What's on a button: nothing, a spell, an item or a macro.</summary>
+public enum ActionKind : byte
+{
+    Spell = 0x00,
+    Macro = 0x40,
+    Item = 0x80,
+}
+
+/// <summary>One of the player's 144 action buttons, saved on the server. Empty when <see cref="Id"/> is 0.</summary>
+public readonly record struct ActionButton(uint Id, ActionKind Kind)
+{
+    public bool IsEmpty => Id == 0;
+
+    /// <summary>As the server packs it: the id in the low 24 bits, the kind above.</summary>
+    public uint Packed => (Id & 0xFFFFFF) | ((uint)Kind << 24);
+
+    public static ActionButton Unpack(uint packed) => new(packed & 0xFFFFFF, (ActionKind)(packed >> 24));
+}
+
+/// <summary>The player's action buttons, the first 12 being the main bar.</summary>
+public sealed record ActionButtonsChanged(IReadOnlyList<ActionButton> Buttons) : SessionEvent;
+
+/// <summary>The player began a cast or a channel that takes this long, in milliseconds.</summary>
+public sealed record CastStarted(uint Spell, uint DurationMs, bool Channel) : SessionEvent;
+
+/// <summary>The player's cast or channel ended: it went off, or it failed or was interrupted.</summary>
+public sealed record CastEnded(uint Spell, bool Succeeded) : SessionEvent;
+
+/// <summary>A spell of the player's went off, which starts its cooldown and the global one.</summary>
+public sealed record SpellWent(uint Spell) : SessionEvent;
+
+/// <summary>The server set a spell's cooldown, in milliseconds from now, or cleared it with 0.</summary>
+public sealed record CooldownSet(uint Spell, uint Milliseconds) : SessionEvent;

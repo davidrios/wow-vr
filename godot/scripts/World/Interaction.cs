@@ -25,6 +25,9 @@ public sealed class Interaction(ServerWorld world, CreatureManager creatures, Ti
 
     public ServerWorld World => world;
 
+    /// <summary>Aims ground spells; while one is aimed, clicks place it instead of selecting.</summary>
+    public GroundTargeter? Ground { get; set; }
+
     /// <summary>The unit or object nearest along a ray in world space, or null.</summary>
     public (ulong Guid, bool IsObject)? Pick(Vector3 from, Vector3 direction)
     {

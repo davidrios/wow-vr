@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using WowVR.Desktop;
 using WowVR.Formats;
+using WowVR.Formats.Assets;
 using WowVR.Formats.Database;
 using WowVR.Formats.World;
 using WowVR.Net;
@@ -128,8 +129,9 @@ public partial class ServerWorld : Node
     /// <summary>The server is moving the player to another map, which needs the world loaded again.</summary>
     public event Action<WorldChanged>? WorldChanging;
 
-    public void Start(RealmSession session, CreatureManager creatures, TileManager tiles, CreatureDisplayTable displays, Node3D player, Dictionary<int, FactionTemplateRecord> factions, List<AreaTriggerRecord> triggers)
+    public void Start(RealmSession session, CreatureManager creatures, TileManager tiles, CreatureDisplayTable displays, Node3D player, Dictionary<int, FactionTemplateRecord> factions, List<AreaTriggerRecord> triggers, MpqAssetSource source)
     {
+        StartSpells(session, source);
         _session = session;
         _creatures = creatures;
         _tiles = tiles;
@@ -399,6 +401,9 @@ public partial class ServerWorld : Node
             case SessionClosed closed:
                 GD.PushWarning($"The server closed the session: {closed.Reason}. Creatures stay as they were.");
                 ScreenText?.Invoke($"Disconnected: {closed.Reason}", true);
+                break;
+            default:
+                ApplySpells(e);
                 break;
         }
     }

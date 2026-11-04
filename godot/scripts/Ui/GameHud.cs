@@ -41,7 +41,14 @@ public partial class GameHud : Control
     private PanelContainer _bags = null!;
     private VBoxContainer _bagsBody = null!;
     private Label _money = null!;
-    private Button _attackButton = null!;
+    private HBoxContainer _bar = null!;
+    private readonly List<ActionSlot> _slots = [];
+    private SpellBook? _spellBook;
+    private PanelContainer _castBar = null!;
+    private ColorRect _castProgress = null!;
+    private Label _castLabel = null!;
+    private Label _heldNote = null!;
+    private ActionButton? _held;
     private readonly List<string> _history = [];
     private int _historyIndex;
     private ulong _vendor;
@@ -54,7 +61,10 @@ public partial class GameHud : Control
     public bool Typing => _chatInput.HasFocus();
 
     /// <summary>A window is open that Escape should close before opening the menu.</summary>
-    public bool HasOpenWindow => _dialog.Visible || _bags.Visible;
+    public bool HasOpenWindow => _dialog.Visible || _bags.Visible || _spellBook?.Visible == true || _held is not null || _world?.Aiming is not null;
+
+    /// <summary>The keys of the main bar's twelve buttons, as the game binds them.</summary>
+    public static readonly string[] SlotKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="];
 
     /// <summary>The chat line gained or lost focus, for VR's keyboard.</summary>
     public event Action<bool>? TextFocusChanged;
@@ -96,7 +106,7 @@ public partial class GameHud : Control
         BuildDeathPanel();
         BuildDialog();
         BuildBags();
-        BuildActionBar();
+        BuildCastBar();
     }
 
     public void Bind(ServerWorld world, Func<System.Numerics.Vector3> playerPosition)
@@ -119,8 +129,58 @@ public partial class GameHud : Control
             {
                 ShowDialog(_shownDialog);
             }
+
+            InvalidateSlots();
         };
+        world.SpellsChanged += InvalidateSlots;
+        world.ButtonsChanged += InvalidateSlots;
+        world.AimingChanged += () =>
+        {
+            _heldNote.Visible = world.Aiming is not null || _held is not null;
+            if (world.Aiming is { } spell)
+            {
+                _heldNote.Text = XRServer.PrimaryInterface?.IsInitialized() == true
+                    ? $"Point at the ground and pull the trigger to cast {spell.Name}. B cancels."
+                    : $"Click the ground to cast {spell.Name}. Right-click or Esc cancels.";
+            }
+        };
+        BuildActionBar();
+        _spellBook = new SpellBook(world, PickUp) { Visible = false };
+        AddChild(_spellBook);
         RefreshFrames();
+    }
+
+    private void InvalidateSlots()
+    {
+        foreach (var slot in _slots)
+        {
+            slot.Invalidate();
+        }
+    }
+
+    /// <summary>A key of the main bar was pressed: its button's spell or item is used.</summary>
+    public void PressAction(int slot) => _world?.UseAction(slot);
+
+    public void ToggleSpellbook()
+    {
+        if (_spellBook is not null)
+        {
+            _spellBook.Visible = !_spellBook.Visible;
+        }
+    }
+
+    /// <summary>Holds a spell to put on the next button clicked, for pointers that can't drag.</summary>
+    private void PickUp(ActionButton action, string name)
+    {
+        _held = action;
+        _heldNote.Text = $"Click a button to put {name} there.";
+        _heldNote.Visible = true;
+    }
+
+    private void DropHeld()
+    {
+        _held = null;
+        _heldNote.Visible = false;
     }
 
     public override void _Process(double delta)
@@ -141,6 +201,12 @@ public partial class GameHud : Control
         if (_world is not null && !hidden)
         {
             RefreshDeath();
+            foreach (var slot in _slots)
+            {
+                slot.Refresh();
+            }
+
+            RefreshCastBar();
         }
     }
 
@@ -162,9 +228,27 @@ public partial class GameHud : Control
             return true;
         }
 
+        if (_world?.Aiming is not null)
+        {
+            _world.CancelAiming();
+            return true;
+        }
+
+        if (_held is not null)
+        {
+            DropHeld();
+            return true;
+        }
+
         if (_dialog.Visible)
         {
             CloseDialog();
+            return true;
+        }
+
+        if (_spellBook?.Visible == true)
+        {
+            _spellBook.Visible = false;
             return true;
         }
 
@@ -391,12 +475,10 @@ public partial class GameHud : Control
             _targetFrame.Visible = true;
             _targetFrame.Set(target.Name.Length > 0 ? target.Name : "Unknown", target.Level, target.Health, target.MaxHealth, target.Power, target.MaxPower, target.PowerType,
                 color, target.IsDead ? "Dead" : "");
-            _attackButton.Text = _world.Attacking ? "Stop attack" : "Attack";
         }
         else
         {
             _targetFrame.Visible = false;
-            _attackButton.Text = "Attack";
         }
     }
 
@@ -448,6 +530,7 @@ public partial class GameHud : Control
 
         _vendor = 0;
         _dialog.Visible = true;
+        _spellBook?.Hide();
         switch (e)
         {
             case GossipShown gossip:
@@ -477,7 +560,7 @@ public partial class GameHud : Control
                     var name = info?.Name ?? $"Item {item.ItemId}";
                     var count = item.BuyCount > 1 ? $" x{item.BuyCount}" : "";
                     var stock = item.Stock >= 0 ? $" ({item.Stock} left)" : "";
-                    AddButton($"{name}{count} — {RealmSession.Money(item.Price)}{stock}", () => _world.Session.Buy(vendor.Npc, item), QualityColor(info?.Quality ?? 1));
+                    AddButton($"{name}{count} — {RealmSession.Money(item.Price)}{stock}", () => _world.Session.Buy(vendor.Npc, item), QualityColor(info?.Quality ?? 1), _world.ItemIcon(item.ItemId));
                 }
 
                 _bags.Visible = true;
@@ -557,7 +640,8 @@ public partial class GameHud : Control
                     {
                         var choice = (uint)i;
                         var item = quest.Choices[i];
-                        AddButton(ItemLabel(item.ItemId, item.Count), () => _world.Session.ChooseQuestReward(quest.Npc, quest.QuestId, choice));
+                        AddButton(ItemLabel(item.ItemId, item.Count), () => _world.Session.ChooseQuestReward(quest.Npc, quest.QuestId, choice),
+                            QualityColor(_world.Session.ItemInfoOf(item.ItemId)?.Quality ?? 1), _world.ItemIcon(item.ItemId));
                     }
                 }
 
@@ -575,7 +659,19 @@ public partial class GameHud : Control
         AddText(title, GlueTheme.Accent);
         foreach (var item in items)
         {
-            AddText("  " + ItemLabel(item.ItemId, item.Count), QualityColor(_world.Session.ItemInfoOf(item.ItemId)?.Quality ?? 1));
+            var row = new HBoxContainer();
+            row.AddThemeConstantOverride("separation", 8);
+            _dialogBody.AddChild(row);
+            row.AddChild(new TextureRect
+            {
+                Texture = _world.ItemIcon(item.ItemId),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered,
+                CustomMinimumSize = new Vector2(32, 32),
+            });
+            var label = new Label { Text = ItemLabel(item.ItemId, item.Count), VerticalAlignment = VerticalAlignment.Center };
+            label.AddThemeColorOverride("font_color", QualityColor(_world.Session.ItemInfoOf(item.ItemId)?.Quality ?? 1));
+            row.AddChild(label);
         }
     }
 
@@ -591,11 +687,17 @@ public partial class GameHud : Control
         _dialogBody.AddChild(label);
     }
 
-    private void AddButton(string text, Action pressed, Color? color = null)
+    private void AddButton(string text, Action pressed, Color? color = null, Texture2D? icon = null)
     {
         var button = GlueTheme.Plain(text, 40);
         button.Alignment = HorizontalAlignment.Left;
         button.ClipText = true;
+        if (icon is not null)
+        {
+            button.Icon = icon;
+            button.ExpandIcon = true;
+            button.AddThemeConstantOverride("icon_max_width", 32);
+        }
         if (color is { } c)
         {
             button.AddThemeColorOverride("font_color", c);
@@ -693,6 +795,11 @@ public partial class GameHud : Control
         var info = _world.Session.ItemInfoOf(item.Entry);
         var row = new HBoxContainer();
         _bagsBody.AddChild(row);
+        var icon = new ActionIcon(_world.ItemIcon(item.Entry), new ActionButton(item.Entry, ActionKind.Item), 36)
+        {
+            TooltipText = "Drag to the action bar to use it from there.",
+        };
+        row.AddChild(icon);
         var label = new Label
         {
             Text = $"{(slot is null ? "" : slot + ": ")}{info?.Name ?? $"Item {item.Entry}"}{(item.Count > 1 ? $" x{item.Count}" : "")}",
@@ -720,49 +827,107 @@ public partial class GameHud : Control
         if (equippable)
         {
             Add(slot is null ? "Equip" : "Remove", () => _world.Session.Equip(item));
+            icon.Pressed += () => _world.Session.Equip(item);
         }
         else if (slot is null)
         {
             Add("Use", () => _world.Session.Use(item));
+            icon.Pressed += () => _world.Session.Use(item);
         }
     }
 
+    /// <summary>The main bar's twelve buttons, then the spellbook, bags, chat and menu.</summary>
     private void BuildActionBar()
     {
-        var bar = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
-        bar.SetAnchorsPreset(LayoutPreset.CenterBottom);
-        bar.OffsetLeft = -330;
-        bar.OffsetRight = 330;
-        bar.OffsetTop = -64;
-        bar.OffsetBottom = -12;
-        bar.Alignment = BoxContainer.AlignmentMode.Center;
-        bar.AddThemeConstantOverride("separation", 8);
-        AddChild(bar);
+        _bar = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
+        _bar.SetAnchorsPreset(LayoutPreset.CenterBottom);
+        _bar.OffsetLeft = -560;
+        _bar.OffsetRight = 560;
+        _bar.OffsetTop = -12 - ActionSlot.Size;
+        _bar.OffsetBottom = -12;
+        _bar.Alignment = BoxContainer.AlignmentMode.Center;
+        _bar.AddThemeConstantOverride("separation", 5);
+        AddChild(_bar);
 
-        Button Add(string text, Action pressed)
+        for (var i = 0; i < SlotKeys.Length; i++)
         {
-            var button = GlueTheme.Plain(text, 48);
-            button.CustomMinimumSize = new Vector2(150, 48);
-            button.FocusMode = FocusModeEnum.None;
-            button.Pressed += pressed;
-            bar.AddChild(button);
-            return button;
+            var slot = new ActionSlot(i, SlotKeys[i], _world, () => _held, DropHeld);
+            _slots.Add(slot);
+            _bar.AddChild(slot);
         }
 
-        _attackButton = Add("Attack", () =>
+        _bar.AddChild(new Control { CustomMinimumSize = new Vector2(12, 0), MouseFilter = MouseFilterEnum.Ignore });
+
+        void Add(string text, Action pressed)
         {
-            if (_world.Attacking)
-            {
-                _world.StopAttack();
-            }
-            else if (_world.Target != 0)
-            {
-                _world.Use(_world.Target);
-            }
-        });
+            var button = GlueTheme.Plain(text, ActionSlot.Size);
+            button.CustomMinimumSize = new Vector2(92, ActionSlot.Size);
+            button.FocusMode = FocusModeEnum.None;
+            button.AddThemeFontSizeOverride("font_size", 16);
+            button.Pressed += pressed;
+            _bar.AddChild(button);
+        }
+
+        Add("Spells", ToggleSpellbook);
         Add("Bags", ToggleBags);
         Add("Chat", () => OpenChat());
         Add("Menu", () => MenuRequested?.Invoke());
+    }
+
+    /// <summary>The bar over the action bar that fills while casting and empties while channeling, and the note for a held spell.</summary>
+    private void BuildCastBar()
+    {
+        _castBar = new PanelContainer { Visible = false, MouseFilter = MouseFilterEnum.Ignore };
+        _castBar.AddThemeStyleboxOverride("panel", GlueTheme.Box(GlueTheme.Panel, 6, 4, GlueTheme.Edge));
+        _castBar.SetAnchorsPreset(LayoutPreset.CenterBottom);
+        _castBar.OffsetLeft = -170;
+        _castBar.OffsetRight = 170;
+        _castBar.OffsetTop = -118;
+        _castBar.OffsetBottom = -86;
+        AddChild(_castBar);
+        var track = new Control { MouseFilter = MouseFilterEnum.Ignore, CustomMinimumSize = new Vector2(330, 24) };
+        _castBar.AddChild(track);
+        _castProgress = new ColorRect { Color = new Color(0.85f, 0.6f, 0f), MouseFilter = MouseFilterEnum.Ignore };
+        track.AddChild(_castProgress);
+        _castLabel = new Label { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, MouseFilter = MouseFilterEnum.Ignore };
+        _castLabel.AddThemeFontSizeOverride("font_size", 16);
+        _castLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _castLabel.AddThemeConstantOverride("outline_size", 4);
+        _castBar.AddChild(_castLabel);
+
+        _heldNote = new Label { Visible = false, HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = MouseFilterEnum.Ignore };
+        _heldNote.AddThemeColorOverride("font_color", GlueTheme.Accent);
+        _heldNote.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _heldNote.AddThemeConstantOverride("outline_size", 4);
+        _heldNote.SetAnchorsPreset(LayoutPreset.CenterBottom);
+        _heldNote.OffsetLeft = -300;
+        _heldNote.OffsetRight = 300;
+        _heldNote.OffsetTop = -150;
+        _heldNote.OffsetBottom = -124;
+        AddChild(_heldNote);
+    }
+
+    private uint _castShown;
+
+    private void RefreshCastBar()
+    {
+        // A cast whose end never came is let go a moment after it should have ended.
+        if (_world.Casting is not { } cast || cast.Duration <= 0 || ServerWorld.Now > cast.Start + cast.Duration + 1)
+        {
+            _castBar.Visible = false;
+            _castShown = 0;
+            return;
+        }
+
+        var done = Math.Clamp((ServerWorld.Now - cast.Start) / cast.Duration, 0, 1);
+        _castBar.Visible = true;
+        var track = _castProgress.GetParent<Control>().Size;
+        _castProgress.Size = new Vector2((float)(track.X * (cast.Channel ? 1 - done : done)), track.Y);
+        if (_castShown != cast.Spell)
+        {
+            _castShown = cast.Spell;
+            _castLabel.Text = _world.Spells?.Get((int)cast.Spell)?.Name ?? $"Spell {cast.Spell}";
+        }
     }
 }
 

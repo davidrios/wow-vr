@@ -582,7 +582,7 @@ public partial class Main : Node3D
                 AddChild(serverObjects);
                 serverObjects.Start(tiles, source, library);
                 server.Objects = serverObjects;
-                server.Start(session, creatures, tiles, displays, _player, factions, triggers);
+                server.Start(session, creatures, tiles, displays, _player, factions, triggers, source);
                 server.WorldChanging += ChangeMap;
                 _server = server;
 
@@ -593,6 +593,11 @@ public partial class Main : Node3D
                 avatar.Server = server;
                 server.Avatar = avatar;
                 AddHud(server, new Interaction(server, creatures, tiles), tiles);
+                if (Array.IndexOf(arguments, "--spell-check") >= 0)
+                {
+                    AddChild(new SpellCheck { Server = server });
+                }
+
                 if (arguments.Any(a => a.StartsWith("--play-check") || a.StartsWith("--ride-check")))
                 {
                     AddChild(new PlayCheck { Server = server, Tiles = tiles, Player = _player, Creatures = creatures, Transports = transports, Objects = serverObjects });
@@ -801,6 +806,21 @@ public partial class Main : Node3D
 
         var player = (IPlayer)_player;
         hud.MenuRequested += () => player.SetMenuOpen(true);
+        var ground = new GroundTargeter
+        {
+            Name = "GroundTargeter",
+            World = server,
+            Tiles = tiles,
+            Feet = () => player.Feet,
+            Pointer = _player switch
+            {
+                DesktopPlayer d => () => d.PointerRay,
+                Xr.XrPlayer x => () => x.PointerRay,
+                _ => () => null,
+            },
+        };
+        AddChild(ground);
+        interaction.Ground = ground;
         if (_player is DesktopPlayer desktop)
         {
             var layer = new CanvasLayer { Name = "HudLayer" };

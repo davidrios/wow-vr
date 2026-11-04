@@ -649,15 +649,6 @@ public sealed partial class RealmSession
             case MsgCorpseQuery:
                 ReadCorpse(p.Data);
                 break;
-            case 0x130: // SMSG_CAST_FAILED: cast count, spell, reason
-            {
-                var r = new PacketReader(p.Data);
-                r.U8();
-                var spell = r.U32();
-                var reason = r.U8();
-                Events.Enqueue(new ScreenMessage($"Spell {spell} failed (reason {reason}).", true));
-                break;
-            }
             case 0x18F: // SMSG_QUESTGIVER_QUEST_INVALID
                 Events.Enqueue(new ScreenMessage(QuestInvalid(new PacketReader(p.Data).U32()), true));
                 break;
@@ -672,6 +663,9 @@ public sealed partial class RealmSession
                 Events.Enqueue(new ResurrectOffer(from, r.Remaining > 0 ? r.CString() : ""));
                 break;
             }
+            default:
+                HandleSpells(p);
+                break;
         }
     }
 

@@ -313,6 +313,18 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
             case Key.B when Hud is not null:
                 Hud.ToggleBags();
                 break;
+            case Key.P when Hud is not null:
+                Hud.ToggleSpellbook();
+                break;
+            case (>= Key.Key0 and <= Key.Key9) or Key.Minus or Key.Equal when Hud is not null:
+                Hud.PressAction(key.PhysicalKeycode switch
+                {
+                    Key.Key0 => 9,
+                    Key.Minus => 10,
+                    Key.Equal => 11,
+                    var digit => (int)(digit - Key.Key1),
+                });
+                break;
             case Key.F:
                 Flying = !Flying;
                 break;
@@ -373,6 +385,21 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         _leftHeld = _rightHeld = false;
     }
 
+    /// <summary>The ray under the mouse cursor, while it's free and over the world rather than a window.</summary>
+    public (Vector3 From, Vector3 Direction)? PointerRay
+    {
+        get
+        {
+            if (Input.MouseMode != Input.MouseModeEnum.Visible || GetViewport().GuiGetHoveredControl() is not null)
+            {
+                return null;
+            }
+
+            var at = GetViewport().GetMousePosition();
+            return (_camera.ProjectRayOrigin(at), _camera.ProjectRayNormal(at));
+        }
+    }
+
     /// <summary>A click without dragging: selects with the left button, uses with the right.</summary>
     private void Click(bool right)
     {
@@ -383,6 +410,22 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
 
         var from = _camera.ProjectRayOrigin(_pressAt);
         var direction = _camera.ProjectRayNormal(_pressAt);
+
+        // Aiming a ground spell: the left button casts it where the cursor is, the right puts it away.
+        if (Interaction.Ground is { Aiming: true } ground)
+        {
+            if (right)
+            {
+                Interaction.World.CancelAiming();
+            }
+            else
+            {
+                ground.Confirm(from, direction);
+            }
+
+            return;
+        }
+
         if (right)
         {
             Interaction.Use(from, direction);

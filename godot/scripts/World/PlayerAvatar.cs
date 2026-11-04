@@ -55,20 +55,47 @@ public partial class PlayerAvatar : Node3D
     /// <summary>The WoW orientation the body faces, which the server hears in VR.</summary>
     public float Facing => _facing;
 
+    /// <summary>The body's model, once built, for spells' animations and effects.</summary>
+    public CreatureNode? Body => _body;
+
     /// <summary>The server, whose word decides whether the character is dead.</summary>
     public ServerWorld? Server { get; set; }
 
     private bool Vr => _playerNode is not DesktopPlayer;
 
+    private CreatureLibrary _library = null!;
+    private int _buildVersion;
+
     public void Start(CreatureLibrary library, CharacterAppearance appearance, IPlayer player, Node3D playerNode)
     {
         _player = player;
         _playerNode = playerNode;
+        _library = library;
+        Build(appearance);
+    }
+
+    /// <summary>The character put something on or took it off: the body is built again in its new looks.</summary>
+    public void Redress(CharacterAppearance appearance) => Build(appearance);
+
+    private void Build(CharacterAppearance appearance)
+    {
+        var version = ++_buildVersion;
+        var library = _library;
         Task.Run(() => library.BuildCharacter(appearance)).ContinueWith(built => Callable.From(() =>
         {
-            if (!IsInstanceValid(this) || !IsInsideTree() || built.Result is not { } asset)
+            if (!IsInstanceValid(this) || !IsInsideTree() || version != _buildVersion || built.Result is not { } asset)
             {
                 return;
+            }
+
+            // The old body goes only once the new one is ready, so the character never vanishes.
+            if (_body is not null)
+            {
+                RemoveChild(_body);
+                _body.QueueFree();
+                _body = null;
+                _upperPose.Clear();
+                _upperCaptured = false;
             }
 
             _body = new CreatureNode { Name = "Body", NoIdle = Vr };

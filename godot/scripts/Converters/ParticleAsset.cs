@@ -22,12 +22,24 @@ public sealed record ParticleAsset(Vector3 Position, int Bone, int Amount, float
     /// <summary>Where a doodad's animation takes it. A creature's emitters ride on its skeleton instead.</summary>
     public M2EmitterPath? Path { get; init; }
 
-    public GpuParticles3D NewNode(Vector3 position)
+    /// <summary>The emitter, when it switches on and off in its animation or starts off.</summary>
+    public M2Emitter? Switching { get; init; }
+
+    /// <summary>
+    /// A placed copy. <paramref name="fresh"/> starts it empty, as a spell's effect appearing,
+    /// rather than part way through, as a fire already burning.
+    /// </summary>
+    public GpuParticles3D NewNode(Vector3 position, bool fresh = false)
     {
         var node = NewParticles(position);
-        if (Path is not null)
+        if (fresh)
         {
-            node.AddChild(new EmitterFollower { Path = Path });
+            node.Preprocess = 0;
+        }
+
+        if (Path is not null || Switching is not null)
+        {
+            node.AddChild(new EmitterFollower { Path = Path, Emitter = Switching });
         }
 
         return node;
@@ -96,6 +108,7 @@ public sealed class ParticleLibrary(Func<string, ImageTexture?> textures)
             new Aabb(-Vector3.One * reach, Vector3.One * reach * 2f))
         {
             Path = path,
+            Switching = !emitter.StartsOn || emitter.Switches.Any(s => !s.On) ? emitter : null,
         };
     }
 

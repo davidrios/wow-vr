@@ -36,10 +36,14 @@ void light() {
 }
 #endif
 
-#ifdef FLOOR_LIGHT
+#if defined(FLOOR_LIGHT) || defined(BAKED_BONES)
+// Instance uniforms are numbered in the order they're declared, and a model's surfaces can use
+// different variants, so these two are always declared together, in this order.
 // A creature's light from the floor under it, in gamma space, and in alpha how far it's
 // replaced the sky's. Emission isn't lit, so as this rises the sky's light fades out.
 instance uniform vec4 floor_light = vec4(1.0, 1.0, 1.0, 0.0);
+// When a copy plays its baked animation once, as a spell's shard landing, the shader time it starts at; below 0 it loops.
+instance uniform float bake_start = -1.0;
 #endif
 
 #ifdef BAKED_BONES
@@ -93,7 +97,9 @@ void vertex() {
 #ifdef SKYBOX
 	float position = (skybox_day >= 0.0 ? fract(skybox_day) : fract(TIME / bake_seconds)) * float(bake_frames);
 #else
-	float position = fract(TIME / bake_seconds + phase) * float(bake_frames);
+	float position = bake_start >= 0.0
+		? clamp((TIME - bake_start) / bake_seconds, 0.0, 0.999) * float(bake_frames)
+		: fract(TIME / bake_seconds + phase) * float(bake_frames);
 #endif
 	int frame_a = int(position) % bake_frames;
 	int frame_b = (frame_a + 1) % bake_frames;

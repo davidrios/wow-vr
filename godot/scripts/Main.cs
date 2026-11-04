@@ -583,6 +583,7 @@ public partial class Main : Node3D
                 serverObjects.Start(tiles, source, library);
                 server.Objects = serverObjects;
                 server.Start(session, creatures, tiles, displays, _player, factions, triggers, source);
+                server.Library = library;
                 server.WorldChanging += ChangeMap;
                 _server = server;
 
@@ -592,6 +593,7 @@ public partial class Main : Node3D
                 avatar.Start(library, GlueScreens.AppearanceOf(session.Character), player, _player);
                 avatar.Server = server;
                 server.Avatar = avatar;
+                AddChild(new SpellEffects { Name = "SpellEffects", World = server, Creatures = creatures, Library = library, Sounds = creatureSounds, Tiles = tiles });
                 AddHud(server, new Interaction(server, creatures, tiles), tiles);
                 if (Array.IndexOf(arguments, "--spell-check") >= 0)
                 {

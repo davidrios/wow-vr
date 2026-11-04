@@ -77,6 +77,16 @@ public sealed record CreatureAsset(CreatureSkeletonAsset Skeleton, ArrayMesh Mes
 {
     /// <summary>The skeleton's animations, with the fingers of hands that hold something closed.</summary>
     public required AnimationLibrary Animations { get; init; }
+
+    /// <summary>The model's attachment points by M2 id, as hands, head and chest: a bone, and where on it.</summary>
+    public IReadOnlyDictionary<int, (string Bone, Vector3 Offset)> Attachments { get; init; } = new Dictionary<int, (string, Vector3)>();
+}
+
+/// <summary>A spell effect's model: what it draws, which may be nothing, and its particles.</summary>
+public sealed record EffectAsset(ArrayMesh? Mesh, ParticleAsset[] Particles)
+{
+    /// <summary>How long its stand animation runs, in seconds, as a shard of rain lives.</summary>
+    public float Seconds { get; init; } = 1f;
 }
 
 /// <summary>Builds creatures off the main thread, once per display and skeleton per model.</summary>
@@ -181,9 +191,20 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                 .Where(p => p.Bone >= 0 && p.Bone < model.Data.Bones.Length)
                 .Select(p => new CreatureParticle(BoneName(p.Bone), p.Position - ToGodot(model.Data.Bones[p.Bone].Pivot), p))
                 .ToList();
+            var attachments = new Dictionary<int, (string Bone, Vector3 Offset)>();
+            foreach (var attachment in model.Data.Attachments)
+            {
+                if (attachment.Bone >= 0 && attachment.Bone < model.Data.Bones.Length)
+                {
+                    var offset = attachment.Position - model.Data.Bones[attachment.Bone].Pivot;
+                    attachments.TryAdd(attachment.Id, (BoneName(attachment.Bone), new Vector3(offset.X, offset.Y, offset.Z)));
+                }
+            }
+
             return new CreatureAsset(model.Skeleton, mesh, look.Scale, items, look.Sounds, particles)
             {
                 Animations = AnimationsHolding(model.Skeleton, held.Contains(RightPalmAttachment), held.Contains(LeftPalmAttachment)),
+                Attachments = attachments,
             };
         }
         catch (WowAlchemyException e)
@@ -550,6 +571,41 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                     insert((float)time, track.Values[key]);
                 }
             }
+        }
+    }
+
+    private readonly ConcurrentDictionary<string, EffectAsset?> _effects = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A spell effect's model, as a hand's glow or a fireball, read once: its mesh, with its stand
+    /// animation baked, and its particles. Many are particles alone. Null when it can't be read.
+    /// </summary>
+    public EffectAsset? Effect(string path) => _effects.GetOrAdd(path, LoadEffect);
+
+    private EffectAsset? LoadEffect(string path)
+    {
+        try
+        {
+            var m2 = source.Read(path);
+            var skin = source.Read(M2Model.SkinPath(path));
+            if (m2 is not { Length: > 0 } || skin is not { Length: > 0 })
+            {
+                return null;
+            }
+
+            var data = M2SkinnedModel.Parse(m2, skin, s => s.Id == M2SequenceIds.Stand && s.Variation == 0, s => source.Read(s.AnimPath(path)));
+            var bake = data.Clips.Count > 0 ? M2BoneBake.TryCreate(data, data.Clips[0]) : null;
+            var mesh = BuildMesh(data, new CreatureLook(path, 1f, new Dictionary<int, string>(), null, []), skinned: false, BoundsOfVertices(data), bake);
+            var particles = models.Particles.Build(data.Emitters, e => data.Clips.Count > 0 ? M2BoneBake.EmitterPath(data, data.Clips[0], e) : null);
+            return mesh is null && particles.Length == 0 ? null : new EffectAsset(mesh, particles)
+            {
+                Seconds = data.Clips.Count > 0 && data.Clips[0].Sequence.DurationSeconds > 0.05f ? data.Clips[0].Sequence.DurationSeconds : 1f,
+            };
+        }
+        catch (WowAlchemyException e)
+        {
+            GD.PushWarning($"Could not read the spell effect {path}: {e.Message}");
+            return null;
         }
     }
 

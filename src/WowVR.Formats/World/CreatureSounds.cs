@@ -4,7 +4,28 @@ using WowVR.Formats.Database;
 namespace WowVR.Formats.World;
 
 /// <summary>A creature's sounds, from CreatureSoundData. Sound ids are SoundEntries rows, and 0 means none.</summary>
-public sealed record CreatureSoundSet(int Footstep, int WingFlap, int Loop, int[] Fidgets, float FidgetDelayMin, float FidgetDelayMax);
+public sealed record CreatureSoundSet(int Footstep, int WingFlap, int Loop, int[] Fidgets, float FidgetDelayMin, float FidgetDelayMax)
+{
+    /// <summary>A grunt with a swing, CreatureSoundData's exertion.</summary>
+    public int Attack { get; init; }
+
+    /// <summary>Being hit, its injury.</summary>
+    public int Wound { get; init; }
+
+    public int Death { get; init; }
+
+    /// <summary>Noticing the player in a fight.</summary>
+    public int Aggro { get; init; }
+
+    /// <summary>What an NPC says when talked to, from NPCSounds through its display.</summary>
+    public int Greeting { get; init; }
+
+    /// <summary>What it says when the talk ends.</summary>
+    public int Farewell { get; init; }
+
+    /// <summary>What it says when clicked again and again.</summary>
+    public int Pissed { get; init; }
+}
 
 public enum CreatureSoundKind
 {

@@ -44,6 +44,7 @@ public partial class GameHud : Control
     private HBoxContainer _bar = null!;
     private readonly List<ActionSlot> _slots = [];
     private SpellBook? _spellBook;
+    private CharacterWindow? _character;
     private PanelContainer _castBar = null!;
     private ColorRect _castProgress = null!;
     private Label _castLabel = null!;
@@ -61,7 +62,7 @@ public partial class GameHud : Control
     public bool Typing => _chatInput.HasFocus();
 
     /// <summary>A window is open that Escape should close before opening the menu.</summary>
-    public bool HasOpenWindow => _dialog.Visible || _bags.Visible || _spellBook?.Visible == true || _held is not null || _world?.Aiming is not null;
+    public bool HasOpenWindow => _dialog.Visible || _bags.Visible || _spellBook?.Visible == true || _character?.Visible == true || _held is not null || _world?.Aiming is not null;
 
     /// <summary>The keys of the main bar's twelve buttons, as the game binds them.</summary>
     public static readonly string[] SlotKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="];
@@ -154,6 +155,24 @@ public partial class GameHud : Control
         BuildActionBar();
         _spellBook = new SpellBook(world, PickUp) { Visible = false };
         AddChild(_spellBook);
+        _character = new CharacterWindow(world) { Visible = false };
+        AddChild(_character);
+
+        // They share the left of the screen, as in the game: one opening closes the other.
+        _spellBook.VisibilityChanged += () =>
+        {
+            if (_spellBook.Visible)
+            {
+                _character.Hide();
+            }
+        };
+        _character.VisibilityChanged += () =>
+        {
+            if (_character.Visible)
+            {
+                _spellBook.Hide();
+            }
+        };
         RefreshFrames();
     }
 
@@ -167,6 +186,14 @@ public partial class GameHud : Control
 
     /// <summary>A key of the main bar was pressed: its button's spell or item is used.</summary>
     public void PressAction(int slot) => _world?.UseAction(slot);
+
+    public void ToggleCharacter()
+    {
+        if (_character is not null)
+        {
+            _character.Visible = !_character.Visible;
+        }
+    }
 
     public void ToggleSpellbook()
     {
@@ -256,6 +283,12 @@ public partial class GameHud : Control
         if (_spellBook?.Visible == true)
         {
             _spellBook.Visible = false;
+            return true;
+        }
+
+        if (_character?.Visible == true)
+        {
+            _character.Visible = false;
             return true;
         }
 
@@ -516,6 +549,11 @@ public partial class GameHud : Control
 
     private void CloseDialog()
     {
+        if (_dialog.Visible)
+        {
+            _world?.EndTalk();
+        }
+
         _dialog.Visible = false;
         _shownDialog = null;
         _vendor = 0;
@@ -538,6 +576,7 @@ public partial class GameHud : Control
         _vendor = 0;
         _dialog.Visible = true;
         _spellBook?.Hide();
+        _character?.Hide();
         switch (e)
         {
             case GossipShown gossip:
@@ -715,7 +754,7 @@ public partial class GameHud : Control
     }
 
     /// <summary>Item quality colors, grey to orange, as the game shows names.</summary>
-    private static Color QualityColor(uint quality) => quality switch
+    public static Color QualityColor(uint quality) => quality switch
     {
         0 => new Color(0.62f, 0.62f, 0.62f),
         1 => Colors.White,
@@ -848,8 +887,8 @@ public partial class GameHud : Control
     {
         _bar = new HBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
         _bar.SetAnchorsPreset(LayoutPreset.CenterBottom);
-        _bar.OffsetLeft = -560;
-        _bar.OffsetRight = 560;
+        _bar.OffsetLeft = -620;
+        _bar.OffsetRight = 620;
         _bar.OffsetTop = -12 - ActionSlot.Size;
         _bar.OffsetBottom = -12;
         _bar.Alignment = BoxContainer.AlignmentMode.Center;
@@ -875,6 +914,7 @@ public partial class GameHud : Control
             _bar.AddChild(button);
         }
 
+        Add("Character", ToggleCharacter);
         Add("Spells", ToggleSpellbook);
         Add("Bags", ToggleBags);
         Add("Chat", () => OpenChat());

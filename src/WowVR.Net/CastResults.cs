@@ -234,7 +234,8 @@ public static class CastResults
     /// <summary>What to tell the player, or null for a failure the game keeps quiet about.</summary>
     public static string? Describe(byte reason)
     {
-        if (reason == DontReport)
+        // 0 is success, which an interrupted channel's failure can carry.
+        if (reason is DontReport or 0)
         {
             return null;
         }

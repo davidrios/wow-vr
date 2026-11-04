@@ -43,6 +43,13 @@ public partial class SpellCheck : Node
             }
         };
         Server.Session.Events.Enqueue(new ChatReceived(new ChatLine(ChatKind.Notice, "", "Spell check starting")));
+        Server.UnitCast += e =>
+        {
+            if (e is AreaEffectAppeared area)
+            {
+                _areas.Add($"{area.Spell} ({area.Radius} yards)");
+            }
+        };
     }
 
     public override void _Process(double delta)
@@ -50,6 +57,20 @@ public partial class SpellCheck : Node
         _age += delta;
         _stepAge += delta;
         _hud ??= GetParent().GetNodeOrNull<Ui.GameHud>("HudLayer/Hud");
+
+        // What the body plays, as it changes, to see casts and channels hold their animations.
+        if (Server.Avatar?.Body?.Clip is { } bodyClip && bodyClip != _lastClip)
+        {
+            GD.Print($"Spell check: at {_age:F1} s the body plays {(bodyClip.Length == 0 ? "nothing" : bodyClip)}{(Server.Casting is { } c ? $" while {(c.Channel ? "channeling" : "casting")} {c.Spell}" : "")}");
+            _lastClip = bodyClip;
+        }
+
+        if (_groundFrame == 4 && _rainShots < 3 && _stepAge - _groundAt > 2.5 + _rainShots * 0.3)
+        {
+            Shot($"rain{_rainShots}");
+            GD.Print($"Spell check: rain at {_stepAge - _groundAt:F1} s: {GetParent().GetNodeOrNull<SpellEffects>("SpellEffects")?.RainReport}");
+            _rainShots++;
+        }
         if (_age > GiveUpSeconds)
         {
             Fail($"gave up at step {_step}");
@@ -69,11 +90,33 @@ public partial class SpellCheck : Node
                     Fail("no spells to show");
                 }
 
-                _hud.ToggleSpellbook();
+                _hud.ToggleCharacter();
                 _hud.ToggleBags();
+
+                // Life Tap and the like cost health, which the checks spend run after run: a GM tops it up.
+                if (Server.Self is { } self && self.Unit.Health < self.Unit.MaxHealth)
+                {
+                    Server.Say($".modify hp {self.Unit.MaxHealth}");
+                }
+
                 Next();
                 break;
+            case 1 when _stepAge > 2 && !NpcPhase():
+                break;
             case 1 when _stepAge > 2 && !DragFrame():
+                break;
+            case 1 when !_characterShot:
+                // The character's model builds off the main thread; a few seconds is plenty.
+                if (_stepAge > 6)
+                {
+                    Shot("character");
+                    _characterShot = true;
+                    _hud!.ToggleSpellbook();
+                    _stepAge = 2;
+                }
+
+                break;
+            case 1 when _stepAge < 3:
                 break;
             case 1 when _stepAge > 2 && !DragToBar():
                 break;
@@ -172,6 +215,14 @@ public partial class SpellCheck : Node
                 {
                     _castShot = true;
                     Shot("cast");
+                    var body = Server.Avatar?.Body;
+                    var effects = body is null ? 0 : Descendants(body).Count(n => n.Name == "SpellEffect");
+                    var clip = body?.Clip ?? "";
+                    GD.Print($"Spell check: while casting the body plays {clip} with {effects} effects on it");
+                    if (clip.Length == 0 || clip.StartsWith("0_") || clip.StartsWith("4_") || clip.StartsWith("5_"))
+                    {
+                        Fail($"the body plays {clip} while casting, not a spell's");
+                    }
                 }
 
                 if (_error is { } refused && _tried.Count < 6)
@@ -247,6 +298,9 @@ public partial class SpellCheck : Node
     private readonly HashSet<int> _tried = [];
     private readonly HashSet<string> _triedNames = [];
 
+    private string? _lastClip;
+    private int _rainShots;
+    private readonly List<string> _areas = [];
     private int _groundFrame;
     private double _groundAt;
     private SpellRecord? _groundSpell;
@@ -312,7 +366,7 @@ public partial class SpellCheck : Node
                 Input.ParseInputEvent(new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = false, Position = _aimAt, GlobalPosition = _aimAt });
                 (_groundFrame, _groundAt) = (4, _stepAge);
                 return false;
-            case 4 when age > 1.5:
+            case 4 when age > 4:
                 if (Server.Aiming is not null)
                 {
                     Fail("clicking the ground didn't cast it");
@@ -326,9 +380,21 @@ public partial class SpellCheck : Node
                 {
                     Shot("ground");
                     GD.Print($"Spell check: PASS {_groundSpell!.Name} cast where the mouse pointed{(Server.Casting is { Channel: true } ? ", channeling" : "")}");
+                    var spellEffects = GetParent().GetNodeOrNull<SpellEffects>("SpellEffects");
+                    GD.Print($"Spell check: rain now: {spellEffects?.RainReport}");
+                    var shards = spellEffects?.ShowingShards ?? 0;
+                    var rains = Server.Spells?.VisualOf(_groundSpell.Id)?.PersistentArea is { } area && Server.Spells.AreaRainOf(area) is not null;
+                    if (rains)
+                    {
+                        GD.Print(shards > 0 ? $"Spell check: PASS {shards} shards of its rain are falling" : "Spell check: FAIL its rain shows no shards");
+                        if (shards == 0)
+                        {
+                            Fail("no rain");
+                        }
+                    }
                 }
 
-                Server.Session.CancelCast((uint)_groundSpell!.Id);
+                Server.Session.CancelChannel((uint)_groundSpell!.Id);
                 (_groundFrame, _groundAt) = (5, _stepAge);
                 return false;
             case 5 when age > 1:
@@ -349,15 +415,140 @@ public partial class SpellCheck : Node
                     Server.CancelAiming();
                 }
 
-                _groundFrame = 6;
+                // A lasting area the client draws: Consecration's glow, cast by GM command.
+                Server.Say(".cast 26573 triggered");
+                (_groundFrame, _groundAt) = (6, _stepAge);
+                return false;
+            case 6 when age > 2.5:
+                var effects = GetParent().GetNodeOrNull<SpellEffects>("SpellEffects");
+                var drawn = effects is null ? 0 : Descendants(effects).Count(n => n.Name == "AreaEffect");
+                GD.Print($"Spell check: areas that appeared: {string.Join(", ", _areas)}; {drawn} area models drawn now");
+                if (_areas.Any(a => a.StartsWith("26573")) && drawn > 0)
+                {
+                    GD.Print("Spell check: PASS Consecration's area showed on the ground");
+                }
+                else
+                {
+                    Fail("Consecration's area didn't show");
+                }
+
+                Shot("area");
+                _groundFrame = 7;
                 return true;
-            case >= 6:
+            case >= 7:
                 return true;
         }
 
         return false;
     }
 
+    private int _npcStep;
+    private double _npcAt;
+    private ulong _npc;
+    private int _soundsBefore;
+
+    /// <summary>
+    /// The nearest standing NPC: selecting it shows its ring at once and clearing the selection
+    /// hides it; talking to it turns it to the player and plays its greeting. True when done.
+    /// </summary>
+    private bool NpcPhase()
+    {
+        var creatures = GetParent().GetNode<CreatureManager>("Creatures");
+        var sounds = GetParent().GetNode<CreatureSoundPlayer>("CreatureSounds");
+        var here = Server.PlayerPosition;
+        var age = _stepAge - _npcAt;
+        switch (_npcStep)
+        {
+            case 0:
+                var nearest = Server.Units.Values
+                    .Where(u => u.IsNpc && !u.IsDead && u.HasGossip && creatures.LiveNode((long)u.Guid) is not null)
+                    .Select(u => (Unit: u, At: creatures.LivePosition((long)u.Guid)))
+                    .Where(u => u.At is not null)
+                    .OrderBy(u => System.Numerics.Vector3.Distance(u.At!.Value, here))
+                    .FirstOrDefault();
+                if (nearest.Unit is null || System.Numerics.Vector3.Distance(nearest.At!.Value, here) > 40)
+                {
+                    GD.Print("Spell check: no NPC near to talk to");
+                    _npcStep = 99;
+                    return true;
+                }
+
+                _npc = nearest.Unit.Guid;
+                GD.Print($"Spell check: the nearest NPC is {nearest.Unit.Name}, {System.Numerics.Vector3.Distance(nearest.At!.Value, here):F1} yards away");
+                Server.SetTarget(_npc);
+                (_npcStep, _npcAt) = (1, _stepAge);
+                return false;
+            case 1 when age > 0.2:
+                var shown = creatures.LiveNode((long)_npc)?.RingShown == true;
+                Server.SetTarget(0);
+                (_npcStep, _npcAt) = (2, _stepAge);
+                _ringWasShown = shown;
+                return false;
+            case 2 when age > 0.2:
+                var gone = creatures.LiveNode((long)_npc)?.RingShown != true;
+                if (_ringWasShown && gone)
+                {
+                    GD.Print("Spell check: PASS the selection ring showed at once and went when cleared");
+                }
+                else
+                {
+                    Fail($"selection ring: shown when selected {_ringWasShown}, gone when cleared {gone}");
+                }
+
+                // Close enough to talk, as the server wants.
+                var at = creatures.LivePosition((long)_npc)!.Value;
+                var away = here - at;
+                var spot = at + (away.Length() > 0.1f ? System.Numerics.Vector3.Normalize(away) * 3f : new System.Numerics.Vector3(3, 0, 0));
+                Server.Say(FormattableString.Invariant($".go xyz {spot.X:F2} {spot.Y:F2} {spot.Z + 0.5f:F2}"));
+                (_npcStep, _npcAt) = (3, _stepAge);
+                return false;
+            case 3 when age > 3:
+                _soundsBefore = sounds.PlayedCount;
+                var npc = Server.Units[_npc];
+                GD.Print($"Spell check: talking to {npc.Name}: npc flags 0x{npc.NpcFlags:X}, {Server.ReactionTo(npc)}, facing {creatures.LiveNode((long)_npc)?.Facing:F2}");
+                Server.Use(_npc);
+                (_npcStep, _npcAt) = (4, _stepAge);
+                return false;
+            case 4 when age > 2.5:
+                var node = creatures.LiveNode((long)_npc);
+                var npcAt = creatures.LivePosition((long)_npc);
+                var me = Server.PlayerPosition;
+                if (node is null || npcAt is null)
+                {
+                    Fail("the NPC went away");
+                    _npcStep = 99;
+                    return true;
+                }
+
+                var toward = MathF.Atan2(me.Y - npcAt.Value.Y, me.X - npcAt.Value.X);
+                var off = Mathf.Abs(Mathf.AngleDifference(node.Facing, toward));
+                GD.Print($"Spell check: the NPC faces {node.Facing:F2}, the player is toward {toward:F2}; a window is open: {_hud!.HasOpenWindow}");
+                if (off < 0.35f)
+                {
+                    GD.Print($"Spell check: PASS the NPC turned to face the player ({Mathf.RadToDeg(off):F0} degrees off)");
+                }
+                else
+                {
+                    Fail($"the NPC faces {Mathf.RadToDeg(off):F0} degrees away from the player");
+                }
+
+                GD.Print(sounds.PlayedCount > _soundsBefore
+                    ? $"Spell check: PASS the NPC's greeting played ({sounds.PlayedCount - _soundsBefore} sounds)"
+                    : "Spell check: the NPC played no greeting (it may have none)");
+                Shot("talk");
+                _hud!.CloseTopWindow();
+                Server.SetTarget(0);
+                _npcStep = 99;
+                return true;
+            case 99:
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool _ringWasShown;
+    private bool _characterShot;
     private int _frameStep;
     private Vector2 _frameFrom;
     private Vector2 _frameWas;

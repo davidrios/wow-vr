@@ -50,6 +50,9 @@ public partial class ServerWorld
     /// <summary>A cast began or ended.</summary>
     public event Action? CastChanged;
 
+    /// <summary>Any unit began, finished or stopped a cast, for what it looks and sounds like.</summary>
+    public event Action<SessionEvent>? UnitCast;
+
     private void StartSpells(RealmSession session, MpqAssetSource source)
     {
         Icons = new IconCache(source);
@@ -98,6 +101,9 @@ public partial class ServerWorld
                 break;
             case SpellWent went:
                 StartCooldown(went.Spell);
+                break;
+            case UnitCastBegan or UnitSpellWent or UnitCastStopped or AreaEffectAppeared or AreaEffectGone:
+                UnitCast?.Invoke(e);
                 break;
             case CooldownSet cooldown:
                 _spellReady[cooldown.Spell] = Now + cooldown.Milliseconds / 1000.0;
@@ -199,7 +205,8 @@ public partial class ServerWorld
                 _session.CastSpell(spell, target.Guid);
                 break;
             case SpellAim.Friend:
-                var friendly = target is not null && !target.IsDead && ReactionTo(target) == Reaction.Friendly;
+                // Only a friend that can be helped: NPCs the server won't let players touch get the player instead, as the game's self-cast.
+                var friendly = target is not null && !target.IsDead && ReactionTo(target) == Reaction.Friendly && !target.NotAttackable;
                 _session.CastSpell(spell, friendly ? target!.Guid : _session.SelfGuid);
                 break;
             case SpellAim.Any:

@@ -122,7 +122,9 @@ public sealed partial class CreatureDisplayTable
         Slot.Tabard, Slot.Belt, Slot.Wrists, Slot.Gloves, Slot.Cape,
     ];
 
-    private readonly record struct DisplayRow(int Model, int Sound, int Extra, float Scale, string[] Skins);
+    private readonly record struct DisplayRow(int Model, int Sound, int Extra, float Scale, string[] Skins, int NpcSound = 0);
+
+    private readonly Dictionary<int, (int Greeting, int Farewell, int Pissed)> _npcSounds = [];
 
     private readonly record struct ModelRow(string Path, float Scale, int Sound);
 
@@ -173,7 +175,19 @@ public sealed partial class CreatureDisplayTable
                     dbc.GetInt32(i, 2),
                     dbc.GetInt32(i, 3),
                     dbc.GetSingle(i, 4),
-                    [dbc.GetString(i, 6), dbc.GetString(i, 7), dbc.GetString(i, 8)]);
+                    [dbc.GetString(i, 6), dbc.GetString(i, 7), dbc.GetString(i, 8)],
+                    dbc.GetInt32(i, 12));
+            }
+
+            return null;
+        });
+
+        // NPCSounds: an id, then the greeting, farewell and pissed sounds.
+        DbcTables.Read<object?>(source, @"DBFilesClient\NPCSounds.dbc", dbc =>
+        {
+            for (var i = 0; i < dbc.RecordCount; i++)
+            {
+                table._npcSounds[dbc.GetInt32(i, 0)] = (dbc.GetInt32(i, 1), dbc.GetInt32(i, 2), dbc.GetInt32(i, 3));
             }
 
             return null;
@@ -256,7 +270,13 @@ public sealed partial class CreatureDisplayTable
                     dbc.GetInt32(i, 24),
                     [dbc.GetInt32(i, 14), dbc.GetInt32(i, 15), dbc.GetInt32(i, 16), dbc.GetInt32(i, 17), dbc.GetInt32(i, 18)],
                     dbc.GetSingle(i, 31),
-                    dbc.GetSingle(i, 32));
+                    dbc.GetSingle(i, 32))
+                {
+                    Attack = dbc.GetInt32(i, 1),
+                    Wound = dbc.GetInt32(i, 3),
+                    Death = dbc.GetInt32(i, 6),
+                    Aggro = dbc.GetInt32(i, 10),
+                };
             }
 
             return null;
@@ -400,6 +420,10 @@ public sealed partial class CreatureDisplayTable
 
         var scale = PositiveOrOne(display.Scale) * PositiveOrOne(model.Scale);
         var sounds = _sounds.GetValueOrDefault(display.Sound != 0 ? display.Sound : model.Sound);
+        if (_npcSounds.TryGetValue(display.NpcSound, out var talk))
+        {
+            sounds = (sounds ?? new CreatureSoundSet(0, 0, 0, [], 0, 0)) with { Greeting = talk.Greeting, Farewell = talk.Farewell, Pissed = talk.Pissed };
+        }
         if (!_extras.TryGetValue(display.Extra, out var extra))
         {
             return new CreatureLook(path, scale, textures, null, [], sounds);

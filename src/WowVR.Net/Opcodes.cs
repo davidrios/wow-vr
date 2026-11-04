@@ -166,6 +166,17 @@ public static class UpdateFields
     public const int UnitFaction = ObjectEnd + 0x31;
     public const int UnitVirtualItems = ObjectEnd + 0x32;
     public const int UnitFlags = ObjectEnd + 0x35;
+    public const int UnitBaseAttackTime = ObjectEnd + 0x38;
+    public const int UnitMinDamage = ObjectEnd + 0x40;
+    public const int UnitMaxDamage = ObjectEnd + 0x41;
+    public const int UnitStat0 = ObjectEnd + 0x4E;
+    public const int UnitPosStat0 = ObjectEnd + 0x53;
+    public const int UnitNegStat0 = ObjectEnd + 0x58;
+    public const int UnitResistances = ObjectEnd + 0x5D;
+    public const int UnitAttackPower = ObjectEnd + 0x75;
+    public const int UnitRangedAttackPower = ObjectEnd + 0x78;
+    public const int UnitMinRangedDamage = ObjectEnd + 0x7B;
+    public const int UnitMaxRangedDamage = ObjectEnd + 0x7C;
     public const int UnitDisplayId = ObjectEnd + 0x3D;
     public const int UnitMountDisplayId = ObjectEnd + 0x3F;
     public const int UnitBytes1 = ObjectEnd + 0x44;
@@ -183,7 +194,16 @@ public static class UpdateFields
     public const int PlayerPackSlot1 = UnitEnd + 0xDE;
     public const int PlayerXp = UnitEnd + 0x1E6;
     public const int PlayerNextLevelXp = UnitEnd + 0x1E7;
+    public const int PlayerBlock = UnitEnd + 0x36C;
+    public const int PlayerDodge = UnitEnd + 0x36D;
+    public const int PlayerParry = UnitEnd + 0x36E;
+    public const int PlayerCrit = UnitEnd + 0x371;
+    public const int PlayerRangedCrit = UnitEnd + 0x372;
+    public const int PlayerSpellCrit = UnitEnd + 0x374;
     public const int PlayerCoinage = UnitEnd + 0x3FE;
+    public const int PlayerDamageDonePos = UnitEnd + 0x3FF;
+    public const int PlayerDamageDoneNeg = UnitEnd + 0x406;
+    public const int PlayerHealingDonePos = UnitEnd + 0x414;
 
     public const int GameObjectDisplayId = ObjectEnd + 0x02;
     public const int GameObjectFlags = ObjectEnd + 0x03;
@@ -193,6 +213,10 @@ public static class UpdateFields
     public const int GameObjectBytes1 = ObjectEnd + 0x0B;
 
     public const int CorpseOwner = ObjectEnd;
+
+    public const int DynamicObjectCaster = ObjectEnd;
+    public const int DynamicObjectSpell = ObjectEnd + 0x03;
+    public const int DynamicObjectRadius = ObjectEnd + 0x04;
 }
 
 public enum ObjectType : byte

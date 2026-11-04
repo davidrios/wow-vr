@@ -193,7 +193,17 @@ public partial class ServerWorld : Node
             return;
         }
 
+        // The old target's ring goes and the new one's comes now, not when their stats next change.
+        var old = Target;
         Target = guid;
+        foreach (var changed in new[] { old, guid })
+        {
+            if (changed != 0 && Units.TryGetValue(changed, out var unit))
+            {
+                _creatures.SetLiveState((long)changed, unit.IsDead, changed == guid);
+            }
+        }
+
         _session.Select(guid);
         TargetChanged?.Invoke();
     }
@@ -240,6 +250,7 @@ public partial class ServerWorld : Node
         if (unit.IsNpc && ReactionTo(unit) != Reaction.Hostile)
         {
             _session.Interact(unit);
+            StartTalk(guid);
             return;
         }
 
@@ -247,6 +258,57 @@ public partial class ServerWorld : Node
         {
             StartAttack(guid);
         }
+    }
+
+    /// <summary>An NPC faces the player this long at most while they talk, in seconds.</summary>
+    private const double TalkFacingSeconds = 120;
+
+    /// <summary>After the talk it keeps facing the player this long, then turns back.</summary>
+    private const double AfterTalkSeconds = 4;
+
+    /// <summary>Clicked this many times within <see cref="PissedSeconds"/>, an NPC is annoyed, as in the game.</summary>
+    private const int PissedClicks = 4;
+
+    private const double PissedSeconds = 6;
+
+    private ulong _talkingTo;
+    private int _talkClicks;
+    private double _firstTalkClick;
+
+    /// <summary>The player spoke to an NPC: it turns to them and greets them, or grumbles at being clicked over and over.</summary>
+    private void StartTalk(ulong guid)
+    {
+        var now = Now;
+        if (guid != _talkingTo || now - _firstTalkClick > PissedSeconds)
+        {
+            (_talkClicks, _firstTalkClick) = (0, now);
+        }
+
+        _talkingTo = guid;
+        _talkClicks++;
+        _creatures.FacePlayer((long)guid, TalkFacingSeconds);
+        _creatures.PlayLiveSound((long)guid, s => _talkClicks >= PissedClicks && s.Pissed != 0 ? s.Pissed : s.Greeting);
+        if (_talkClicks == 1)
+        {
+            _creatures.PlayLiveOnce((long)guid, Formats.Models.M2SequenceIds.NpcWelcome, AnimationFallback);
+        }
+    }
+
+    /// <summary>AnimationData's fallback for a model without a sequence, once Spell.dbc's tables are read.</summary>
+    private int AnimationFallback(int sequence) => Spells?.AnimationFallback(sequence) ?? 0;
+
+    /// <summary>The talk window closed: the NPC says goodbye and turns back a moment later.</summary>
+    public void EndTalk()
+    {
+        if (_talkingTo == 0)
+        {
+            return;
+        }
+
+        _creatures.FacePlayer((long)_talkingTo, AfterTalkSeconds);
+        _creatures.PlayLiveSound((long)_talkingTo, s => s.Farewell);
+        _creatures.PlayLiveOnce((long)_talkingTo, Formats.Models.M2SequenceIds.NpcGoodbye, AnimationFallback);
+        _talkingTo = 0;
     }
 
     public void StartAttack(ulong guid)
@@ -277,6 +339,10 @@ public partial class ServerWorld : Node
                     SetUnit(stats);
                 }
 
+                break;
+            case PlayerLookChanged changed when changed.Guid == _session.SelfGuid:
+                Avatar?.Redress(AppearanceOf(changed.Look));
+                SelfLookChanged?.Invoke();
                 break;
             case PlayerLookChanged changed:
                 _creatures.Redress((long)changed.Guid, AppearanceOf(changed.Look));
@@ -365,6 +431,12 @@ public partial class ServerWorld : Node
                 if (swing.Attacker != _session.SelfGuid)
                 {
                     _creatures.PlayAttack((long)swing.Attacker);
+                    _creatures.PlayLiveSound((long)swing.Attacker, s => s.Attack);
+                }
+
+                if (!swing.Missed && swing.Damage > 0 && swing.Target != _session.SelfGuid)
+                {
+                    _creatures.PlayLiveSound((long)swing.Target, s => s.Wound);
                 }
 
                 break;
@@ -410,6 +482,11 @@ public partial class ServerWorld : Node
 
     private void SetUnit(UnitStats stats)
     {
+        if (Units.TryGetValue(stats.Guid, out var before) && !before.IsDead && stats.IsDead)
+        {
+            _creatures.PlayLiveSound((long)stats.Guid, s => s.Death);
+        }
+
         Units[stats.Guid] = stats;
         _creatures.SetLiveState((long)stats.Guid, stats.IsDead, stats.Guid == Target);
         if (stats.Guid == Target)
@@ -461,8 +538,17 @@ public partial class ServerWorld : Node
         };
     }
 
+    /// <summary>Builds characters' models, for the character window's picture of the player.</summary>
+    public Converters.CreatureLibrary? Library { get; set; }
+
+    /// <summary>What the player wore changed, so their body and the character window change too.</summary>
+    public event Action? SelfLookChanged;
+
+    /// <summary>The player as they look now, with what they wear, once the server has said.</summary>
+    public CharacterAppearance? SelfAppearance => Self?.Look is { } look ? AppearanceOf(look) : null;
+
     /// <summary>Another player as a character to paint, dressed from Item.dbc as the client does.</summary>
-    private CharacterAppearance AppearanceOf(PlayerLook look)
+    public CharacterAppearance AppearanceOf(PlayerLook look)
     {
         var (equipment, types) = _displays.DressFromItems(look.Items.Select(i => (int)i).ToArray());
         return new CharacterAppearance(look.Race, look.Sex, look.Skin, look.Face, look.HairStyle, look.HairColor, look.FacialHair, equipment)

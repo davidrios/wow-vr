@@ -17,6 +17,7 @@ public sealed partial class RealmSession
     private const ushort SMSG_SUPERCEDED_SPELL = 0x12C;
     private const ushort CMSG_CAST_SPELL = 0x12E;
     private const ushort CMSG_CANCEL_CAST = 0x12F;
+    private const ushort CMSG_CANCEL_CHANNELLING = 0x13B;
     private const ushort SMSG_CAST_FAILED = 0x130;
     private const ushort SMSG_SPELL_START = 0x131;
     private const ushort SMSG_SPELL_GO = 0x132;
@@ -27,6 +28,10 @@ public sealed partial class RealmSession
     private const ushort MSG_CHANNEL_UPDATE = 0x13A;
     private const ushort SMSG_CLEAR_COOLDOWN = 0x1DE;
     private const ushort SMSG_REMOVED_SPELL = 0x203;
+    private const ushort SMSG_SPELL_FAILED_OTHER = 0x2A6;
+
+    /// <summary>SpellMissInfo's reflect, which carries one more byte.</summary>
+    private const byte MissReflect = 11;
 
     /// <summary>SpellCastTargets' flags: a unit, and a place on the ground.</summary>
     private const uint TargetUnit = 0x2;
@@ -88,6 +93,10 @@ public sealed partial class RealmSession
 
     public void CancelCast(uint spell) =>
         _ = SendQuietly(CMSG_CANCEL_CAST, new PacketWriter().U8(0).U32(spell).ToArray());
+
+    /// <summary>Stops a channel, which a cast's cancel doesn't.</summary>
+    public void CancelChannel(uint spell) =>
+        _ = SendQuietly(CMSG_CANCEL_CHANNELLING, new PacketWriter().U32(spell).ToArray());
 
     /// <summary>Puts a spell or item on a button, or clears it with an empty one. The server saves it.</summary>
     public void SetActionButton(int slot, ActionButton button)
@@ -152,6 +161,18 @@ public sealed partial class RealmSession
             case SMSG_SPELL_GO:
                 ReadSpellStart(p.Data, went: true);
                 return true;
+            case SMSG_SPELL_FAILED_OTHER:
+            {
+                var r = new PacketReader(p.Data);
+                var caster = r.PackedGuid();
+                r.U8();
+                if (caster != Character.Guid)
+                {
+                    Events.Enqueue(new UnitCastStopped(caster, r.U32()));
+                }
+
+                return true;
+            }
             case SMSG_SPELL_FAILURE:
             {
                 var r = new PacketReader(p.Data);
@@ -159,6 +180,7 @@ public sealed partial class RealmSession
                 r.U8();
                 var spell = r.U32();
                 var reason = r.U8();
+                Events.Enqueue(new UnitCastStopped(caster, spell));
                 if (caster == Character.Guid)
                 {
                     Events.Enqueue(new CastEnded(spell, false));
@@ -173,10 +195,13 @@ public sealed partial class RealmSession
             case MSG_CHANNEL_START:
             {
                 var r = new PacketReader(p.Data);
-                if (r.PackedGuid() == Character.Guid)
+                var caster = r.PackedGuid();
+                var spell = r.U32();
+                var duration = r.U32();
+                Events.Enqueue(new UnitCastBegan(caster, spell, duration, 0, Channel: true));
+                if (caster == Character.Guid)
                 {
-                    var spell = r.U32();
-                    Events.Enqueue(new CastStarted(spell, r.U32(), Channel: true));
+                    Events.Enqueue(new CastStarted(spell, duration, Channel: true));
                 }
 
                 return true;
@@ -184,9 +209,14 @@ public sealed partial class RealmSession
             case MSG_CHANNEL_UPDATE:
             {
                 var r = new PacketReader(p.Data);
-                if (r.PackedGuid() == Character.Guid && r.U32() == 0)
+                var caster = r.PackedGuid();
+                if (r.U32() == 0)
                 {
-                    Events.Enqueue(new CastEnded(0, true));
+                    Events.Enqueue(new UnitCastStopped(caster, 0));
+                    if (caster == Character.Guid)
+                    {
+                        Events.Enqueue(new CastEnded(0, true));
+                    }
                 }
 
                 return true;
@@ -303,6 +333,61 @@ public sealed partial class RealmSession
         Events.Enqueue(new ActionButtonsChanged(ActionButtons));
     }
 
+    /// <summary>A go's hit units, as full guids, then its misses, each a guid, a reason, and one more byte for a reflect.</summary>
+    internal static List<ulong> ReadHits(PacketReader r)
+    {
+        var hits = new List<ulong>();
+        var count = r.U8();
+        for (var i = 0; i < count; i++)
+        {
+            hits.Add(r.U64());
+        }
+
+        var misses = r.U8();
+        for (var i = 0; i < misses; i++)
+        {
+            r.U64();
+            if (r.U8() == MissReflect)
+            {
+                r.U8();
+            }
+        }
+
+        return hits;
+    }
+
+    /// <summary>A cast's targets: the flags, then the unit or object, an item, and where it starts and lands.</summary>
+    internal static (ulong Unit, Vector3? Place) ReadTargets(PacketReader r)
+    {
+        var mask = r.U32();
+        ulong unit = 0;
+        Vector3? place = null;
+        if ((mask & (0x2 | 0x800 | 0x8000 | 0x200 | 0x10000)) != 0)
+        {
+            unit = r.PackedGuid();
+        }
+
+        // An item or a trade item, written as a packed guid even when there's none.
+        if ((mask & (0x10 | 0x1000)) != 0)
+        {
+            r.PackedGuid();
+        }
+
+        if ((mask & 0x20) != 0)
+        {
+            r.PackedGuid();
+            r.Skip(12);
+        }
+
+        if ((mask & TargetDestination) != 0)
+        {
+            r.PackedGuid();
+            place = new Vector3(r.F32(), r.F32(), r.F32());
+        }
+
+        return (unit, place);
+    }
+
     /// <summary>
     /// Who cast what: the item or caster, the caster, the cast count, the spell, its flags and, for
     /// a start, how long it takes. Only the player's own casts matter here.
@@ -316,6 +401,20 @@ public sealed partial class RealmSession
         var spell = r.U32();
         var flags = r.U32();
         var time = r.U32();
+        try
+        {
+            var hits = went ? ReadHits(r) : [];
+            var (target, place) = ReadTargets(r);
+            Events.Enqueue(went
+                ? new UnitSpellWent(caster, spell, hits, place)
+                : new UnitCastBegan(caster, spell, time, target, Channel: false));
+        }
+        catch (EndOfStreamException)
+        {
+            // Without targets it's still worth showing the caster's side.
+            Events.Enqueue(went ? new UnitSpellWent(caster, spell, [], null) : new UnitCastBegan(caster, spell, time, 0, Channel: false));
+        }
+
         if (caster != Character.Guid)
         {
             return;

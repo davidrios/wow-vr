@@ -92,6 +92,9 @@ public partial class CreatureManager : Node
         public double NextFidget { get; set; }
         public bool Dead { get; set; }
         public bool Selected { get; set; }
+
+        /// <summary>It faces the player until then, on the creatures' clock.</summary>
+        public double FacePlayerUntil { get; set; }
     }
 
     private sealed record TileState(Node3D Node, TerrainHeights Heights, Node3D Container, List<Entry> Entries);
@@ -196,6 +199,33 @@ public partial class CreatureManager : Node
             entry.Dead = dead;
             entry.Selected = selected;
             entry.Node?.SetState(dead, selected);
+        }
+    }
+
+    /// <summary>Plays one of a server unit's own sounds where it stands, as its greeting or its death cry. Silent when it has none or isn't drawn.</summary>
+    public void PlayLiveSound(long guid, Func<CreatureSoundSet, int> pick)
+    {
+        if (_live.TryGetValue(guid, out var entry) && entry.Sounds is { } sounds && entry.Node is { } node)
+        {
+            _sounds.Play(pick(sounds), node.GlobalPosition);
+        }
+    }
+
+    /// <summary>A server unit plays a sequence once, as an NPC's wave, when it stands still and its model has it or a fallback.</summary>
+    public void PlayLiveOnce(long guid, int sequence, Func<int, int> fallback)
+    {
+        if (_live.TryGetValue(guid, out var entry) && entry.Node is { } node && !entry.Motion.At(_clock).Moving)
+        {
+            node.PlaySpellAnimation(sequence, hold: false, fallback);
+        }
+    }
+
+    /// <summary>The player is talking to it: it turns to them for that long, in seconds, when it's standing.</summary>
+    public void FacePlayer(long guid, double seconds)
+    {
+        if (_live.TryGetValue(guid, out var entry))
+        {
+            entry.FacePlayerUntil = _clock + seconds;
         }
     }
 
@@ -614,7 +644,16 @@ public partial class CreatureManager : Node
         var motion = entry.Motion.At(_clock);
         var height = HeightOf(entry, state, motion, delta);
         var position = WowCoords.TileLocal(motion.X, motion.Y, height, entry.Tile.X, entry.Tile.Y);
-        entry.Node!.Move(new Vector3(position.X, position.Y, position.Z), motion.Facing, motion.Moving, entry.Motion.MoveSpeed, entry.Distance, delta);
+
+        // Talking to the player, a unit standing still turns to them, and back to its own way after.
+        var facing = motion.Facing;
+        if (!motion.Moving && _clock < entry.FacePlayerUntil && _world is not null)
+        {
+            var (_, x, y, _) = _world.PlayerLocation;
+            facing = (float)Math.Atan2(y - motion.Y, x - motion.X);
+        }
+
+        entry.Node!.Move(new Vector3(position.X, position.Y, position.Z), facing, motion.Moving, entry.Motion.MoveSpeed, entry.Distance, delta);
         UpdateLight(entry, state, motion, new Vector3(position.X, position.Y, position.Z));
         entry.Node.FadeLight(delta);
     }

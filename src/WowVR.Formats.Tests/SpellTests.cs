@@ -87,6 +87,59 @@ public class ClientSpellTests(ClientFixture client) : IClassFixture<ClientFixtur
         Assert.Null(spells.TabOf(47985));
     }
 
+    /// <summary>
+    /// Fireball's look: while casting the caster readies a directed spell (51) with fire in both
+    /// hands and a sound, casts it (53), and the target reels (9); a missile flies between.
+    /// </summary>
+    [Fact]
+    public void FireballHasItsVisual()
+    {
+        var spells = SpellTable.Read(Source);
+
+        var visual = spells.VisualOf(133);
+
+        Assert.NotNull(visual);
+        Assert.Equal((51, 53, 9), (visual.Precast?.Animation, visual.Cast?.Animation, visual.Impact?.Animation));
+        Assert.Equal(702, visual.Precast!.Sound);
+        var hand = visual.Precast.Effects[(int)KitPlace.RightHand];
+        Assert.NotNull(hand);
+        Assert.EndsWith(".m2", hand, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(Source.Read(hand));
+        Assert.NotNull(visual.Missile);
+        Assert.NotNull(Source.Read(visual.Missile));
+        Assert.Equal((52, 31), (spells.AnimationFallback(51), spells.AnimationFallback(52)));
+
+        // Fireball flies at 24 yards a second.
+        Assert.Equal(24f, spells.Get(133)!.Speed);
+    }
+
+    /// <summary>Rain of Fire's and Blizzard's areas rain their impact models, five a second, from SpellVisualKitAreaModel.</summary>
+    [Fact]
+    public void AreaSpellsRainTheirModels()
+    {
+        var spells = SpellTable.Read(Source);
+
+        var fire = spells.AreaRainOf(spells.VisualOf(47820)!.PersistentArea!);
+        var ice = spells.AreaRainOf(spells.VisualOf(10)!.PersistentArea!);
+
+        Assert.Equal((@"Spells\RainOfFire_Impact_Base.m2", 5f), (fire?.Model, fire?.PerSecond));
+        Assert.Equal((@"Spells\Blizzard_Impact_Base.m2", 5f), (ice?.Model, ice?.PerSecond));
+        Assert.NotNull(Source.Read(fire!.Model));
+        Assert.Null(spells.AreaRainOf(spells.VisualOf(26573)!.PersistentArea!));
+    }
+
+    /// <summary>Rain of Fire's meteor trails fire for the 0.8 s it falls, its glow going out at 0.57 s, rather than all its clip.</summary>
+    [Fact]
+    public void EmittersSwitchOffAsTheirAnimationSays()
+    {
+        const string path = @"Spells\RainOfFire_Impact_Base.m2";
+        var model = Formats.Models.M2SkinnedModel.Parse(Source.Read(path)!, Source.Read(Formats.Models.M2Model.SkinPath(path))!, s => s.Id == 0, s => Source.Read(s.AnimPath(path)));
+
+        Assert.Equal(4, model.Emitters.Count);
+        Assert.All(model.Emitters, e => Assert.True(e.OnAt(0.1) && !e.OnAt(1.0)));
+        Assert.Contains(model.Emitters, e => e.Texture.Contains("RED_GLOW3", StringComparison.OrdinalIgnoreCase) && !e.OnAt(0.6));
+    }
+
     /// <summary>Items show their icon in bags: a one-handed sword's display names one that's in the client.</summary>
     [Fact]
     public void ItemsHaveIcons()

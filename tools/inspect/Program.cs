@@ -53,6 +53,12 @@ try
             return ExportBlp(source, file, output, 0);
         case ["blp", var file, var output, var mip]:
             return ExportBlp(source, file, output, int.Parse(mip));
+        case ["spellvisual", var spellId]:
+            return PrintSpellVisual(source, int.Parse(spellId));
+        case ["spellmodel", var text]:
+            return FindSpellModel(source, text);
+        case ["dbcstrings", var file, .. var fields]:
+            return PrintDbcStrings(source, file, [.. fields.Select(int.Parse)]);
         case ["dbc", var file]:
             return PrintDbc(source, file, 50);
         case ["dbc", var file, var maxRows]:
@@ -246,8 +252,8 @@ static int PrintEmitters(MpqAssetSource source, string file)
     foreach (var e in moving.Emitters)
     {
         var path = moving.Clips.Count > 0 ? M2BoneBake.EmitterPath(moving, moving.Clips[0], e) : null;
-        Console.Write(path is null ? "still: " : $"moves {path.Points.Max(q => System.Numerics.Vector3.Distance(q, path.Points[0])):F2} over {path.Seconds:F1} s from {path.Points[0]}: ");
-        Console.WriteLine($"bone {e.Bone} at {e.Position}: rate {e.Rate:F2}, life {e.Lifespan:F2} +-{e.LifespanVariation:F2}, speed {e.Speed:F2}, area {e.AreaLength:F2}x{e.AreaWidth:F2}, sizes {string.Join('/', e.Sizes.Select(v => v.ToString("F2")))}, blend {e.Blend}, colors {string.Join(" ", e.Colors.Select(c => $"{c.X * 255:F0},{c.Y * 255:F0},{c.Z * 255:F0},{c.W:F2}"))}, {e.Texture}");
+        Console.Write(path is null ? "still: " : $"moves {path.Points.Max(q => System.Numerics.Vector3.Distance(q, path.Points[0])):F2} over {path.Seconds:F1} s from {path.Points[0]}, height {string.Join(" ", new[] { 0, 0.2, 0.4, 0.6, 0.8, 1.2, 2.0, 3.0 }.Where(t => t < path.Seconds).Select(t => $"{t:F1}s:{path.Points[(int)(t / path.Seconds * path.Points.Length)].Y:F1}"))}: ");
+        Console.WriteLine($"bone {e.Bone} at {e.Position}: rate {e.Rate:F2}, life {e.Lifespan:F2} +-{e.LifespanVariation:F2}, speed {e.Speed:F2}, area {e.AreaLength:F2}x{e.AreaWidth:F2}, sizes {string.Join('/', e.Sizes.Select(v => v.ToString("F2")))}, blend {e.Blend}, colors {string.Join(" ", e.Colors.Select(c => $"{c.X * 255:F0},{c.Y * 255:F0},{c.Z * 255:F0},{c.W:F2}"))}, {e.Texture}, {(e.StartsOn ? "on" : "off")}{string.Concat(e.Switches.Select(s => $", {(s.On ? "on" : "off")} at {s.Seconds:F2} s"))}{(e.SwitchLoopSeconds > 0 ? $", looping every {e.SwitchLoopSeconds:F3} s" : "")}");
     }
 
     Console.WriteLine($"{model.Emitters.Count} emitters");
@@ -298,6 +304,104 @@ static int PrintAnims(MpqAssetSource source, string file)
         var e = batch.Effect;
         Console.WriteLine($"  color {string.Join(' ', e?.Color?.Values.Take(6) ?? [])} | alpha {string.Join(' ', e?.ColorAlpha?.Values.Take(6) ?? [])} | weight {string.Join(' ', e?.Weight?.Values.Take(6) ?? [])}");
         Console.WriteLine($"batch geoset {batch.Geoset} blend {batch.Blend} {batch.Texture}: animated {e?.Animated}, uv0 {e?.Uv0Animation?.Changes}, uv1 {e?.Uv1Animation?.Changes}, color {e?.Color?.Changes} alpha {e?.ColorAlpha?.Changes} weight {e?.Weight?.Changes}");
+    }
+
+    return 0;
+}
+
+// A spell's look: each kit's animations, effect models (with whether the client has them), sound and procs.
+static int PrintSpellVisual(MpqAssetSource source, int spellId)
+{
+    var spells = SpellTable.Read(source);
+    if (spells.Get(spellId) is not { } spell)
+    {
+        Console.Error.WriteLine($"No spell {spellId}");
+        return 1;
+    }
+
+    Console.WriteLine($"{spell.FullName} ({spell.Id}): visual {spell.Visual}, speed {spell.Speed}, radius {spell.Radius}, range {spell.Range}, aim {spell.Aim}");
+    if (spells.VisualOf(spellId) is not { } visual)
+    {
+        return 0;
+    }
+
+    Console.WriteLine($"  missile {visual.Missile ?? "-"}{(visual.Missile is { } m && source.Read(m) is null ? " (missing)" : "")}, sound {visual.MissileSound}");
+    foreach (var (name, kit) in new[]
+    {
+        ("precast", visual.Precast), ("cast", visual.Cast), ("impact", visual.Impact), ("channel", visual.Channel),
+        ("target impact", visual.TargetImpact), ("instant area", visual.InstantArea), ("impact area", visual.ImpactArea), ("persistent area", visual.PersistentArea),
+    })
+    {
+        if (kit is null)
+        {
+            continue;
+        }
+
+        Console.WriteLine($"  {name}: animations {kit.StartAnimation} then {kit.Animation}, sound {kit.Sound}, procs {string.Join(' ', kit.Procs)}");
+        for (var place = 0; place < kit.Effects.Length; place++)
+        {
+            if (kit.Effects[place] is { } effect)
+            {
+                Console.WriteLine($"    {(KitPlace)place}: {effect}, size {kit.EffectSizes[place]}{(source.Read(effect) is null ? " (missing)" : "")}");
+            }
+        }
+    }
+
+    return 0;
+}
+
+// The spells whose visuals use a model whose path holds some text, with which kit and place.
+static int FindSpellModel(MpqAssetSource source, string text)
+{
+    var spells = SpellTable.Read(source);
+    var shown = 0;
+    for (var id = 0; id < 80000 && shown < 60; id++)
+    {
+        if (spells.VisualOf(id) is not { } visual || spells.Get(id) is not { } spell)
+        {
+            continue;
+        }
+
+        if (visual.Missile?.Contains(text, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            Console.WriteLine($"{spell.FullName} ({id}), visual {spell.Visual}: missile {visual.Missile}");
+            shown++;
+        }
+
+        foreach (var (name, kit) in new[]
+        {
+            ("precast", visual.Precast), ("cast", visual.Cast), ("impact", visual.Impact), ("channel", visual.Channel),
+            ("target impact", visual.TargetImpact), ("instant area", visual.InstantArea), ("impact area", visual.ImpactArea), ("persistent area", visual.PersistentArea),
+        })
+        {
+            for (var place = 0; kit is not null && place < kit.Effects.Length; place++)
+            {
+                if (kit.Effects[place]?.Contains(text, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    Console.WriteLine($"{spell.FullName} ({id}), visual {spell.Visual}: {name} {(KitPlace)place} {kit.Effects[place]}, procs {string.Join(' ', kit.Procs)}");
+                    shown++;
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+// Each row's id, then the given fields read as strings.
+static int PrintDbcStrings(MpqAssetSource source, string file, int[] fields)
+{
+    var data = source.Read(file);
+    if (data is null)
+    {
+        Console.Error.WriteLine($"Not in the client: {file}");
+        return 1;
+    }
+
+    using var dbc = DbcFile.Open(data);
+    for (var row = 0; row < dbc.RecordCount; row++)
+    {
+        Console.WriteLine($"{dbc.GetUInt32(row, 0)} {string.Join(" | ", fields.Select(f => dbc.GetString(row, f)))}");
     }
 
     return 0;

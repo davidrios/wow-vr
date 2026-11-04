@@ -847,6 +847,18 @@ public class ClientCreatureTests(ClientFixture client) : IClassFixture<ClientFix
         Assert.Equal(0, table.ItemDisplayOf(int.MaxValue));
     }
 
+    /// <summary>NPCs greet and say goodbye through NPCSounds: many human NPC displays have both.</summary>
+    [Fact]
+    public void NpcsHaveGreetings()
+    {
+        var table = CreatureDisplayTable.Read(Source);
+
+        var sounds = table.DisplaysOfModel(@"Character\Human").Take(400).Select(d => table.Resolve(d)?.Sounds).OfType<CreatureSoundSet>().ToList();
+
+        Assert.Contains(sounds, s => s.Greeting > 0 && s.Farewell > 0);
+        Assert.Contains(sounds, s => s.Attack > 0 && s.Wound > 0 && s.Death > 0);
+    }
+
     /// <summary>
     /// Another player's visible items are item ids: Item.dbc dresses them, saying a robe is a robe.
     /// 1899 is a one-handed sword, 6096 an apprentice's shirt and 56 an apprentice's robe.

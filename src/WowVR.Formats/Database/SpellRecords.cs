@@ -48,6 +48,12 @@ public sealed record SpellRecord(
     /// <summary>The client never shows it in the spellbook.</summary>
     public bool IsHidden => (Attributes & 0x80) != 0;
 
+    /// <summary>How fast its missile flies, in yards a second; 0 when it lands at once.</summary>
+    public float Speed { get; init; }
+
+    /// <summary>Its SpellVisual row, for what casting it looks and sounds like; 0 for none.</summary>
+    public int Visual { get; init; }
+
     /// <summary>The shapeshift forms it can be cast in, as a mask of 1 &lt;&lt; (form - 1).</summary>
     public uint Forms { get; init; }
 
@@ -66,6 +72,68 @@ public sealed record SpellRecord(
     /// <summary>"Fireball" or "Fireball (Rank 3)".</summary>
     public string FullName => Rank.Length > 0 ? $"{Name} ({Rank})" : Name;
 }
+
+/// <summary>Where on a unit a kit's effect model goes, in SpellVisualKit's order.</summary>
+public enum KitPlace
+{
+    Head,
+    Chest,
+    Base,
+    LeftHand,
+    RightHand,
+    Breath,
+    LeftWeapon,
+    RightWeapon,
+    Special1,
+    Special2,
+    Special3,
+    World,
+}
+
+/// <summary>
+/// One SpellVisualKit row: what a unit does at one moment of a spell. An animation (after a start
+/// one, or -1 for none), effect models by <see cref="KitPlace"/> as <c>.m2</c> paths or null, and a sound.
+/// </summary>
+public sealed record SpellKit(int StartAnimation, int Animation, string?[] Effects, int Sound)
+{
+    /// <summary>The client's own procedural effects, by kind (-1 for none). Kind 9 rains area models: see <see cref="SpellTable.AreaRainOf"/>.</summary>
+    public int[] Procs { get; init; } = [];
+
+    /// <summary>Each proc's first and second parameters, SpellVisualKit's 21 to 24 and 25 to 28.</summary>
+    public float[] ProcFirst { get; init; } = [];
+
+    public float[] ProcSecond { get; init; } = [];
+
+    /// <summary>Each effect's size as SpellVisualEffectName gives it, which an area's radius scales from.</summary>
+    public float[] EffectSizes { get; init; } = [];
+
+    public bool IsEmpty => StartAnimation < 0 && Animation <= 0 && Sound == 0 && Effects.All(e => e is null) && Procs.All(p => p < 0);
+}
+
+/// <summary>
+/// A spell's look, from SpellVisual.dbc: the kits for the caster while it casts, when it casts,
+/// and while it channels, and for what it hits; and the missile flying between, if any.
+/// </summary>
+public sealed record SpellVisual(SpellKit? Precast, SpellKit? Cast, SpellKit? Impact, SpellKit? Channel, string? Missile, int MissileSound)
+{
+    /// <summary>On each unit hit, when the impact kit isn't for them.</summary>
+    public SpellKit? TargetImpact { get; init; }
+
+    /// <summary>Where it lands, once, as a ground spell's tick.</summary>
+    public SpellKit? InstantArea { get; init; }
+
+    /// <summary>Where it lands, once, when it's cast.</summary>
+    public SpellKit? ImpactArea { get; init; }
+
+    /// <summary>On the ground for as long as the area lasts, as Consecration's glow.</summary>
+    public SpellKit? PersistentArea { get; init; }
+}
+
+/// <summary>
+/// A kit's rain of area models, as Rain of Fire's and Blizzard's: so many a second, each dropped
+/// at a random spot within the area onto the ground below, playing once.
+/// </summary>
+public sealed record AreaRain(string Model, float PerSecond);
 
 /// <summary>A spellbook tab, as a skill line: a class's trees each get one, and everything else is General.</summary>
 public sealed record SpellTab(int SkillLine, string Name, string? IconPath);
@@ -93,6 +161,8 @@ public sealed class SpellTable
     private const int FormsField = 12;
     private const int Attributes2Field = 6;
     private const int RangeField = 46;
+    private const int VisualField = 131;
+    private const int SpeedField = 47;
     private const int RadiusField = 92;
 
     /// <summary>SkillLine.dbc's columns: its category, then its name.</summary>
@@ -110,6 +180,40 @@ public sealed class SpellTable
     private readonly Dictionary<int, SpellTab> _classTabs = [];
     private readonly Dictionary<int, int> _skillOfSpell = [];
     private readonly HashSet<int> _bookSpells = [];
+    private readonly Dictionary<int, SpellVisual> _visuals = [];
+    private readonly Dictionary<int, int> _animationFallbacks = [];
+
+    private readonly List<string> _areaModels = [];
+
+    /// <summary>The procedural effect that rains area models.</summary>
+    public const int AreaRainProc = 9;
+
+    /// <summary>
+    /// A kit's rain, if one of its procs is <see cref="AreaRainProc"/>: its first parameter, rounded,
+    /// picks SpellVisualKitAreaModel's row by position (the first row when it's out of range), and its
+    /// second is how many a second at full detail.
+    /// </summary>
+    public AreaRain? AreaRainOf(SpellKit kit)
+    {
+        var proc = Array.IndexOf(kit.Procs, AreaRainProc);
+        if (proc < 0 || _areaModels.Count == 0)
+        {
+            return null;
+        }
+
+        var row = (int)MathF.Round(kit.ProcFirst.ElementAtOrDefault(proc));
+        return new AreaRain(_areaModels[row >= 0 && row < _areaModels.Count ? row : 0], kit.ProcSecond.ElementAtOrDefault(proc));
+    }
+
+    /// <summary>What a spell looks like being cast, or null for one with no visual.</summary>
+    public SpellVisual? VisualOf(int spell) =>
+        _spells.TryGetValue(spell, out var record) && _visuals.TryGetValue(record.Visual, out var visual) ? visual : null;
+
+    /// <summary>
+    /// The animation a model without this one plays instead, from AnimationData's fallback column,
+    /// as ReadySpellDirected (51) falls back to ReadySpellOmni (52) and that to SpellPrecast (31). 0 at the end.
+    /// </summary>
+    public int AnimationFallback(int animation) => _animationFallbacks.GetValueOrDefault(animation);
 
     private SpellTable()
     {
@@ -175,6 +279,8 @@ public sealed class SpellTable
                     Attributes2 = dbc.GetUInt32(i, Attributes2Field),
                     Radius = Enumerable.Range(0, 3).Select(e => radii.GetValueOrDefault(dbc.GetInt32(i, RadiusField + e))).FirstOrDefault(r => r > 0),
                     Range = ranges.GetValueOrDefault(dbc.GetInt32(i, RangeField)),
+                    Visual = dbc.GetInt32(i, VisualField),
+                    Speed = dbc.GetSingle(i, SpeedField),
                 };
             }
 
@@ -220,8 +326,89 @@ public sealed class SpellTable
             return null;
         });
 
+        ReadVisuals(source, table);
         return table;
     }
+
+    /// <summary>
+    /// SpellVisualEffectName (an id, a name, then the model file), SpellVisualKit (an id, the start
+    /// and main animations, twelve effects by <see cref="KitPlace"/>, then the sound), SpellVisual (an id,
+    /// then the precast, cast, impact, state, state-done and channel kits, a missile flag, its model and
+    /// its sound at 11), and AnimationData (an id, a name, flags, then the fallback at 5).
+    /// </summary>
+    private static void ReadVisuals(IAssetSource source, SpellTable table)
+    {
+        var models = DbcTables.Read(source, @"DBFilesClient\SpellVisualEffectName.dbc", dbc =>
+            Enumerable.Range(0, dbc.RecordCount).ToDictionary(i => dbc.GetInt32(i, 0), i => (Path: ModelPath(dbc.GetString(i, 2)), Size: dbc.GetSingle(i, 3))));
+        string? Model(int id) => models.TryGetValue(id, out var m) ? m.Path : null;
+        float Size(int id) => models.TryGetValue(id, out var m) && m.Size > 0 ? m.Size : 1f;
+
+        // An id, the start and main animations, twelve effects, the sound, a shake, then four procs.
+        var kits = DbcTables.Read(source, @"DBFilesClient\SpellVisualKit.dbc", dbc =>
+            Enumerable.Range(0, dbc.RecordCount).ToDictionary(
+                i => dbc.GetInt32(i, 0),
+                i => new SpellKit(
+                    dbc.GetInt32(i, 1),
+                    dbc.GetInt32(i, 2),
+                    [.. Enumerable.Range(0, 12).Select(e => Model(dbc.GetInt32(i, 3 + e)))],
+                    dbc.GetInt32(i, 15))
+                {
+                    Procs = [.. Enumerable.Range(0, 4).Select(p => dbc.GetInt32(i, 17 + p))],
+                    ProcFirst = [.. Enumerable.Range(0, 4).Select(p => dbc.GetSingle(i, 21 + p))],
+                    ProcSecond = [.. Enumerable.Range(0, 4).Select(p => dbc.GetSingle(i, 25 + p))],
+                    EffectSizes = [.. Enumerable.Range(0, 12).Select(e => Size(dbc.GetInt32(i, 3 + e)))],
+                }));
+        SpellKit? Kit(int id) => kits.TryGetValue(id, out var kit) && !kit.IsEmpty ? kit : null;
+
+        DbcTables.Read<object?>(source, @"DBFilesClient\SpellVisual.dbc", dbc =>
+        {
+            for (var i = 0; i < dbc.RecordCount; i++)
+            {
+                table._visuals[dbc.GetInt32(i, 0)] = new SpellVisual(
+                    Kit(dbc.GetInt32(i, 1)),
+                    Kit(dbc.GetInt32(i, 2)),
+                    Kit(dbc.GetInt32(i, 3)),
+                    Kit(dbc.GetInt32(i, 6)),
+                    dbc.GetInt32(i, 7) != 0 ? Model(dbc.GetInt32(i, 8)) : null,
+                    dbc.GetInt32(i, 11))
+                {
+                    TargetImpact = Kit(dbc.GetInt32(i, 15)),
+                    InstantArea = Kit(dbc.GetInt32(i, 23)),
+                    ImpactArea = Kit(dbc.GetInt32(i, 24)),
+                    PersistentArea = Kit(dbc.GetInt32(i, 25)),
+                };
+            }
+
+            return null;
+        });
+
+        // SpellVisualKitAreaModel: an id, the model, and its place in the list; rows are picked by position.
+        DbcTables.Read<object?>(source, @"DBFilesClient\SpellVisualKitAreaModel.dbc", dbc =>
+        {
+            for (var i = 0; i < dbc.RecordCount; i++)
+            {
+                table._areaModels.Add(ModelPath(dbc.GetString(i, 1)) ?? "");
+            }
+
+            return null;
+        });
+
+        DbcTables.Read<object?>(source, @"DBFilesClient\AnimationData.dbc", dbc =>
+        {
+            for (var i = 0; i < dbc.RecordCount; i++)
+            {
+                table._animationFallbacks[dbc.GetInt32(i, 0)] = dbc.GetInt32(i, 5);
+            }
+
+            return null;
+        });
+    }
+
+    /// <summary>The client names models <c>.mdx</c>, as in older versions; the files are <c>.m2</c>.</summary>
+    private static string? ModelPath(string name) =>
+        name.Length == 0 ? null
+        : name.EndsWith(".mdx", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase) ? name[..^4] + ".m2"
+        : name;
 
     /// <summary>
     /// What a spell aims at, from its effects' first implicit targets: the ones AzerothCore's

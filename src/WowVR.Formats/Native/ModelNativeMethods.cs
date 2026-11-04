@@ -240,6 +240,10 @@ internal static unsafe partial class ModelNativeMethods
     [LibraryImport(Library, EntryPoint = "wa_m2_emitter")]
     internal static partial WaStatus M2Emitter(nint model, uint index, out WaM2Emitter emitter);
 
+    /// <summary>An emitter's on and off keys in a sequence, up to capacity; returns how many there are.</summary>
+    [LibraryImport(Library, EntryPoint = "wa_m2_emitter_switches")]
+    internal static unsafe partial uint M2EmitterSwitches(nint model, uint emitter, uint sequence, uint* times, byte* values, uint capacity, int* global);
+
     [LibraryImport(Library, EntryPoint = "wa_m2_attachment_count")]
     internal static partial uint M2AttachmentCount(nint model);
 

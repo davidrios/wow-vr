@@ -211,6 +211,13 @@ public partial class TileManager : Node3D
     }
 
     /// <summary>A Godot world position in this scene's local space.</summary>
+    /// <summary>A place in WoW coordinates, in the scene's.</summary>
+    public Vector3 LocalPosition(System.Numerics.Vector3 wow)
+    {
+        var godot = WowCoords.ToGodot(wow);
+        return WorldToLocal(godot.X, godot.Y, godot.Z);
+    }
+
     public Vector3 WorldToLocal(double x, double y, double z) =>
         new((float)(x - _originX), (float)y, (float)(z - _originZ));
 

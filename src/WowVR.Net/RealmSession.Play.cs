@@ -1511,7 +1511,18 @@ public sealed partial class RealmSession
             obj.Field(UpdateFields.PlayerXp),
             obj.Field(UpdateFields.PlayerNextLevelXp),
             obj.Field(UpdateFields.PlayerCoinage),
-            obj.Field(UpdateFields.PlayerFlags));
+            obj.Field(UpdateFields.PlayerFlags))
+        {
+            Sheet = CharacterSheet.From(obj),
+            Look = PlayerLook.From(obj),
+        };
+
+        // Putting something on or taking it off changes the body, as another player's does.
+        if (_self?.Look is { } before && !stats.Look.SameAs(before))
+        {
+            Events.Enqueue(new PlayerLookChanged(obj.Guid, stats.Look));
+        }
+
         _self = stats;
         Events.Enqueue(new SelfChanged(stats));
 

@@ -100,9 +100,80 @@ public enum PowerType : byte
     RunicPower,
 }
 
+/// <summary>
+/// The player's character sheet, from their own update fields, as the game's character window
+/// shows it. The five stats are strength, agility, stamina, intellect and spirit, with what gear
+/// and auras add and take away; resistances start with armor.
+/// </summary>
+public sealed record CharacterSheet(
+    int[] Stats,
+    int[] StatBonus,
+    int[] StatMalus,
+    int[] Resistances,
+    float MinDamage,
+    float MaxDamage,
+    uint AttackSpeedMs,
+    int AttackPower,
+    int RangedAttackPower,
+    float MinRangedDamage,
+    float MaxRangedDamage,
+    float Crit,
+    float RangedCrit,
+    float SpellCrit,
+    float Dodge,
+    float Parry,
+    float Block,
+    int SpellPower,
+    int Healing)
+{
+    public static CharacterSheet From(TrackedObject obj)
+    {
+        float F(int index) => BitConverter.UInt32BitsToSingle(obj.Field(index));
+        int I(int index) => (int)obj.Field(index);
+        int[] Run(int first, int count) => [.. Enumerable.Range(first, count).Select(I)];
+
+        // Attack power's mods are two shorts: what adds to it, then what takes from it.
+        int Power(int baseIndex)
+        {
+            var mods = obj.Field(baseIndex + 1);
+            return I(baseIndex) + (short)(mods & 0xFFFF) - (short)(mods >> 16);
+        }
+
+        // Spells by school 1 to 6, holy to arcane; the sheet shows the best.
+        var spellCrit = Enumerable.Range(1, 6).Max(s => F(UpdateFields.PlayerSpellCrit + s));
+        var spellPower = Enumerable.Range(1, 6).Max(s => I(UpdateFields.PlayerDamageDonePos + s) - I(UpdateFields.PlayerDamageDoneNeg + s));
+        return new CharacterSheet(
+            Run(UpdateFields.UnitStat0, 5),
+            Run(UpdateFields.UnitPosStat0, 5),
+            Run(UpdateFields.UnitNegStat0, 5),
+            Run(UpdateFields.UnitResistances, 7),
+            F(UpdateFields.UnitMinDamage),
+            F(UpdateFields.UnitMaxDamage),
+            obj.Field(UpdateFields.UnitBaseAttackTime),
+            Power(UpdateFields.UnitAttackPower),
+            Power(UpdateFields.UnitRangedAttackPower),
+            F(UpdateFields.UnitMinRangedDamage),
+            F(UpdateFields.UnitMaxRangedDamage),
+            F(UpdateFields.PlayerCrit),
+            F(UpdateFields.PlayerRangedCrit),
+            spellCrit,
+            F(UpdateFields.PlayerDodge),
+            F(UpdateFields.PlayerParry),
+            F(UpdateFields.PlayerBlock),
+            spellPower,
+            I(UpdateFields.PlayerHealingDonePos));
+    }
+}
+
 /// <summary>The player's own state, beyond what any unit has.</summary>
 public sealed record PlayerStats(UnitStats Unit, uint Xp, uint NextLevelXp, uint Money, uint PlayerFlags)
 {
+    /// <summary>The character window's numbers.</summary>
+    public CharacterSheet? Sheet { get; init; }
+
+    /// <summary>How the character looks now, with what they wear.</summary>
+    public PlayerLook? Look { get; init; }
+
     /// <summary>Released and walking back as a spirit.</summary>
     public bool IsGhost => (PlayerFlags & 0x10) != 0;
 
@@ -261,6 +332,20 @@ public sealed record CastEnded(uint Spell, bool Succeeded) : SessionEvent;
 
 /// <summary>A spell of the player's went off, which starts its cooldown and the global one.</summary>
 public sealed record SpellWent(uint Spell) : SessionEvent;
+
+/// <summary>Any unit, the player too, began casting or channeling at a target (0 for none), for its animations and sounds.</summary>
+public sealed record UnitCastBegan(ulong Caster, uint Spell, uint DurationMs, ulong Target, bool Channel) : SessionEvent;
+
+/// <summary>Any unit's spell went off, hitting these units, or landing at a place.</summary>
+public sealed record UnitSpellWent(ulong Caster, uint Spell, IReadOnlyList<ulong> Hits, Vector3? Place) : SessionEvent;
+
+/// <summary>Any unit stopped casting or channeling without its spell going off, or its channel ran out.</summary>
+public sealed record UnitCastStopped(ulong Caster, uint Spell) : SessionEvent;
+
+/// <summary>A spell's lasting area on the ground, as Consecration or Blizzard, at a place in WoW coordinates, until it goes.</summary>
+public sealed record AreaEffectAppeared(ulong Guid, ulong Caster, uint Spell, float Radius, Vector3 Position) : SessionEvent;
+
+public sealed record AreaEffectGone(ulong Guid) : SessionEvent;
 
 /// <summary>The server set a spell's cooldown, in milliseconds from now, or cleared it with 0.</summary>
 public sealed record CooldownSet(uint Spell, uint Milliseconds) : SessionEvent;

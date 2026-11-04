@@ -316,6 +316,9 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
             case Key.P when Hud is not null:
                 Hud.ToggleSpellbook();
                 break;
+            case Key.C when Hud is not null:
+                Hud.ToggleCharacter();
+                break;
             case (>= Key.Key0 and <= Key.Key9) or Key.Minus or Key.Equal when Hud is not null:
                 Hud.PressAction(key.PhysicalKeycode switch
                 {

@@ -156,6 +156,11 @@ public partial class CreatureNode : Node3D
     /// </summary>
     public void Animate(double delta, double interval)
     {
+        if (_casting && (_castLeft -= delta) <= 0)
+        {
+            StopSpellAnimation();
+        }
+
         _sinceAnimated += delta;
         if (_sinceAnimated >= interval)
         {
@@ -232,6 +237,12 @@ public partial class CreatureNode : Node3D
     /// <summary>The unit's height, for picking it and placing what floats over it.</summary>
     public float Height => _asset.Skeleton.Bounds.End.Y * _asset.Scale * Scale.Y;
 
+    /// <summary>Whether its selection ring shows.</summary>
+    public bool RingShown => _ring is { Visible: true };
+
+    /// <summary>The way it faces now, as a WoW orientation, smoothed as it turns.</summary>
+    public float Facing => _yaw - Mathf.Pi / 2;
+
     /// <summary>How wide it is, for picking it.</summary>
     public float Radius => Mathf.Max(Mathf.Max(_asset.Skeleton.Bounds.Size.X, _asset.Skeleton.Bounds.Size.Z) * 0.5f * _asset.Scale * Scale.X, 0.4f);
 
@@ -292,6 +303,7 @@ public partial class CreatureNode : Node3D
 
         _dead = dead;
         _oneShot = false;
+        _casting = false;
         if (dead)
         {
             if (ClipFor(M2SequenceIds.Death) is { } death)
@@ -308,6 +320,95 @@ public partial class CreatureNode : Node3D
             _moving = false;
             PlayNextIdle();
         }
+    }
+
+    private bool _casting;
+    private bool _castLoops;
+    private double _castLeft;
+
+    /// <summary>
+    /// Plays a spell's animation, as a kit asks: held, looping, until <see cref="StopSpellAnimation"/>
+    /// while it casts, or once. A model without it plays the first of its fallbacks it has; one with
+    /// none of them stays as it was. False then.
+    /// </summary>
+    public bool PlaySpellAnimation(int sequence, bool hold, Func<int, int> fallback)
+    {
+        // A moment's animation doesn't break a held cast or channel, as another spell going off during it.
+        if (_dead || (!hold && _casting && _castLoops))
+        {
+            return false;
+        }
+
+        // Up a few links of the fallback chain, stopping before standing.
+        string? clip = null;
+        for (var tries = 0; sequence > 0 && tries < 4 && (clip = ClipFor(sequence)) is null; tries++)
+        {
+            sequence = fallback(sequence);
+        }
+
+        if (clip is null || sequence <= 0)
+        {
+            return false;
+        }
+
+        _casting = true;
+        _castLoops = hold;
+
+        // A once that's a looping clip, as some cast kits use, plays for about a beat.
+        _castLeft = hold ? double.PositiveInfinity : M2SequenceIds.PlaysOnce(sequence) ? 3 : 1.2;
+        _player.Play(clip, BlendSeconds);
+        _clip = clip;
+        return true;
+    }
+
+    /// <summary>The cast ended: back to standing or walking.</summary>
+    public void StopSpellAnimation()
+    {
+        if (!_casting)
+        {
+            return;
+        }
+
+        _casting = false;
+        _moving = false;
+        _clip = "";
+        PlayNextIdle();
+    }
+
+    /// <summary>
+    /// Hangs a spell effect on the first of these attachment points the model has, or at its feet
+    /// when it has none. The caller removes it when its moment is over.
+    /// </summary>
+    public Node3D AttachEffect(EffectAsset effect, IReadOnlyList<int> attachments)
+    {
+        Node3D parent = this;
+        var offset = Vector3.Zero;
+        foreach (var id in attachments)
+        {
+            if (_asset.Attachments.TryGetValue(id, out var point))
+            {
+                var bone = new BoneAttachment3D { BoneName = point.Bone };
+                Skeleton.AddChild(bone);
+                parent = bone;
+                offset = point.Offset;
+                break;
+            }
+        }
+
+        var holder = new Node3D { Name = "SpellEffect", Position = offset };
+        parent.AddChild(holder);
+        if (effect.Mesh is { } mesh)
+        {
+            holder.AddChild(new MeshInstance3D { Mesh = mesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+        }
+
+        foreach (var particle in effect.Particles)
+        {
+            holder.AddChild(particle.NewNode(particle.Position, fresh: true));
+        }
+
+        // Removing the effect takes the bone attachment made for it too.
+        return parent is BoneAttachment3D ? parent : holder;
     }
 
     /// <summary>Swings once, then goes back to what it was doing.</summary>
@@ -345,7 +446,7 @@ public partial class CreatureNode : Node3D
     public void PlayMotion(int sequence, float speed, float? rateOverride = null)
     {
         _motionChosen = true;
-        if (_dead || _oneShot)
+        if (_dead || _oneShot || _casting)
         {
             return;
         }
@@ -425,6 +526,16 @@ public partial class CreatureNode : Node3D
             return;
         }
 
+        if (_casting)
+        {
+            if (!_castLoops)
+            {
+                StopSpellAnimation();
+            }
+
+            return;
+        }
+
         if (_dead)
         {
             // Lies still, on the last pose of dying, or the model's own lying-dead loop.
@@ -480,7 +591,7 @@ public partial class CreatureNode : Node3D
             _name.Visible = !_name.Visible;
         }
 
-        if (_dead || _oneShot || _motionChosen)
+        if (_dead || _oneShot || _motionChosen || _casting)
         {
             return;
         }

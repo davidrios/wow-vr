@@ -67,6 +67,25 @@ public class PlayTests
     [InlineData(187, "Unknown")]
     public void CastFailuresReadAsSentences(byte reason, string text) => Assert.Equal(text, CastResults.Describe(reason));
 
+    /// <summary>A go as AzerothCore writes it: two hits, a reflected miss, then a unit and a place.</summary>
+    [Fact]
+    public void SpellGoesListTheirHitsAndTargets()
+    {
+        var w = new PacketWriter()
+            .U8(2).U64(0x10).U64(0x20)
+            .U8(1).U64(0x30).U8(11).U8(0)
+            .U32(0x2 | 0x40).Packed(0x10).Packed(0).F32(1).F32(2).F32(3);
+        var r = new PacketReader(w.ToArray());
+
+        var hits = RealmSession.ReadHits(r);
+        var (unit, place) = RealmSession.ReadTargets(r);
+
+        Assert.Equal([0x10ul, 0x20ul], hits);
+        Assert.Equal(0x10ul, unit);
+        Assert.Equal(new Vector3(1, 2, 3), place);
+        Assert.Equal(0, r.Remaining);
+    }
+
     [Fact]
     public void QuietFailuresSayNothing() => Assert.Null(CastResults.Describe(CastResults.DontReport));
 

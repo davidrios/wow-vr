@@ -33,11 +33,40 @@ public static class M2SequenceIds
     public const int Close = 148;
     public const int Closed = 149;
 
+    /// <summary>Spells and talk, as SpellVisualKit and the NPC greeting ask for them, in AnimationData's numbering.</summary>
+    public const int CombatWound = 9;
+    public const int SpellPrecast = 31;
+    public const int SpellCast = 32;
+    public const int SpellCastArea = 33;
+    public const int NpcWelcome = 34;
+    public const int NpcGoodbye = 35;
+    public const int ReadySpellDirected = 51;
+    public const int ReadySpellOmni = 52;
+    public const int SpellCastDirected = 53;
+    public const int SpellCastOmni = 54;
+    public const int BattleRoar = 55;
+    public const int ReadyAbility = 56;
+    public const int Special1H = 57;
+    public const int Special2H = 58;
+    public const int ShieldBash = 59;
+    public const int EmoteTalk = 60;
+    public const int ChannelCastDirected = 124;
+    public const int ChannelCastOmni = 125;
+
     /// <summary>Played once rather than looped.</summary>
-    public static bool PlaysOnce(int id) => id is Stand or Death or AttackUnarmed or Attack1H or Attack2H or JumpStart or JumpEnd or Open or Close;
+    public static bool PlaysOnce(int id) => id is Stand or Death or AttackUnarmed or Attack1H or Attack2H or JumpStart or JumpEnd or Open or Close
+        or CombatWound or SpellCast or SpellCastArea or NpcWelcome or NpcGoodbye or SpellCastDirected or SpellCastOmni or BattleRoar
+        or Special1H or Special2H or ShieldBash or EmoteTalk;
 
     /// <summary>The sequences this game plays beyond standing, walking and running.</summary>
-    public static readonly int[] Extra = [Death, Dead, WalkBackwards, AttackUnarmed, Attack1H, Attack2H, ReadyUnarmed, Ready1H, JumpStart, Jump, JumpEnd, Fall, SwimIdle, Swim, SwimLeft, SwimRight, SwimBackwards, Open, Close];
+    public static readonly int[] Extra =
+    [
+        Death, Dead, WalkBackwards, AttackUnarmed, Attack1H, Attack2H, ReadyUnarmed, Ready1H, JumpStart, Jump, JumpEnd, Fall,
+        SwimIdle, Swim, SwimLeft, SwimRight, SwimBackwards, Open, Close,
+        CombatWound, SpellPrecast, SpellCast, SpellCastArea, NpcWelcome, NpcGoodbye, ReadySpellDirected, ReadySpellOmni,
+        SpellCastDirected, SpellCastOmni, BattleRoar, ReadyAbility, Special1H, Special2H, ShieldBash, EmoteTalk,
+        ChannelCastDirected, ChannelCastOmni,
+    ];
 
     /// <summary>Not played as such: its first pose is what a hand's fingers hold while it has something in it.</summary>
     public const int HandsClosed = 15;

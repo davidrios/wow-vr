@@ -75,13 +75,67 @@ public sealed record M2Emitter
 
     public bool CanEmit => Rate > 0f && Lifespan > 0f && Sizes.Any(s => s > 0f) && Colors.Any(c => c.W > 0f);
 
+    /// <summary>Whether it's on at the start of the model's first sequence.</summary>
+    public bool StartsOn { get; init; } = true;
+
+    /// <summary>
+    /// When it switches on and off in the model's first sequence, as seconds into it, as a meteor's
+    /// glow lighting only as it lands. Empty for one that stays as it starts.
+    /// </summary>
+    public (float Seconds, bool On)[] Switches { get; init; } = [];
+
+    /// <summary>When its switches loop on a global sequence rather than the clip, that loop's length in seconds; otherwise 0.</summary>
+    public float SwitchLoopSeconds { get; init; }
+
+    /// <summary>Whether it's on that far into the sequence.</summary>
+    public bool OnAt(double seconds)
+    {
+        if (SwitchLoopSeconds > 0)
+        {
+            seconds %= SwitchLoopSeconds;
+        }
+
+        var on = StartsOn;
+        foreach (var (time, value) in Switches)
+        {
+            if (time > seconds)
+            {
+                break;
+            }
+
+            on = value;
+        }
+
+        return on;
+    }
+
+    private const int MaxSwitches = 64;
+
     internal static unsafe IReadOnlyList<M2Emitter> ReadAll(nint model)
     {
         var count = ModelNativeMethods.M2EmitterCount(model);
         var emitters = new List<M2Emitter>();
+        var times = stackalloc uint[MaxSwitches];
+        var values = stackalloc byte[MaxSwitches];
+        ModelNativeMethods.M2GlobalSequences(model, out var globalLengths, out var globalCount);
         for (var i = 0u; i < count; i++)
         {
-            if (ModelNativeMethods.M2Emitter(model, i, out var raw) != WaStatus.Ok || raw.Enabled == 0)
+            if (ModelNativeMethods.M2Emitter(model, i, out var raw) != WaStatus.Ok)
+            {
+                continue;
+            }
+
+            // One that starts off is kept when it switches on later.
+            var global = -1;
+            var switchCount = (int)Math.Min(ModelNativeMethods.M2EmitterSwitches(model, i, 0, times, values, MaxSwitches, &global), MaxSwitches);
+            var loop = global >= 0 && global < globalCount ? globalLengths[global] / 1000f : 0f;
+            var switches = new (float Seconds, bool On)[switchCount];
+            for (var key = 0; key < switchCount; key++)
+            {
+                switches[key] = (times[key] / 1000f, values[key] != 0);
+            }
+
+            if (raw.Enabled == 0 && !switches.Any(s => s.On))
             {
                 continue;
             }
@@ -132,6 +186,9 @@ public sealed record M2Emitter
                 Sizes = sizes,
                 CellTimes = cellTimes,
                 CellValues = cellValues,
+                StartsOn = raw.Enabled != 0,
+                Switches = switches,
+                SwitchLoopSeconds = loop,
             };
             if (emitter.CanEmit)
             {

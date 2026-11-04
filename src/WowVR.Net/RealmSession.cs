@@ -596,6 +596,15 @@ public sealed partial class RealmSession : IDisposable
             case ObjectType.Item or ObjectType.Container:
                 _inventoryDirty = true;
                 return;
+            case ObjectType.DynamicObject:
+                _announced.Add(obj.Guid);
+                Events.Enqueue(new AreaEffectAppeared(
+                    obj.Guid,
+                    obj.Field64(UpdateFields.DynamicObjectCaster),
+                    obj.Field(UpdateFields.DynamicObjectSpell),
+                    BitConverter.UInt32BitsToSingle(obj.Field(UpdateFields.DynamicObjectRadius)),
+                    obj.Position));
+                return;
             case ObjectType.Corpse:
                 if (obj.Field64(UpdateFields.CorpseOwner) == Character.Guid)
                 {
@@ -650,7 +659,12 @@ public sealed partial class RealmSession : IDisposable
         _playerLooks.Remove(obj.Guid);
         if (_announced.Remove(obj.Guid))
         {
-            Events.Enqueue(obj.Type == ObjectType.GameObject ? new GameObjectGone(obj.Guid) : new UnitGone(obj.Guid));
+            Events.Enqueue(obj.Type switch
+            {
+                ObjectType.GameObject => new GameObjectGone(obj.Guid),
+                ObjectType.DynamicObject => new AreaEffectGone(obj.Guid),
+                _ => new UnitGone(obj.Guid),
+            });
         }
 
         if (obj.Type is ObjectType.Item or ObjectType.Container)

@@ -56,6 +56,11 @@ public partial class PlayCheck : Node
                 _gps = new System.Numerics.Vector3(Parse(m.Groups[1].Value), Parse(m.Groups[2].Value), Parse(m.Groups[3].Value));
             }
 
+            if (line.Kind is ChatKind.Error or ChatKind.System)
+            {
+                GD.Print($"  [{line.Kind}] {line.Text}");
+            }
+
             if (line.Kind == ChatKind.Say && line.Text.Contains("play check"))
             {
                 _said = line;
@@ -482,6 +487,15 @@ public partial class PlayCheck : Node
             _portalFrom = Tiles.LocalToWow(feet);
         }
 
+        if (_phase == 0 && age > 1 && !_leveled)
+        {
+            // This portal is for level 58 and up; the character goes back to its own level after.
+            _leveled = true;
+            _level = Server.Self?.Unit.Level ?? 0;
+            Server.Session.Select(Server.Session.SelfGuid);
+            Server.Say(".character level 58");
+        }
+
         if (_phase == 0 && age > 5)
         {
             // As right-clicking it: picked along a ray from above, onto the object.
@@ -498,6 +512,11 @@ public partial class PlayCheck : Node
         if (_phase == 1 && System.Numerics.Vector3.Distance(new System.Numerics.Vector3((float)x, (float)y, z), _portalFrom) > 500 && Loaded)
         {
             Note($"  taken to ({x:F0}, {y:F0}, {z:F0})");
+            if (_level > 0)
+            {
+                Server.Session.Select(Server.Session.SelfGuid);
+                Server.Say($".character level {_level}");
+            }
             _afterMapChange = null;
             Shot("portal");
             return true;
@@ -507,6 +526,8 @@ public partial class PlayCheck : Node
     }
 
     private ulong _portal;
+    private bool _leveled;
+    private uint _level;
     private System.Numerics.Vector3 _portalFrom;
 
     private void AddPlaySteps()

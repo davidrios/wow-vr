@@ -628,6 +628,15 @@ public sealed partial class RealmSession
             case MsgCorpseQuery:
                 ReadCorpse(p.Data);
                 break;
+            case 0x130: // SMSG_CAST_FAILED: cast count, spell, reason
+            {
+                var r = new PacketReader(p.Data);
+                r.U8();
+                var spell = r.U32();
+                var reason = r.U8();
+                Events.Enqueue(new ScreenMessage($"Spell {spell} failed (reason {reason}).", true));
+                break;
+            }
             case Opcodes.SMSG_SPIRIT_HEALER_CONFIRM:
                 Events.Enqueue(new SpiritHealerOffer(new PacketReader(p.Data).U64()));
                 break;

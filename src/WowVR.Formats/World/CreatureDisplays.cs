@@ -64,13 +64,20 @@ public sealed record CreatureLook(
     IReadOnlyDictionary<int, string> Textures,
     CharacterGeosets? Geosets,
     IReadOnlyList<CreatureItem> Items,
-    CreatureSoundSet? Sounds = null);
+    CreatureSoundSet? Sounds = null)
+{
+    /// <summary>
+    /// A player's body texture, made from these pieces rather than read from a file. Its
+    /// <see cref="Textures"/> entry for the body is then only a name for the result.
+    /// </summary>
+    public IReadOnlyList<BodyLayer>? BodyLayers { get; init; }
+}
 
 /// <summary>
 /// Turns a display id into a model and how to dress it, through CreatureDisplayInfo,
 /// CreatureModelData and, for characters, CreatureDisplayInfoExtra.
 /// </summary>
-public sealed class CreatureDisplayTable
+public sealed partial class CreatureDisplayTable
 {
     private const int AttachmentRightShoulder = 5;
     private const int AttachmentLeftShoulder = 6;
@@ -122,7 +129,11 @@ public sealed class CreatureDisplayTable
     private sealed record ExtraRow(int Race, int Sex, int Skin, int Hair, int HairColor, int Beard, int[] Items, string Bake);
 
     /// <summary>HelmetVis holds a HelmetGeosetVisData row for each sex.</summary>
-    private sealed record ItemRow(string[] Models, string[] Textures, int[] Groups, int[] HelmetVis);
+    private sealed record ItemRow(string[] Models, string[] Textures, int[] Groups, int[] HelmetVis)
+    {
+        /// <summary>Texture pieces for a character's body, by <see cref="BodyRegion"/> from arm upper to foot. Empty for none.</summary>
+        public string[] Regions { get; init; } = [];
+    }
 
     /// <summary>What a helmet hides. Each is a mask of the races it hides that on, by bit 1 &lt;&lt; race.</summary>
     private sealed record HelmetVisRow(uint Hair, uint Beard1, uint Beard2, uint Beard3, uint Ears);
@@ -133,6 +144,9 @@ public sealed class CreatureDisplayTable
     private readonly Dictionary<int, ItemRow> _items = [];
     private readonly Dictionary<int, HelmetVisRow> _helmetVis = [];
     private readonly Dictionary<int, int> _itemDisplays = [];
+    private readonly Dictionary<(int Race, int Class, int Sex), (int Display, int Type)[]> _startOutfits = [];
+    private readonly Dictionary<int, (int Male, int Female)> _raceDisplays = [];
+    private readonly Dictionary<(int Race, int Sex, int Section, int Variation, int Color), int> _sectionFlags = [];
     private readonly Dictionary<int, string> _racePrefixes = [];
     private readonly Dictionary<int, CreatureSoundSet> _sounds = [];
     private readonly Dictionary<(int Race, int Sex, int Style), (int Geoset, bool Scalp)> _hair = [];
@@ -204,7 +218,10 @@ public sealed class CreatureDisplayTable
                     [dbc.GetString(i, 1), dbc.GetString(i, 2)],
                     [dbc.GetString(i, 3), dbc.GetString(i, 4)],
                     [dbc.GetInt32(i, 7), dbc.GetInt32(i, 8), dbc.GetInt32(i, 9)],
-                    [dbc.GetInt32(i, 13), dbc.GetInt32(i, 14)]);
+                    [dbc.GetInt32(i, 13), dbc.GetInt32(i, 14)])
+                {
+                    Regions = [.. Enumerable.Range(15, 8).Select(f => dbc.GetString(i, f))],
+                };
             }
 
             return null;
@@ -246,6 +263,7 @@ public sealed class CreatureDisplayTable
             for (var i = 0; i < dbc.RecordCount; i++)
             {
                 table._racePrefixes[dbc.GetInt32(i, 0)] = dbc.GetString(i, 6);
+                table._raceDisplays[dbc.GetInt32(i, 0)] = (dbc.GetInt32(i, 4), dbc.GetInt32(i, 5));
             }
 
             return null;
@@ -277,7 +295,10 @@ public sealed class CreatureDisplayTable
             for (var i = 0; i < dbc.RecordCount; i++)
             {
                 var key = (dbc.GetInt32(i, 1), dbc.GetInt32(i, 2), dbc.GetInt32(i, 3), dbc.GetInt32(i, 8), dbc.GetInt32(i, 9));
-                table._sections.TryAdd(key, [dbc.GetString(i, 4), dbc.GetString(i, 5), dbc.GetString(i, 6)]);
+                if (table._sections.TryAdd(key, [dbc.GetString(i, 4), dbc.GetString(i, 5), dbc.GetString(i, 6)]))
+                {
+                    table._sectionFlags[key] = dbc.GetInt32(i, 7);
+                }
             }
 
             return null;
@@ -294,8 +315,29 @@ public sealed class CreatureDisplayTable
             return null;
         });
 
+        // Race, class, sex and outfit are four bytes in one column, then 24 items, their displays and inventory types.
+        DbcTables.Read<object?>(source, @"DBFilesClient\CharStartOutfit.dbc", dbc =>
+        {
+            for (var i = 0; i < dbc.RecordCount; i++)
+            {
+                var packed = dbc.GetUInt32(i, 1);
+                var key = ((int)(packed & 0xFF), (int)((packed >> 8) & 0xFF), (int)((packed >> 16) & 0xFF));
+                var items = new (int Display, int Type)[StartOutfitItems];
+                for (var item = 0; item < items.Length; item++)
+                {
+                    items[item] = (dbc.GetInt32(i, 2 + StartOutfitItems + item), dbc.GetInt32(i, 2 + 2 * StartOutfitItems + item));
+                }
+
+                table._startOutfits.TryAdd(key, items);
+            }
+
+            return null;
+        });
+
         return table;
     }
+
+    private const int StartOutfitItems = 24;
 
     /// <summary>An item's ItemDisplayInfo row, or 0 for an item the client doesn't know.</summary>
     public int ItemDisplayOf(int item) => _itemDisplays.GetValueOrDefault(item);

@@ -164,6 +164,12 @@ public partial class CreatureNode : Node3D
         {
             _player.Advance(_sinceAnimated);
             _billboards?.Apply(Skeleton);
+            if (_hiddenBone >= 0)
+            {
+                // Tiny rather than zero, since what's attached to it needs a basis it can invert.
+                Skeleton.SetBonePoseScale(_hiddenBone, Vector3.One * HiddenScale);
+            }
+
             _sinceAnimated = 0;
         }
     }
@@ -236,26 +242,58 @@ public partial class CreatureNode : Node3D
 
         _placed = true;
 
-        if (moving != _moving)
+        var stride = moving ? Stride(walkSpeed) : null;
+        if (moving != _moving || (stride is { } wanted && wanted.Clip != _clip))
         {
             _moving = moving;
-            if (moving && _asset.Skeleton.WalkClip is { } walk)
+            if (stride is { } s)
             {
-                // Plays at the speed that keeps its feet from sliding.
-                var speed = _asset.Skeleton.WalkSpeed * _asset.Scale;
-                _player.Play(walk, BlendSeconds, speed > 0f ? walkSpeed / speed : 1f);
-                _clip = walk;
+                _player.Play(s.Clip, BlendSeconds, (float)s.Rate);
+                (_clip, _rate) = (s.Clip, s.Rate);
             }
             else
             {
                 PlayNextIdle();
             }
         }
+        else if (stride is { } same && Math.Abs(same.Rate - _rate) > 0.05 * _rate)
+        {
+            // The same clip carries on, at the new rate.
+            _player.Play(same.Clip, BlendSeconds, (float)same.Rate);
+            _rate = same.Rate;
+        }
 
         if (_name is not null && _name.Visible != (AppSettings.NamePlates && distance < NameRange))
         {
             _name.Visible = !_name.Visible;
         }
+    }
+
+    /// <summary>
+    /// Walk, or run when going faster than halfway between the two, at the rate that keeps the feet
+    /// from sliding. Null for a model with neither.
+    /// </summary>
+    private (string Clip, double Rate)? Stride(float speed)
+    {
+        var skeleton = _asset.Skeleton;
+        var walk = skeleton.WalkSpeed * _asset.Scale;
+        var run = skeleton.RunSpeed * _asset.Scale;
+        if (skeleton.RunClip is { } runClip && run > walk && speed > (walk + run) / 2)
+        {
+            return (runClip, speed / run);
+        }
+
+        return skeleton.WalkClip is { } walkClip ? (walkClip, walk > 0f ? speed / walk : 1f) : null;
+    }
+
+    private int _hiddenBone = -1;
+    private const float HiddenScale = 1e-3f;
+    private double _rate = 1;
+
+    /// <summary>Hides the head, and what's worn on it, for the player's own body seen from inside it.</summary>
+    public bool HeadHidden
+    {
+        set => _hiddenBone = value ? _asset.Skeleton.HeadBone : -1;
     }
 
     /// <summary>Fires the sound events the clip passed since last time. Only worth calling near the player.</summary>

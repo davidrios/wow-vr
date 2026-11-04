@@ -1,6 +1,8 @@
 using System;
 using System.Globalization;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using WowVR.Converters;
 using WowVR.Debug;
@@ -45,6 +47,8 @@ public partial class Main : Node3D
     private const string ServerArgument = "--server=";
     private const string CharacterArgument = "--character=";
     private const string OfflineArgument = "--offline";
+    private const string LoginArgument = "--login";
+    private const string LoginCheckArgument = "--login-check";
 
     /// <summary>Kept open across reloads, because tile and model workers can still be reading when the old world goes.</summary>
     private static MpqAssetSource? _openSource;
@@ -151,15 +155,265 @@ public partial class Main : Node3D
 
         if (AppSettings.ClientPath.Length > 0)
         {
-            var arguments = OS.GetCmdlineUserArgs();
-            if (Array.IndexOf(arguments, TourArgument) < 0 && Array.IndexOf(arguments, WalkTourArgument) < 0)
+            if (ShowsLogin())
             {
-                _loading = new LoadingScreen { Name = "LoadingScreen", Hold = Array.IndexOf(arguments, HoldLoadingArgument) >= 0 };
-                AddChild(_loading);
+                ShowLogin();
             }
-
-            _ = StartWorldAsync(AppSettings.ClientPath);
+            else
+            {
+                BeginWorld(null, askServer: true);
+            }
         }
+    }
+
+    /// <summary>
+    /// The login screen comes first, unless the run says how to start: checks, tours, benchmarks,
+    /// screenshots, <c>--start=</c>, <c>--server=</c> and <c>--offline</c> go straight to the world.
+    /// <c>--login</c> shows it anyway.
+    /// </summary>
+    private static bool ShowsLogin()
+    {
+        if (_return is not null)
+        {
+            return true;
+        }
+
+        var arguments = OS.GetCmdlineUserArgs();
+        if (Array.IndexOf(arguments, LoginArgument) >= 0 || arguments.Any(a => a.StartsWith(LoginCheckArgument)))
+        {
+            return true;
+        }
+
+        return _nextStart is null && !IsTestRun && !arguments.Any(a =>
+            a.StartsWith(StartArgument) || a.StartsWith(ServerArgument) || a == OfflineArgument);
+    }
+
+    private void ShowLogin()
+    {
+        var glue = new GlueScreens { Name = "Glue" };
+        AddChild(glue);
+        glue.Start((IPlayer)_player, _player);
+        glue.Entered += session =>
+        {
+            _login = glue.Login;
+            BeginWorld(session, askServer: false);
+        };
+        glue.Offline += () => BeginWorld(null, askServer: false);
+        if (_return is { } back)
+        {
+            _return = null;
+            if (back.Session is { } session)
+            {
+                glue.ResumeAt(session, back.Auth, back.Realms, back.Host);
+            }
+        }
+        if (OS.GetCmdlineUserArgs().FirstOrDefault(a => a.StartsWith(LoginCheckArgument)) is { } check)
+        {
+            AddChild(new LoginCheck { Screens = glue, Character = check.Contains('=') ? check[(check.IndexOf('=') + 1)..] : null });
+        }
+
+        var clientPath = AppSettings.ClientPath;
+        _ = Task.Run(() =>
+        {
+            var source = OpenSource(clientPath);
+            var displays = CreatureDisplayTable.Read(source);
+            var models = _uiModels ??= new ModelLibrary(source, new LiquidLibrary(source));
+            var look = _voidLook ??= ReadVoidLook(source);
+            return (new CreatureLibrary(source, displays, models), displays, source.Read(GlueFont), models, look);
+        }).ContinueWith(opened =>
+        {
+            if (opened.IsCompletedSuccessfully)
+            {
+                Callable.From(() =>
+                {
+                    if (opened.Result.Item3 is { Length: > 0 } font)
+                    {
+                        GlueTheme.UseFont(new FontFile { Data = font });
+                    }
+
+                    if (IsInstanceValid(glue))
+                    {
+                        glue.SetCharacterData(opened.Result.Item1, opened.Result.Item2, opened.Result.Item4, opened.Result.Item5);
+                    }
+                }).CallDeferred();
+            }
+            else
+            {
+                GD.PushError($"Could not open the client for the character screen: {opened.Exception?.GetBaseException().Message}");
+            }
+        });
+    }
+
+    /// <summary>What the next load of this scene goes back to: the character list on a session, or the login screen.</summary>
+    private sealed record Return(RealmSession? Session, AuthClient? Auth, List<Realm> Realms, string Host);
+
+    private static Return? _return;
+
+    /// <summary>The login the world was entered from, to go back to.</summary>
+    private (AuthClient? Auth, List<Realm> Realms, string Host) _login = (null, [], "");
+
+    private ServerWorld? _server;
+    private CancellationTokenSource? _logoutCancel;
+
+    /// <summary>The game menu's own buttons: back to the characters or login, or out of the game.</summary>
+    private void SetGameMenu(IPlayer player, RealmSession? session)
+    {
+        player.Menu.SetGameStatus("");
+        player.Menu.SetGameActions(session is null
+            ? [("Login screen", () => LeaveWorld(null, "Login")), ("Exit game", ExitGame)]
+            : [("Character selection", () => _ = LogOutAsync(player, session, toCharacters: true)), ("Log out", () => _ = LogOutAsync(player, session, toCharacters: false)), ("Exit game", ExitGame)]);
+    }
+
+    /// <summary>
+    /// Logs the character out, which the server does at once in an inn or city, or after 20 seconds
+    /// that the menu counts down with a Cancel, then goes to the character list or login screen.
+    /// </summary>
+    private async Task LogOutAsync(IPlayer player, RealmSession session, bool toCharacters)
+    {
+        var menu = player.Menu;
+        menu.SetGameStatus("Logging out…");
+        LogoutAnswer answer;
+        try
+        {
+            answer = await session.RequestLogoutAsync();
+        }
+        catch (System.IO.IOException e)
+        {
+            menu.SetGameStatus(e.Message, true);
+            return;
+        }
+
+        if (answer.Refused is { } why)
+        {
+            menu.SetGameStatus(why, true);
+            return;
+        }
+
+        using var cancel = new CancellationTokenSource();
+        _logoutCancel = cancel;
+        if (!answer.Instant)
+        {
+            menu.SetGameActions([("Cancel logout", () =>
+            {
+                session.CancelLogout();
+                cancel.Cancel();
+            })]);
+            _ = CountDownAsync(menu, cancel.Token);
+        }
+
+        try
+        {
+            await session.WaitForLogoutAsync(cancel.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            SetGameMenu(player, session);
+            return;
+        }
+        catch (System.IO.IOException e)
+        {
+            menu.SetGameStatus(e.Message, true);
+            return;
+        }
+        finally
+        {
+            _logoutCancel = null;
+        }
+
+        _server?.Release();
+        if (toCharacters)
+        {
+            LeaveWorld(session, "Character selection");
+        }
+        else
+        {
+            session.Dispose();
+            LeaveWorld(null, "Logging out");
+        }
+    }
+
+    private static async Task CountDownAsync(WorldMenu menu, CancellationToken cancel)
+    {
+        for (var left = 20; left > 0 && !cancel.IsCancellationRequested; left--)
+        {
+            menu.SetGameStatus($"Logging out in {left} s");
+            try
+            {
+                await Task.Delay(1000, cancel);
+            }
+            catch (OperationCanceledException)
+            {
+                menu.SetGameStatus("");
+                return;
+            }
+        }
+    }
+
+    /// <summary>Reloads the scene into the character list on <paramref name="session"/>, or into the login screen.</summary>
+    private void LeaveWorld(RealmSession? session, string title)
+    {
+        SaveLastPlace();
+        _return = new Return(session, _login.Auth, _login.Realms, _login.Host);
+        ((IPlayer)_player).SetMenuOpen(false);
+        BehindLoadingScreen(title, () => GetTree().CallDeferred(SceneTree.MethodName.ReloadCurrentScene));
+    }
+
+    /// <summary>Quits, logging the character out on the way.</summary>
+    private void ExitGame()
+    {
+        SaveLastPlace();
+        GetTree().Quit();
+    }
+
+    private static readonly object OpenLock = new();
+
+    /// <summary>Models for the screens before and between worlds: the void's sky and the stage. Kept across reloads like the archives.</summary>
+    private static ModelLibrary? _uiModels;
+
+    /// <summary>The sky and fog of the voids behind the screens, read once from the client.</summary>
+    private static VoidLook? _voidLook;
+
+    private static VoidLook ReadVoidLook(MpqAssetSource source)
+    {
+        try
+        {
+            return VoidLook.Hellfire(source);
+        }
+        catch (Exception e) when (e is System.IO.IOException or WowAlchemyException)
+        {
+            GD.PushWarning($"No Hellfire sky for the screens: {e.Message}");
+            return VoidLook.Fallback;
+        }
+    }
+
+    /// <summary>The game's own font for its menus, read from the player's client.</summary>
+    private const string GlueFont = @"Fonts\FRIZQT__.TTF";
+
+    /// <summary>The client's archives, opened once and kept, from whichever thread asks first.</summary>
+    private static MpqAssetSource OpenSource(string clientPath)
+    {
+        lock (OpenLock)
+        {
+            return _openSource ??= MpqAssetSource.Open(clientPath);
+        }
+    }
+
+    /// <summary>The loading screen, then the world, played on <paramref name="session"/> or from spawn files.</summary>
+    private void BeginWorld(RealmSession? session, bool askServer)
+    {
+        var arguments = OS.GetCmdlineUserArgs();
+        if (Array.IndexOf(arguments, TourArgument) < 0 && Array.IndexOf(arguments, WalkTourArgument) < 0)
+        {
+            _loading = new LoadingScreen { Name = "LoadingScreen", Hold = Array.IndexOf(arguments, HoldLoadingArgument) >= 0 };
+            AddChild(_loading);
+        }
+
+        if (_uiModels is not null && _voidLook is not null)
+        {
+            _loading?.SetSky(_uiModels, _voidLook);
+        }
+
+        _ = StartWorldAsync(AppSettings.ClientPath, session, askServer);
     }
 
     public override void _ExitTree() => AppSettings.Changed -= ApplyRenderScale;
@@ -187,15 +441,15 @@ public partial class Main : Node3D
     }
 
     /// <summary>The grey floor stays up until the client is open, or if it can't be opened.</summary>
-    private async Task StartWorldAsync(string clientPath)
+    private async Task StartWorldAsync(string clientPath, RealmSession? session, bool askServer)
     {
         try
         {
             var (startMap, startPosition, startPitch, startYaw, placement) = ReadStart();
-            var session = await ConnectAsync();
+            session ??= askServer ? await ConnectAsync() : null;
             var opening = await Task.Run(() =>
             {
-                var opened = _openSource ??= MpqAssetSource.Open(clientPath);
+                var opened = OpenSource(clientPath);
                 var record = MapRecord.ReadAll(opened)
                     .First(m => session is null
                         ? m.Directory.Equals(startMap, StringComparison.OrdinalIgnoreCase)
@@ -218,6 +472,13 @@ public partial class Main : Node3D
             }
 
             startMap = opening.Record.Directory;
+            _uiModels ??= new ModelLibrary(opening.Source, new LiquidLibrary(opening.Source));
+            _voidLook ??= await Task.Run(() => ReadVoidLook(opening.Source));
+            _loading?.SetSky(_uiModels, _voidLook);
+            if (!GlueTheme.HasFont && opening.Source.Read(GlueFont) is { Length: > 0 } font)
+            {
+                GlueTheme.UseFont(new FontFile { Data = font });
+            }
             _loading?.SetPlace(opening.Record.Name, opening.Picture is null ? null : ImageTexture.CreateFromImage(opening.Picture));
 
             var source = opening.Source;
@@ -260,6 +521,7 @@ public partial class Main : Node3D
             player.Menu.SetSky(sky);
 
             player.Menu.SetLandmarks(Landmarks.On(startMap), l => BehindLoadingScreen(l.Name, () => tiles.TeleportTo(l.WowX, l.WowY)));
+            SetGameMenu(player, session);
             // On a server, only the server can move the character to another map.
             if (session is null)
             {
@@ -272,12 +534,19 @@ public partial class Main : Node3D
             var creatureSounds = new CreatureSoundPlayer { Name = "CreatureSounds" };
             AddChild(creatureSounds);
             creatureSounds.Start(source);
-            creatures.Start(new CreatureLibrary(source, displays, tiles.Models), tiles, session is null ? ChooseSpawnSource(arguments, displays, mapId, startPosition) : new NoSpawns(), creatureSounds, footsteps);
+            var library = new CreatureLibrary(source, displays, tiles.Models);
+            creatures.Start(library, tiles, session is null ? ChooseSpawnSource(arguments, displays, mapId, startPosition) : new NoSpawns(), creatureSounds, footsteps);
             if (session is not null)
             {
                 var server = new ServerWorld { Name = "Server" };
                 AddChild(server);
                 server.Start(session, creatures, tiles, displays, _player);
+                _server = server;
+
+                // The character's own body, as the character list showed it.
+                var avatar = new PlayerAvatar { Name = "Avatar" };
+                AddChild(avatar);
+                avatar.Start(library, GlueScreens.AppearanceOf(session.Character), player, _player);
             }
 
             _loading?.Watch(tiles, creatures, player);

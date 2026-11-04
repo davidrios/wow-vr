@@ -907,6 +907,9 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
 
     public ImageTexture? GetTexture(string path) => _textures.GetOrAdd(path, LoadTexture);
 
+    /// <summary>A texture made here rather than read, such as a character's painted body, under a name materials can ask for.</summary>
+    public void AddTexture(string name, ImageTexture texture) => _textures[name] = texture;
+
     private ImageTexture? LoadTexture(string path)
     {
         try

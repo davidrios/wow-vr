@@ -185,11 +185,29 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _body.Call(Teleport, new Transform3D(_body.GlobalBasis, feet));
     }
 
+    private bool _uiMode;
+
+    public Transform3D Eyes => GetNode<XRCamera3D>("XRCamera3D").GlobalTransform;
+
+    public void SetUiMode(bool on)
+    {
+        _uiMode = on;
+        Held = on;
+        SetMenuOpen(false);
+        _pointer.Set(Enabled, on);
+        _teleport.Set(Enabled, !on && !_held);
+    }
+
     public void SetMenuOpen(bool open)
     {
+        if (open && !_wristMenu.Visible)
+        {
+            Menu.ShowGamePage();
+        }
+
         _wristMenu.Visible = open;
         _wristMenu.Set(Enabled, open);
-        _pointer.Set(Enabled, open);
+        _pointer.Set(Enabled, open || _uiMode);
         _teleport.Set(Enabled, !open && !_held);
     }
 
@@ -239,7 +257,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
                 break;
             case "ax_button":
                 // It's in the world's layer, so it can't be seen behind the loading screen.
-                if (!_held)
+                if (!_held && !_uiMode)
                 {
                     SetMenuOpen(!_wristMenu.Visible);
                 }

@@ -308,6 +308,40 @@ public static class AppSettings
         }
     }
 
+    private const string LoginSection = "login";
+
+    /// <summary>What the login screen fills in: the last server, account, realm and character. Never the password.</summary>
+    public static string LoginHost
+    {
+        get => Read(LoginSection, "host", "").AsString();
+        set => Write(LoginSection, "host", value);
+    }
+
+    public static string LoginAccount
+    {
+        get => Read(LoginSection, "account", "").AsString();
+        set => Write(LoginSection, "account", value);
+    }
+
+    /// <summary>Whether the password is kept in the system's own store, which <c>CredentialStore</c> chooses.</summary>
+    public static bool RememberPassword
+    {
+        get => Read(LoginSection, "remember_password", false).AsBool();
+        set => Write(LoginSection, "remember_password", value);
+    }
+
+    public static string LastRealm
+    {
+        get => Read(LoginSection, "realm", "").AsString();
+        set => Write(LoginSection, "realm", value);
+    }
+
+    public static string LastCharacter
+    {
+        get => Read(LoginSection, "character", "").AsString();
+        set => Write(LoginSection, "character", value);
+    }
+
     private const string ServerSection = "server";
 
     /// <summary>

@@ -7,7 +7,7 @@ uniform sampler2D page : source_color, filter_linear;
 uniform float fade = 1.0;
 uniform vec2 size = vec2(1.0);
 uniform float corner = 0.05;
-uniform vec3 edge_color : source_color = vec3(0.55, 0.68, 0.95);
+uniform vec3 edge_color : source_color = vec3(0.72, 0.57, 0.27);
 uniform float edge_width = 0.004;
 
 void fragment() {

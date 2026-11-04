@@ -28,6 +28,15 @@ public interface IPlayer
     void SetMenuOpen(bool open);
 
     /// <summary>
+    /// Holds the player still with the mouse free on desktop, or the laser pointer on in VR, for
+    /// the login and character screens.
+    /// </summary>
+    void SetUiMode(bool on);
+
+    /// <summary>Where the player looks from, for placing what they should see.</summary>
+    Transform3D Eyes { get; }
+
+    /// <summary>
     /// Moves without checking for collisions, keeping the player's facing. Re-centering
     /// the world keeps the velocity too, so it can't be felt.
     /// </summary>

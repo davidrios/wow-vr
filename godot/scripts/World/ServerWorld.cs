@@ -61,7 +61,7 @@ public partial class ServerWorld : Node
 
     public override void _Process(double delta)
     {
-        if (_session is null)
+        if (_session is null || !_session.InWorld)
         {
             return;
         }
@@ -84,6 +84,14 @@ public partial class ServerWorld : Node
     }
 
     public override void _ExitTree() => _session?.Dispose();
+
+    /// <summary>Lets go of the session without closing it, for the character screen to carry on with it.</summary>
+    public RealmSession? Release()
+    {
+        var session = _session;
+        _session = null!;
+        return session;
+    }
 
     private void Apply(SessionEvent e)
     {

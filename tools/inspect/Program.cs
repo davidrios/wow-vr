@@ -20,6 +20,8 @@ const string Usage = """
       emitters <m2 or display id>  Print a model's particle emitters.
       anims <m2 or object display id> Print a model's sequences and what moves in its stand.
       sky <map id> <x> <y> <hour> Print the sky colors and fog at a WoW position and time.
+      character <race> <sex> <skin> <face> <hair> <hair color> <facial hair> <out.png> [slot:display ...]
+                                  Paint a player's body texture to PNG and print its look. Don't commit the output.
     """;
 
 if (args.Length == 0)
@@ -72,6 +74,8 @@ try
             return PrintAnims(source, file);
         case ["area", var map, var name]:
             return PrintArea(source, map, name);
+        case ["character", var race, var sex, var skin, var face, var hair, var hairColor, var facial, var output, .. var gear]:
+            return PaintCharacter(source, [int.Parse(race), int.Parse(sex), int.Parse(skin), int.Parse(face), int.Parse(hair), int.Parse(hairColor), int.Parse(facial)], output, gear);
         default:
             Console.WriteLine(Usage);
             return 1;
@@ -220,6 +224,7 @@ static int PrintSky(MpqAssetSource source, int mapId, float x, float y, float ho
     }
 
     Console.WriteLine($"Fog {sky.FogStart:F2} to {sky.FogEnd:F0} yards");
+
     Console.WriteLine($"River alpha {sky.RiverShallowAlpha:F2} to {sky.RiverDeepAlpha:F2}, ocean {sky.OceanShallowAlpha:F2} to {sky.OceanDeepAlpha:F2}");
     return 0;
 }
@@ -337,3 +342,43 @@ static void Print<T>(IEnumerable<T> records, int maxRows)
         Console.WriteLine(record);
     }
 }
+
+static int PaintCharacter(IAssetSource source, int[] look, string output, string[] gear)
+{
+    var equipment = new int[(int)WowVR.Formats.World.EquipmentSlot.Count];
+    foreach (var item in gear)
+    {
+        var parts = item.Split(':');
+        equipment[int.Parse(parts[0])] = int.Parse(parts[1]);
+    }
+
+    var table = WowVR.Formats.World.CreatureDisplayTable.Read(source);
+    var appearance = new WowVR.Formats.World.CharacterAppearance(look[0], look[1], look[2], look[3], look[4], look[5], look[6], equipment);
+    if (table.ResolveCharacter(appearance) is not { } resolved)
+    {
+        Console.Error.WriteLine("No model for that race and sex.");
+        return 1;
+    }
+
+    Console.WriteLine($"Model: {resolved.Model}");
+    foreach (var (type, texture) in resolved.Textures)
+    {
+        Console.WriteLine($"Texture {type}: {texture}");
+    }
+
+    foreach (var layer in resolved.BodyLayers!)
+    {
+        var found = layer.Candidates.FirstOrDefault(c => source.Read(c) is { Length: > 0 });
+        Console.WriteLine($"Layer {layer.Layer} {layer.Region}: {found ?? "missing: " + string.Join(" | ", layer.Candidates)}");
+    }
+
+    foreach (var item in resolved.Items)
+    {
+        Console.WriteLine($"Worn at {item.Attachment}: {item.Model}");
+    }
+
+    var painted = WowVR.Formats.World.CharacterTexture.Compose(resolved.BodyLayers!, source.Read);
+    PngWriter.WriteRgba8(output, painted.Rgba8, painted.Width, painted.Height);
+    return 0;
+}
+

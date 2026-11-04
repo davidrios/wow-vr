@@ -5,7 +5,20 @@ using System.Text;
 
 namespace WowVR.Net;
 
-public sealed record Realm(string Name, string Address, byte Id, byte Flags, byte Characters);
+/// <summary>A realm the authserver lists. Population is 0 for low, 1 medium and 2 high, as the client shows it.</summary>
+public sealed record Realm(string Name, string Address, byte Id, byte Flags, byte Characters, byte Type = 0, bool Locked = false, float Population = 0)
+{
+    public bool Offline => (Flags & 0x02) != 0;
+
+    /// <summary>The realm's type as the client names it: 1 is PvP, 4 normal, 6 RP and 8 RP PvP.</summary>
+    public string TypeName => Type switch
+    {
+        1 => "PvP",
+        6 => "RP",
+        8 => "RP PvP",
+        _ => "Normal",
+    };
+}
 
 /// <summary>
 /// Logs in to an AzerothCore authserver (port 3724) the way a 3.3.5a client does:
@@ -19,68 +32,91 @@ public sealed class AuthClient
     public byte[] SessionKey { get; private set; } = [];
     public string Account { get; private set; } = "";
 
-    public static async Task<(AuthClient Auth, List<Realm> Realms)> LoginAsync(string host, int port, string user, string password)
+    /// <summary>Logs in and lists the realms. Errors are <see cref="IOException"/>s whose message can be shown as it is.</summary>
+    public static async Task<(AuthClient Auth, List<Realm> Realms)> LoginAsync(string host, int port, string user, string password, CancellationToken ct = default)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        try
+        {
+            return await LoginCoreAsync(host, port, user, password, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new IOException($"{host} didn't answer.");
+        }
+        catch (SocketException e)
+        {
+            throw new IOException($"Couldn't reach {host}: {e.Message}");
+        }
+        catch (EndOfStreamException)
+        {
+            throw new IOException($"{host} closed the connection. Is it an AzerothCore authserver?");
+        }
+    }
+
+    private static async Task<(AuthClient Auth, List<Realm> Realms)> LoginCoreAsync(string host, int port, string user, string password, CancellationToken ct)
     {
         var client = new AuthClient { Account = user.ToUpperInvariant() };
         using var tcp = new TcpClient();
-        await tcp.ConnectAsync(host, port);
+        await tcp.ConnectAsync(host, port, ct);
         var stream = tcp.GetStream();
 
-        await stream.WriteAsync(client.LogonChallenge());
+        await stream.WriteAsync(client.LogonChallenge(), ct);
 
         // cmd, unused, result
-        var head = await ReadExactAsync(stream, 3);
+        var head = await ReadExactAsync(stream, ct, 3);
         if (head[2] != 0)
-            throw new IOException($"logon challenge refused: {AuthResult(head[2])}");
-        var B = await ReadExactAsync(stream, 32);
-        int gLen = (await ReadExactAsync(stream, 1))[0];
-        var g = await ReadExactAsync(stream, gLen);
-        int nLen = (await ReadExactAsync(stream, 1))[0];
-        var N = await ReadExactAsync(stream, nLen);
-        var salt = await ReadExactAsync(stream, 32);
-        await ReadExactAsync(stream, 16); // version challenge
-        byte securityFlags = (await ReadExactAsync(stream, 1))[0];
+            throw new IOException(AuthResult(head[2]));
+        var B = await ReadExactAsync(stream, ct, 32);
+        int gLen = (await ReadExactAsync(stream, ct, 1))[0];
+        var g = await ReadExactAsync(stream, ct, gLen);
+        int nLen = (await ReadExactAsync(stream, ct, 1))[0];
+        var N = await ReadExactAsync(stream, ct, nLen);
+        var salt = await ReadExactAsync(stream, ct, 32);
+        await ReadExactAsync(stream, ct, 16); // version challenge
+        byte securityFlags = (await ReadExactAsync(stream, ct, 1))[0];
         if (securityFlags != 0)
-            throw new IOException($"the account needs a PIN, matrix or token (flags {securityFlags}), which this probe doesn't do");
+            throw new IOException("The account needs a PIN or authenticator code, which isn't supported.");
 
         var (A, M1, K) = Srp6(client.Account, password.ToUpperInvariant(), B, g, N, salt);
 
         var proof = new PacketWriter().U8(0x01).Bytes(A).Bytes(M1).Bytes(new byte[20]).U8(0).U8(0).ToArray();
-        await stream.WriteAsync(proof);
+        await stream.WriteAsync(proof, ct);
 
-        var proofHead = await ReadExactAsync(stream, 2);
+        var proofHead = await ReadExactAsync(stream, ct, 2);
         if (proofHead[1] != 0)
-            throw new IOException($"logon proof refused: {AuthResult(proofHead[1])} (wrong password?)");
-        var rest = await ReadExactAsync(stream, 20 + 4 + 4 + 2);
+            throw new IOException(AuthResult(proofHead[1]));
+        var rest = await ReadExactAsync(stream, ct, 20 + 4 + 4 + 2);
         var M2 = rest[..20];
         var expected = SHA1.HashData([.. A, .. M1, .. K]);
         if (!M2.AsSpan().SequenceEqual(expected))
-            throw new IOException("the server's proof didn't match ours");
+            throw new IOException("The server's proof didn't match. It may not be the server you think it is.");
         client.SessionKey = K;
 
         // Realm list
-        await stream.WriteAsync(new PacketWriter().U8(0x10).U32(0).ToArray());
-        var listHead = await ReadExactAsync(stream, 3);
+        await stream.WriteAsync(new PacketWriter().U8(0x10).U32(0).ToArray(), ct);
+        var listHead = await ReadExactAsync(stream, ct, 3);
         int size = listHead[1] | (listHead[2] << 8);
-        var body = await ReadExactAsync(stream, size);
+        var body = await ReadExactAsync(stream, ct, size);
         var r = new PacketReader(body);
         r.U32();
         int count = r.U16();
         var realms = new List<Realm>();
         for (int i = 0; i < count; i++)
         {
-            r.U8(); // type
-            r.U8(); // locked
+            byte type = r.U8();
+            bool locked = r.U8() != 0;
             byte flags = r.U8();
             string name = r.CString();
             string address = r.CString();
-            r.F32(); // population
+            float population = r.F32();
             byte chars = r.U8();
             r.U8(); // timezone
             byte id = r.U8();
             if ((flags & 0x04) != 0)
                 r.Skip(5); // version and build
-            realms.Add(new Realm(name, address, id, flags, chars));
+            realms.Add(new Realm(name, address, id, flags, chars, type, locked, population));
         }
         return (client, realms);
     }
@@ -169,22 +205,25 @@ public sealed class AuthClient
         return K;
     }
 
+    /// <summary>What the authserver's result codes mean, as sentences to show.</summary>
     static string AuthResult(byte code) => code switch
     {
-        0x03 => "banned",
-        0x04 => "unknown account",
-        0x05 => "incorrect password",
-        0x06 => "already online",
-        0x09 => "version invalid",
-        0x0C => "suspended",
-        0x10 => "locked",
-        _ => $"code 0x{code:X2}",
+        0x03 => "This account is banned.",
+        0x04 or 0x05 => "The account name or password is wrong.",
+        0x06 => "This account is already logged in.",
+        0x07 => "This account has no game time.",
+        0x08 => "The server is busy. Try again in a moment.",
+        0x09 => "The server doesn't accept this game version.",
+        0x0C => "This account is suspended.",
+        0x10 => "This account is locked.",
+        0x12 => "This account is locked to another address.",
+        _ => $"The server refused the login (code 0x{code:X2}).",
     };
 
-    public static async Task<byte[]> ReadExactAsync(Stream s, int n)
+    public static async Task<byte[]> ReadExactAsync(Stream s, CancellationToken ct, int n)
     {
         var buf = new byte[n];
-        await s.ReadExactlyAsync(buf);
+        await s.ReadExactlyAsync(buf, ct);
         return buf;
     }
 }

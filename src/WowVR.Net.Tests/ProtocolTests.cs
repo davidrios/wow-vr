@@ -46,6 +46,65 @@ public class Srp6Tests
     }
 }
 
+public class CredentialStoreTests
+{
+    /// <summary>Only on Windows, whose store is files here. The others' are the user's real keychain or keyring.</summary>
+    [Fact]
+    public void WindowsKeepsAndForgetsAPassword()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var folder = Path.Combine(Path.GetTempPath(), $"wowvr-credentials-{Guid.NewGuid():N}");
+        try
+        {
+            var store = CredentialStore.ForThisSystem(folder);
+            Assert.True(store.IsAvailable);
+            store.Save("host/ACCOUNT", "pässword");
+            Assert.Equal("pässword", store.Load("host/ACCOUNT"));
+            Assert.Null(store.Load("host/OTHER"));
+            Assert.DoesNotContain(Directory.GetFiles(folder), f => File.ReadAllText(f).Contains("password"));
+            store.Delete("host/ACCOUNT");
+            Assert.Null(store.Load("host/ACCOUNT"));
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, true);
+            }
+        }
+    }
+}
+
+public class CharacterListTests
+{
+    [Fact]
+    public void ReadsLooksAndGear()
+    {
+        var w = new PacketWriter().U8(1)
+            .U64(42).CString("Cliffrey")
+            .U8(5).U8(1).U8(0).U8(5).U8(4).U8(1).U8(3).U8(3) // race, class, sex, skin, face, hair, hair color, facial hair
+            .U8(7).U32(85).U32(0).F32(1).F32(2).F32(3)
+            .U32(0).U32(0x400).U32(0).U8(0)
+            .U32(0).U32(0).U32(0);
+        for (var slot = 0; slot < 23; slot++)
+        {
+            w.U32(slot == 4 ? 29958u : 0).U8(slot == 4 ? (byte)5 : (byte)0).U32(0);
+        }
+
+        var c = Assert.Single(RealmSession.ReadCharacterList(w.ToArray()));
+        Assert.Equal("Cliffrey", c.Name);
+        Assert.Equal((5, 1, 0, 5, 4, 1, 3, 3), (c.Race, c.Class, c.Sex, c.Skin, c.Face, c.HairStyle, c.HairColor, c.FacialHair));
+        Assert.Equal(7, c.Level);
+        Assert.True(c.HidesHelm);
+        Assert.Equal(new EquippedItem(29958, 5), c.Equipment[4]);
+        Assert.Equal(19, c.Equipment.Length);
+    }
+}
+
 public class MovePathTests
 {
     [Fact]

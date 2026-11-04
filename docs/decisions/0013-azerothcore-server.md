@@ -20,9 +20,26 @@
 
 `docs/formats.md`'s "Server protocol" has the packet layouts.
 
+## The screens before the world
+
+The game opens on a login screen, then a realm list (skipped with one realm, or the last one used), then the account's characters on a stage, where one can be entered, made or deleted. "Explore offline" plays from spawn files as before.
+
+- **Laid out like VRChat's menus, in the game's colors.** In VR one panel floats in front of the player, at their left, placed where they look when the screens open, with the laser pointer on the right hand and XR Tools' virtual keyboard below it while a text field has focus. On desktop the same panel is on screen. Nothing uses popups, which don't open on a panel in VR: deleting asks for a second press instead. Its colors are the game's: near-black panels with gold edges, dark red buttons and gold text, in the client's own font, `Fonts\FRIZQT__.TTF`.
+- **The void around it is from the client:** Hellfire Peninsula's sky and colors, as its light tables give them, with a thick fog in its horizon and fog colors where the sky has no ground, and the Celestial Planetarium's floor as the stage. The loading screen shows the same sky and fog in its void.
+- **Characters are drawn as the game draws players**, not NPCs: `CreatureDisplayTable.ResolveCharacter` and `CharacterTexture` paint the body from skin, underwear, face, facial hair, scalp and each worn item's pieces, following WoWModelViewer 0.7.0.6's CharControl and CharTexture. The character list gives the look and each slot's ItemDisplayInfo row. New characters choose from CharSections' player rows.
+- **Remembering the password** is a choice, kept in the system's own store by `CredentialStore`: DPAPI on Windows, the Keychain on macOS, the Secret Service through `secret-tool` on Linux. Without one the box is off. The server, account, realm and character are remembered in `settings.cfg`'s `[login]`.
+
+## The game menu
+
+Opening the menu, with Esc or Tab on desktop or X on the wrist in VR, shows a game menu first, as the game's own Esc menu: Return to game, Character selection, Log out, Exit game, then Options (the landmarks and settings it had before) and Video. Offline it offers the login screen instead. Leaving the world asks the server to log out: it refuses in combat or falling, lets the character go at once in an inn or city, and otherwise after 20 seconds, which the menu counts down with a Cancel. Then the scene reloads into the character list on the same connection, since a logged-out session is back at the list, or into the login screen.
+
+## The body
+
+Entering the world puts the character's own body at the player's feet (`PlayerAvatar`). It walks or runs to match their speed, and stands while flying or swimming. On desktop the camera hangs behind on a boom that stops short of walls: the mouse wheel moves it from first person, where the head is hidden, out to 15 yards. In VR the player stands in the body, whose head is always hidden, and it turns to follow where they look once the head has turned far, or as they move. Its hands aren't the tracked ones.
+
 ## Settings
 
-`--server=host` and `--character=Name`, or `[server]` in `settings.cfg` with `host`, `account`, `password` and `character`. `WOWVR_AC_USER` and `WOWVR_AC_PASS` override the account. Checks, tours, benchmarks and screenshots stay offline unless given `--server=`. `tools/ac-probe` logs in the same way and prints what the server shows, without Godot.
+The login screen is the usual way in. `--server=host` and `--character=Name` skip it, as does `[server]` in `settings.cfg` with `host`, `account`, `password` and `character`, the earlier way. `WOWVR_AC_USER` and `WOWVR_AC_PASS` override the account. `--offline` and `--start=` skip it to play offline, and checks, tours, benchmarks and screenshots skip it unless given `--login` or `--login-check`. `tools/ac-probe` logs in the same way and prints what the server shows, without Godot; `--list` prints the characters and their gear.
 
 ## Consequences
 
@@ -35,7 +52,7 @@
 ## Not done yet
 
 - Game objects still come from spawn files. The server sends them too, holidays and transports included.
-- Other players aren't shown: their models need composing from race, skin, face, hair and gear, not a creature display's baked texture.
+- Other players aren't shown yet. The model code for them is done for the player's own body; what's left is reading their looks from the server's player fields and their movement packets.
 - The sky keeps its own time. The server sends its time of day at login (`SMSG_LOGIN_SETTIMESPEED`).
 - Creatures that run, like chasing ones, play their walk faster. Emote states, mounts and display changes after a unit appears are ignored.
-- No queues, realm choice, character creation, reconnecting, or other maps.
+- No queues, reconnecting, or other maps. The character screen's backdrop isn't the client's own per-race scene, which needs the M2's cameras through wow-alchemy's C ABI. New characters wear their class's starting outfit from `CharStartOutfit`.

@@ -5,13 +5,18 @@ public static class Opcodes
 {
     public const ushort CMSG_CHAR_CREATE = 0x036;
     public const ushort CMSG_CHAR_ENUM = 0x037;
+    public const ushort CMSG_CHAR_DELETE = 0x038;
     public const ushort SMSG_CHAR_CREATE = 0x03A;
+    public const ushort SMSG_CHAR_DELETE = 0x03C;
     public const ushort SMSG_CHAR_ENUM = 0x03B;
     public const ushort CMSG_PLAYER_LOGIN = 0x03D;
     public const ushort SMSG_NEW_WORLD = 0x03E;
     public const ushort SMSG_CHARACTER_LOGIN_FAILED = 0x041;
     public const ushort SMSG_LOGIN_SETTIMESPEED = 0x042;
     public const ushort CMSG_LOGOUT_REQUEST = 0x04B;
+    public const ushort SMSG_LOGOUT_RESPONSE = 0x04C;
+    public const ushort SMSG_LOGOUT_COMPLETE = 0x04D;
+    public const ushort CMSG_LOGOUT_CANCEL = 0x04E;
     public const ushort CMSG_NAME_QUERY = 0x050;
     public const ushort SMSG_NAME_QUERY_RESPONSE = 0x051;
     public const ushort CMSG_GAMEOBJECT_QUERY = 0x05E;

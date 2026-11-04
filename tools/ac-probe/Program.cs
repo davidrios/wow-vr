@@ -27,6 +27,25 @@ if (user == "" || pass == "")
 var clock = Stopwatch.StartNew();
 void Log(string s) => Console.WriteLine($"[{clock.Elapsed.TotalSeconds,6:F2}] {s}");
 
+// --list prints the realms and each character's look and gear, without entering the world.
+if (opts.ContainsKey("list"))
+{
+    var (auth, realms) = await AuthClient.LoginAsync(host, 3724, user, pass);
+    foreach (var realm in realms)
+    {
+        Log($"realm #{realm.Id} {realm.Name} ({realm.TypeName}) at {realm.Address}, population {realm.Population}, {realm.Characters} characters{(realm.Offline ? ", offline" : "")}");
+    }
+
+    using var listing = await RealmSession.ConnectAsync(host, auth, realms[0], Log);
+    foreach (var c in await listing.ListCharactersAsync())
+    {
+        Log($"  {c.Name}: race {c.Race} class {c.Class} sex {c.Sex}, skin {c.Skin} face {c.Face} hair {c.HairStyle}/{c.HairColor} facial {c.FacialHair}, level {c.Level}, flags 0x{c.Flags:X}");
+        Log($"    gear: {string.Join(" ", c.Equipment.Select((e, slot) => e.DisplayId == 0 ? null : $"{slot}:{e.DisplayId}/{e.InventoryType}").Where(s => s is not null))}");
+    }
+
+    return 0;
+}
+
 using var session = await RealmSession.OpenAsync(host, user, pass, opts.GetValueOrDefault("char"), Log);
 var start = session.StartPosition;
 Log($"in the world: map {session.MapId} at ({start.X:F1}, {start.Y:F1}, {start.Z:F1}), server time {session.ServerTimeOfDay:F2} h");
@@ -75,6 +94,25 @@ while (clock.Elapsed.TotalSeconds < seconds)
     }
 
     await Task.Delay(50);
+}
+
+// --relog logs out to the character list and enters again on the same connection.
+if (opts.ContainsKey("relog"))
+{
+    var answer = await session.RequestLogoutAsync();
+    Log(answer.Refused is { } refused ? $"logout refused: {refused}" : $"logging out, {(answer.Instant ? "at once" : "after the server's wait")}");
+    if (answer.Refused is null)
+    {
+        await session.WaitForLogoutAsync();
+        var characters = await session.ListCharactersAsync();
+        Log($"back at the character list: {string.Join(", ", characters.Select(c => c.Name))}");
+        await session.EnterWorldAsync(characters.First(c => c.Name == session.Character.Name));
+        Log($"in the world again at ({session.StartPosition.X:F1}, {session.StartPosition.Y:F1}, {session.StartPosition.Z:F1})");
+        await Task.Delay(3000);
+        Log($"{session.Events.Count} events since entering again");
+    }
+
+    return 0;
 }
 
 Log($"{appeared} appeared, {moved} moves, {gone} gone; {units.Count} in view now:");

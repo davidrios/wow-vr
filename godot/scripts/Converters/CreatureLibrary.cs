@@ -35,6 +35,13 @@ public sealed class CreatureSkeletonAsset
     public required IdleClip[] IdleClips { get; init; }
     public string? WalkClip { get; init; }
     public float WalkSpeed { get; init; }
+
+    /// <summary>The run, when the model has one apart from its walk.</summary>
+    public string? RunClip { get; init; }
+    public float RunSpeed { get; init; }
+
+    /// <summary>The head's key bone, or -1, so the player's own body can hide it in first person and VR.</summary>
+    public int HeadBone { get; init; } = -1;
     public required Aabb Bounds { get; init; }
 
     /// <summary>By clip name, sorted by time. Clips with no sounds aren't listed.</summary>
@@ -68,6 +75,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
 
     /// <summary>Key bones of each hand's five fingers, as in WoWModelViewer's enums.h.</summary>
     private const int FirstRightFinger = 8;
+    private const int HeadKeyBone = 6;
     private const int FirstLeftFinger = 13;
     private const int FingersPerHand = 5;
 
@@ -83,14 +91,46 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
     /// <summary>Null for a display that's unknown or can't be read.</summary>
     public CreatureAsset? Build(int displayId, int[] weapons)
     {
+        if (displays.Resolve(displayId) is not { } look)
+        {
+            GD.PushWarning($"Unknown creature display: {displayId}");
+            return null;
+        }
+
+        return Build(look, weapons, $"creature display {displayId}");
+    }
+
+    /// <summary>A player character, with its body texture painted from its skin, face, hair and gear. Null if it can't be made.</summary>
+    public CreatureAsset? BuildCharacter(CharacterAppearance appearance)
+    {
+        if (displays.ResolveCharacter(appearance) is not { } look)
+        {
+            GD.PushWarning($"No character model for race {appearance.Race}, sex {appearance.Sex}");
+            return null;
+        }
+
         try
         {
-            if (displays.Resolve(displayId) is not { } look)
+            if (look.BodyLayers is { } layers)
             {
-                GD.PushWarning($"Unknown creature display: {displayId}");
-                return null;
+                var painted = CharacterTexture.Compose(layers, source.Read);
+                var image = Image.CreateFromData(painted.Width, painted.Height, false, Image.Format.Rgba8, painted.Rgba8);
+                image.GenerateMipmaps();
+                models.AddTexture(look.Textures[M2TextureTypes.Body], ImageTexture.CreateFromImage(image));
             }
+        }
+        catch (WowAlchemyException e)
+        {
+            GD.PushWarning($"Could not paint a character's body: {e.Message}");
+        }
 
+        return Build(look, appearance.Weapons, $"character race {appearance.Race} sex {appearance.Sex}");
+    }
+
+    private CreatureAsset? Build(CreatureLook look, int[] weapons, string label)
+    {
+        try
+        {
             if (_models.GetOrAdd(look.Model, LoadModel) is not { } model)
             {
                 return null;
@@ -99,7 +139,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             var mesh = BuildMesh(model.Data, look, skinned: true, model.Skeleton.Bounds);
             if (mesh is null)
             {
-                GD.PushWarning($"Creature display {displayId} has nothing to draw: {look.Model}");
+                GD.PushWarning($"The {label} has nothing to draw: {look.Model}");
                 return null;
             }
 
@@ -129,7 +169,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         }
         catch (WowAlchemyException e)
         {
-            GD.PushWarning($"Could not read creature display {displayId}: {e.Message}");
+            GD.PushWarning($"Could not read the {label}: {e.Message}");
             return null;
         }
     }
@@ -256,6 +296,8 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         var idle = new List<IdleClip>();
         string? walk = null;
         var walkSpeed = 0f;
+        string? run = null;
+        var runSpeed = 0f;
         var bounds = new Aabb();
         var hasBounds = false;
         foreach (var clip in data.Clips)
@@ -297,6 +339,12 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                 walk = name;
                 walkSpeed = sequence.MovementSpeed;
             }
+
+            if (sequence.Id == M2SequenceIds.Run)
+            {
+                run = name;
+                runSpeed = sequence.MovementSpeed;
+            }
         }
 
         if (!hasBounds || bounds.Size.Y < MinBoundsSize)
@@ -314,6 +362,9 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             LeftFist = leftFist,
             WalkClip = walk,
             WalkSpeed = walkSpeed,
+            RunClip = run != walk ? run : null,
+            RunSpeed = runSpeed,
+            HeadBone = Array.FindIndex(data.Bones, b => b.KeyBone == HeadKeyBone),
             Bounds = bounds,
             ClipSounds = clipSounds,
             Billboards = data.Bones

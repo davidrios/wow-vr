@@ -216,7 +216,10 @@ Decided on 2026-11-03 to play on an AzerothCore server instead of our own Godot 
 - Game objects from the server, holidays and transports included, instead of spawn files.
 - Other players: their characters drawn from race, sex, skin, face, hair and gear, moving as the server says.
 - The sky's time from the server's clock.
-- Settings for the server and account in the menu, and offline as a choice there.
+- Login, realm and character screens, with character making and deleting, laid out like VRChat's menus with a virtual keyboard in VR, in the game's colors. Done.
+- The player's own body: third person on desktop, standing in it in VR. Done.
+- A game menu: back to the character list, log out, exit, and the settings behind it. Done. New characters in their starting outfit. Done.
+- The character screen's backdrop from the client's per-race scenes, if the cosmic void is replaced.
 - Voice, and VR head and hands, if wanted: a small side channel beside the server's protocol.
 
 **Done when:** two people log in to the same server, meet in Goldshire, and see each other and the same patrolling guard.

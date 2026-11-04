@@ -21,13 +21,21 @@ public sealed class WorldConnection : IDisposable
     Rc4? _decrypt;
     Rc4? _encrypt;
 
-    public async Task ConnectAsync(string host, int port, string account, byte[] sessionKey, byte realmId)
+    public async Task ConnectAsync(string host, int port, string account, byte[] sessionKey, byte realmId, CancellationToken ct = default)
     {
-        await _tcp.ConnectAsync(host, port);
+        try
+        {
+            await _tcp.ConnectAsync(host, port, ct);
+        }
+        catch (SocketException e)
+        {
+            throw new IOException($"Couldn't reach the realm at {host}:{port}: {e.Message}");
+        }
+
         _tcp.NoDelay = true;
         _stream = _tcp.GetStream();
 
-        var challenge = await ReceiveAsync();
+        var challenge = await ReceiveAsync(ct);
         if (challenge.Opcode != Opcodes.SMSG_AUTH_CHALLENGE)
             throw new IOException($"expected the auth challenge, got 0x{challenge.Opcode:X3}");
         var r = challenge.Reader();

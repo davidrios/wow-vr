@@ -7,8 +7,9 @@ using Godot;
 namespace WowVR.Ui;
 
 /// <summary>
-/// Landmarks and movement settings. Desktop shows it on screen and VR on the wrist,
-/// so it talks to the player and world without knowing which.
+/// The game menu, then landmarks and settings behind its Options. Desktop shows it on screen and
+/// VR on the wrist, so it talks to the player and world without knowing which. What the game menu
+/// offers, such as going back to the character list, comes from whoever started the world.
 /// </summary>
 public partial class WorldMenu : PanelContainer
 {
@@ -20,6 +21,9 @@ public partial class WorldMenu : PanelContainer
     private HSlider _time = null!;
     private CheckButton _timePasses = null!;
     private SkyController? _sky;
+    private VBoxContainer _gamePage = null!;
+    private VBoxContainer _gameActions = null!;
+    private Label _gameStatus = null!;
     private VBoxContainer _mainPage = null!;
     private VBoxContainer _videoPage = null!;
     private readonly List<Action> _refreshVideo = [];
@@ -30,6 +34,7 @@ public partial class WorldMenu : PanelContainer
 
     public override void _Ready()
     {
+        Theme = GlueTheme.Compact;
         var margin = new MarginContainer();
         foreach (var side in new[] { "left", "right", "top", "bottom" })
         {
@@ -42,10 +47,14 @@ public partial class WorldMenu : PanelContainer
         margin.AddChild(pages);
         var rows = Page();
         _mainPage = rows;
+        _mainPage.Visible = false;
         _videoPage = Page();
         _videoPage.Visible = false;
+        _gamePage = Page();
+        pages.AddChild(_gamePage);
         pages.AddChild(rows);
         pages.AddChild(_videoPage);
+        BuildGamePage(_gamePage);
         BuildVideoPage(_videoPage);
         AppSettings.Changed += RefreshVideoPage;
 
@@ -157,9 +166,84 @@ public partial class WorldMenu : PanelContainer
         ambience.ValueChanged += value => AppSettings.AmbienceVolume = (float)value;
         rows.AddChild(ambience);
 
-        var close = new Button { Text = "Close" };
+        var bottom = new HBoxContainer();
+        var back = new Button { Text = "Game menu", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        back.Pressed += ShowGamePage;
+        var close = new Button { Text = "Close", SizeFlagsHorizontal = SizeFlags.ExpandFill };
         close.Pressed += () => CloseRequested?.Invoke();
-        rows.AddChild(close);
+        bottom.AddChild(back);
+        bottom.AddChild(close);
+        rows.AddChild(bottom);
+    }
+
+    /// <summary>As the game's own Esc menu: back to the game, the actions the world was given, options and video.</summary>
+    private void BuildGamePage(VBoxContainer page)
+    {
+        page.AddThemeConstantOverride("separation", 12);
+        page.AddChild(new Label
+        {
+            Text = "Game Menu",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            LabelSettings = new LabelSettings { FontSize = 30, FontColor = GlueTheme.Text, OutlineSize = 4, OutlineColor = Colors.Black },
+        });
+
+        var resume = Big("Return to game");
+        resume.Pressed += () => CloseRequested?.Invoke();
+        page.AddChild(resume);
+
+        _gameActions = new VBoxContainer();
+        _gameActions.AddThemeConstantOverride("separation", 12);
+        page.AddChild(_gameActions);
+
+        var options = Big("Options");
+        options.Pressed += () => ShowPage(_mainPage);
+        page.AddChild(options);
+        var video = Big("Video");
+        video.Pressed += () => ShowPage(_videoPage);
+        page.AddChild(video);
+
+        _gameStatus = new Label
+        {
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            LabelSettings = new LabelSettings { FontSize = 17, FontColor = GlueTheme.Muted },
+        };
+        page.AddChild(_gameStatus);
+    }
+
+    private static Button Big(string text) => new() { Text = text, CustomMinimumSize = new Vector2(0, 56) };
+
+    /// <summary>The game menu's own actions, between Return to game and Options, in order.</summary>
+    public void SetGameActions(IEnumerable<(string Text, Action Pressed)> actions)
+    {
+        foreach (var child in _gameActions.GetChildren())
+        {
+            child.QueueFree();
+        }
+
+        foreach (var (text, pressed) in actions)
+        {
+            var button = Big(text);
+            button.Pressed += pressed;
+            _gameActions.AddChild(button);
+        }
+    }
+
+    /// <summary>A line under the game menu's buttons, such as a logout's countdown or why it was refused.</summary>
+    public void SetGameStatus(string text, bool error = false)
+    {
+        _gameStatus.Text = text;
+        _gameStatus.LabelSettings.FontColor = error ? GlueTheme.Error : GlueTheme.Muted;
+    }
+
+    /// <summary>Opening the menu starts at the game menu.</summary>
+    public void ShowGamePage() => ShowPage(_gamePage);
+
+    private void ShowPage(VBoxContainer page)
+    {
+        _gamePage.Visible = page == _gamePage;
+        _mainPage.Visible = page == _mainPage;
+        _videoPage.Visible = page == _videoPage;
     }
 
     public override void _ExitTree() => AppSettings.Changed -= RefreshVideoPage;
@@ -171,11 +255,8 @@ public partial class WorldMenu : PanelContainer
         return page;
     }
 
-    public void ShowVideoPage(bool show)
-    {
-        _mainPage.Visible = !show;
-        _videoPage.Visible = show;
-    }
+    /// <summary>The video page, or the options with landmarks and settings.</summary>
+    public void ShowVideoPage(bool show) => ShowPage(show ? _videoPage : _mainPage);
 
     /// <summary>
     /// What costs frame time, cheapest to lose first. The numbers are from <c>--bench</c> on a fast

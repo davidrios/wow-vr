@@ -847,6 +847,62 @@ public class ClientCreatureTests(ClientFixture client) : IClassFixture<ClientFix
         Assert.Equal(0, table.ItemDisplayOf(int.MaxValue));
     }
 
+    /// <summary>An undead warrior in a mix of gear, as a character list gives one: every piece of the body texture is found.</summary>
+    [Fact]
+    public void PlayerCharactersPaintTheirBody()
+    {
+        var table = CreatureDisplayTable.Read(Source);
+        var gear = new int[(int)EquipmentSlot.Count];
+        gear[(int)EquipmentSlot.Shoulders] = 29964;
+        gear[(int)EquipmentSlot.Shirt] = 9995;
+        gear[(int)EquipmentSlot.Chest] = 29958;
+        gear[(int)EquipmentSlot.Waist] = 16663;
+        gear[(int)EquipmentSlot.Legs] = 3442;
+        gear[(int)EquipmentSlot.Feet] = 6903;
+        gear[(int)EquipmentSlot.Hands] = 16657;
+        gear[(int)EquipmentSlot.MainHand] = 23904;
+
+        var look = table.ResolveCharacter(new CharacterAppearance(5, 0, 5, 4, 1, 3, 3, gear));
+
+        Assert.NotNull(look);
+        Assert.Equal(@"Character\Scourge\Male\ScourgeMale.m2", look.Model, ignoreCase: true);
+        Assert.NotNull(look.BodyLayers);
+        Assert.Contains(look.BodyLayers, l => l.Region == BodyRegion.Base);
+        Assert.All(look.BodyLayers, l => Assert.Contains(l.Candidates, c => Source.Read(c) is { Length: > 0 }));
+        Assert.Contains(look.Items, i => i.Model.Contains("Shoulder", StringComparison.OrdinalIgnoreCase));
+
+        var painted = CharacterTexture.Compose(look.BodyLayers, Source.Read);
+        Assert.Equal(CharacterTexture.Size, painted.Width);
+        Assert.All(Enumerable.Range(0, 64), i => Assert.Equal(255, painted.Rgba8[i * 4096 * 4 + 3]));
+    }
+
+    /// <summary>A new human warrior wears the shirt, pants and boots the game starts them in, and holds a weapon.</summary>
+    [Fact]
+    public void NewCharactersWearTheirStartingOutfit()
+    {
+        var (gear, types) = CreatureDisplayTable.Read(Source).StartOutfit(1, 1, 0);
+
+        Assert.NotEqual(0, gear[(int)EquipmentSlot.Chest] + gear[(int)EquipmentSlot.Shirt]);
+        Assert.NotEqual(0, gear[(int)EquipmentSlot.Legs]);
+        Assert.NotEqual(0, gear[(int)EquipmentSlot.MainHand]);
+        Assert.NotEqual(0, types[(int)EquipmentSlot.Legs]);
+    }
+
+    [Fact]
+    public void EveryRaceAndSexHasChoices()
+    {
+        var table = CreatureDisplayTable.Read(Source);
+        foreach (var race in new[] { 1, 2, 3, 4, 5, 6, 7, 8, 10, 11 })
+        {
+            foreach (var sex in new[] { 0, 1 })
+            {
+                var choices = table.ChoicesFor(race, sex, deathKnight: false);
+                Assert.True(choices.Skins > 1 && choices.Faces > 1 && choices.HairStyles > 1, $"race {race} sex {sex}: {choices}");
+                Assert.NotNull(table.ResolveCharacter(new CharacterAppearance(race, sex, 0, 0, 0, 0, 0, new int[(int)EquipmentSlot.Count])));
+            }
+        }
+    }
+
     [Fact]
     public void UnknownDisplaysResolveToNothing() =>
         Assert.Null(CreatureDisplayTable.Read(Source).Resolve(int.MaxValue));

@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Ui/GluePanel.cs" id="1_panel"]
+
+[node name="GluePanel" type="PanelContainer"]
+custom_minimum_size = Vector2(620, 1000)
+offset_right = 620.0
+offset_bottom = 1000.0
+script = ExtResource("1_panel")

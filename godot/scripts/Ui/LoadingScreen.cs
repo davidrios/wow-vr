@@ -1,18 +1,23 @@
 using System;
+using WowVR.Converters;
 using WowVR.World;
 using Godot;
 
 namespace WowVR.Ui;
 
 /// <summary>
-/// Hides the world while it loads: a starry void around the head and, floating in it, a panel
+/// Hides the world while it loads: a starry void around the head, with Outland's sky in it once
+/// the client is open, and, floating in it, a panel
 /// with the map's picture and a progress bar. It stays where it is as the head turns, and comes
 /// back round if the player looks well away. It's all in 3D, so it works the same in both modes.
 /// </summary>
 public partial class LoadingScreen : Node3D
 {
     private const uint ScreenLayer = 1u << 19;
-    private const int BackdropPriority = 126;
+    private const int BackdropPriority = 124;
+
+    /// <summary>The sky draws over the stars, and its fog, one higher, over the sky's lower edge.</summary>
+    private const int SkyPriority = 125;
     private const int PanelPriority = 127;
 
     private const float BackdropRadius = 400f;
@@ -79,6 +84,7 @@ public partial class LoadingScreen : Node3D
     private IPlayer? _player;
 
     private MeshInstance3D _backdrop = null!;
+    private CosmicSky? _sky;
     private MeshInstance3D _panel = null!;
     private ShaderMaterial _backdropMaterial = null!;
     private ShaderMaterial _panelMaterial = null!;
@@ -133,6 +139,25 @@ public partial class LoadingScreen : Node3D
         Show(Stage.Loading);
         SetFade(1f);
         SetVolume(0f);
+    }
+
+    /// <summary>
+    /// Puts a zone's sky from the client in the void, Hellfire Peninsula's, over its stars and under the
+    /// panel, with a fog in its colors below, and tints the void to match.
+    /// </summary>
+    public void SetSky(ModelLibrary models, VoidLook look)
+    {
+        if (_sky is not null)
+        {
+            return;
+        }
+
+        _backdropMaterial.SetShaderParameter("top_color", look.Top);
+        _backdropMaterial.SetShaderParameter("horizon_color", look.Horizon);
+        _backdropMaterial.SetShaderParameter("bottom_color", look.Fog);
+        _sky = new CosmicSky { Name = "Sky", Layers = ScreenLayer, Priority = SkyPriority, Weight = _fade };
+        AddChild(_sky);
+        _sky.Load(models, look);
     }
 
     /// <summary>What the bar and the wait for the world follow, once there is one.</summary>
@@ -331,6 +356,7 @@ public partial class LoadingScreen : Node3D
     {
         _fade = fade;
         _backdropMaterial.SetShaderParameter("fade", fade);
+        _sky?.Weight = fade;
 
         // Fades quicker than the void, so the panel never hangs in the open world.
         _panelMaterial.SetShaderParameter("fade", Mathf.Clamp(fade * 2f - 1f, 0f, 1f));
@@ -425,7 +451,7 @@ public partial class LoadingScreen : Node3D
         };
         AddChild(_page);
 
-        var root = new Control { Size = new Vector2(PageWidth, PageHeight) };
+        var root = new Control { Size = new Vector2(PageWidth, PageHeight), Theme = GlueTheme.Theme };
         _page.AddChild(root);
 
         root.AddChild(new ColorRect { Color = new Color(0.03f, 0.04f, 0.09f), Size = root.Size });
@@ -459,7 +485,7 @@ public partial class LoadingScreen : Node3D
             Size = new Vector2(PageWidth - margin * 2f, 110f),
         };
         _title.AddThemeFontSizeOverride("font_size", 84);
-        _title.AddThemeColorOverride("font_color", new Color(0.98f, 0.95f, 0.86f));
+        _title.AddThemeColorOverride("font_color", GlueTheme.Text);
         _title.AddThemeColorOverride("font_shadow_color", new Color(0, 0, 0, 0.8f));
         _title.AddThemeConstantOverride("shadow_offset_y", 4);
         root.AddChild(_title);
@@ -470,7 +496,7 @@ public partial class LoadingScreen : Node3D
             Size = new Vector2(PageWidth - margin * 2f, 50f),
         };
         _status.AddThemeFontSizeOverride("font_size", 38);
-        _status.AddThemeColorOverride("font_color", new Color(0.72f, 0.78f, 0.92f));
+        _status.AddThemeColorOverride("font_color", GlueTheme.Muted);
         root.AddChild(_status);
 
         _progress = new ProgressBar
@@ -483,7 +509,7 @@ public partial class LoadingScreen : Node3D
             Size = new Vector2(PageWidth - margin * 2f, 24f),
         };
         _progress.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(1, 1, 1, 0.14f), CornerRadiusBottomLeft = 12, CornerRadiusBottomRight = 12, CornerRadiusTopLeft = 12, CornerRadiusTopRight = 12 });
-        _progress.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = new Color(0.98f, 0.8f, 0.36f), CornerRadiusBottomLeft = 12, CornerRadiusBottomRight = 12, CornerRadiusTopLeft = 12, CornerRadiusTopRight = 12 });
+        _progress.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = new Color(0.7f, 0.08f, 0.04f), CornerRadiusBottomLeft = 12, CornerRadiusBottomRight = 12, CornerRadiusTopLeft = 12, CornerRadiusTopRight = 12 });
         root.AddChild(_progress);
     }
 }

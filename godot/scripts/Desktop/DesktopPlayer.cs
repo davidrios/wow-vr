@@ -5,7 +5,8 @@ namespace WowVR.Desktop;
 
 /// <summary>
 /// Click to capture the mouse, Esc to release it. WASD walks, Shift goes faster, F toggles
-/// flying, Q/E go down/up while flying or swimming, and Tab opens the menu.
+/// flying, Q/E go down/up while flying or swimming, Tab opens the menu, and the mouse wheel
+/// moves the camera out behind the character or back into first person.
 /// </summary>
 public partial class DesktopPlayer : CharacterBody3D, IPlayer
 {
@@ -29,7 +30,14 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     /// <summary>How far ahead to look for a step, in yards.</summary>
     private const float StepProbe = 0.3f;
 
+    /// <summary>How far behind the eyes the camera can go, and how far each wheel step moves it, in yards.</summary>
+    private const float MaxZoom = 15f;
+    private const float ZoomStep = 1f;
+    private const float DefaultZoom = 4f;
+
     private Camera3D _camera = null!;
+    private SpringArm3D _boom = null!;
+    private float _zoom;
     private CapsuleShape3D _capsule = null!;
     private CollisionShape3D _shape = null!;
     private CanvasLayer _menuLayer = null!;
@@ -61,13 +69,21 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         set
         {
             _pitch = Mathf.DegToRad(value);
-            _camera.Rotation = new Vector3(_pitch, 0, 0);
+            _boom.Rotation = new Vector3(_pitch, 0, 0);
         }
     }
 
     public override void _Ready()
     {
         _camera = GetNode<Camera3D>("Camera");
+
+        // The camera hangs behind the eyes on a boom that stops short of walls, as WoW's does.
+        _boom = new SpringArm3D { Name = "Boom", CollisionMask = 1, Margin = 0.2f, Shape = new SphereShape3D { Radius = 0.2f } };
+        AddChild(_boom);
+        _boom.AddExcludedObject(GetRid());
+        RemoveChild(_camera);
+        _boom.AddChild(_camera);
+        _camera.Position = Vector3.Zero;
         _shape = GetNode<CollisionShape3D>("Collision");
         _capsule = (CapsuleShape3D)_shape.Shape;
         _menuLayer = GetNode<CanvasLayer>("MenuLayer");
@@ -99,8 +115,54 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         Velocity = keepVelocity ? Velocity : Vector3.Zero;
     }
 
+    private bool _uiMode;
+
+    public Transform3D Eyes => _camera.GlobalTransform;
+
+    /// <summary>
+    /// There's a character to see, so the camera can move out behind it. Without one, as offline,
+    /// it stays in first person.
+    /// </summary>
+    public bool HasBody
+    {
+        get => _hasBody;
+        set
+        {
+            _hasBody = value;
+            Zoom = value ? DefaultZoom : 0f;
+        }
+    }
+
+    private bool _hasBody;
+
+    /// <summary>How far behind the eyes the camera is, in yards. Under half a yard is first person.</summary>
+    public float Zoom
+    {
+        get => _zoom;
+        set
+        {
+            _zoom = Mathf.Clamp(value, 0f, MaxZoom);
+            _boom.SpringLength = _zoom * AppSettings.WorldScale;
+        }
+    }
+
+    public bool FirstPerson => _zoom < 0.5f;
+
+    public void SetUiMode(bool on)
+    {
+        _uiMode = on;
+        Held = on;
+        _camera.Current = !on;
+        Input.MouseMode = on ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+    }
+
     public void SetMenuOpen(bool open)
     {
+        if (open && !_menuLayer.Visible)
+        {
+            Menu.ShowGamePage();
+        }
+
         _menuLayer.Visible = open;
         Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
     }
@@ -108,7 +170,7 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     private void ApplySettings()
     {
         var scale = AppSettings.WorldScale;
-        _camera.Position = new Vector3(0, EyeHeightMeters * scale, 0);
+        _boom.Position = new Vector3(0, EyeHeightMeters * scale, 0);
         _camera.Fov = AppSettings.FieldOfView;
         _capsule.Radius = BodyRadiusMeters * scale;
         _capsule.Height = BodyHeightMeters * scale;
@@ -119,13 +181,16 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     {
         switch (@event)
         {
-            case InputEventMouseButton { Pressed: true } when !_menuLayer.Visible:
+            case InputEventMouseButton { Pressed: true } when !_menuLayer.Visible && !_uiMode:
                 Input.MouseMode = Input.MouseModeEnum.Captured;
                 break;
 
-            case InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.Escape }:
-                _menuLayer.Visible = false;
-                Input.MouseMode = Input.MouseModeEnum.Visible;
+            // Esc opens and closes the game menu, as in the game.
+            case InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.Escape } when !_uiMode:
+                SetMenuOpen(!_menuLayer.Visible);
+                break;
+
+            case InputEventKey when _uiMode:
                 break;
 
             case InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.Tab }:
@@ -139,7 +204,12 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
             case InputEventMouseMotion motion when Input.MouseMode == Input.MouseModeEnum.Captured:
                 RotateY(-motion.Relative.X * MouseSensitivity);
                 _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * MouseSensitivity, -Mathf.Pi / 2, Mathf.Pi / 2);
-                _camera.Rotation = new Vector3(_pitch, 0, 0);
+                _boom.Rotation = new Vector3(_pitch, 0, 0);
+                break;
+
+            case InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelUp or MouseButton.WheelDown } wheel
+                when Input.MouseMode == Input.MouseModeEnum.Captured && HasBody:
+                Zoom = _zoom + (wheel.ButtonIndex == MouseButton.WheelDown ? ZoomStep : -ZoomStep);
                 break;
         }
     }

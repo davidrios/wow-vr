@@ -460,7 +460,7 @@ public partial class GameHud : Control
 
                 foreach (var quest in gossip.Quests)
                 {
-                    AddButton($"[{quest.Level}] {quest.Title}", () => _world.Session.QueryQuest(gossip.Npc, quest.Id), GlueTheme.Accent);
+                    AddButton($"[{quest.Level}] {quest.Title}", () => _world.Session.ChooseGossipQuest(gossip.Npc, quest), GlueTheme.Accent);
                 }
 
                 break;
@@ -535,7 +535,7 @@ public partial class GameHud : Control
                 AddItems("Required items:", quest.Rewards);
                 if (quest.Completable)
                 {
-                    AddButton("Continue", () => _world.Session.CompleteQuest(quest.Npc, quest.QuestId), GlueTheme.Accent);
+                    AddButton("Continue", () => _world.Session.RequestQuestReward(quest.Npc, quest.QuestId), GlueTheme.Accent);
                 }
                 else
                 {

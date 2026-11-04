@@ -67,6 +67,11 @@ public partial class PlayCheck : Node
             }
         };
         Server.Dialog += e => _dialog ??= e is GossipClosed ? null : e;
+        Server.ChatLine += line =>
+        {
+            _questDone |= line.Text == "Quest completed.";
+            _alreadyOn |= line.Text == "You are already on that quest.";
+        };
         Server.Session.Events.Enqueue(new ChatReceived(new ChatLine(ChatKind.Notice, "", "Play check starting")));
 
         var arguments = OS.GetCmdlineUserArgs();
@@ -232,11 +237,17 @@ public partial class PlayCheck : Node
     /// </summary>
     private void AddFullSteps()
     {
+        Step("mouse: right-drag turns, left-drag orbits, clicks select and use", Mouse);
         Step("buy and sell at a vendor", Vendor);
         Step("equip and remove", Equip);
-        Step("strafe, back and swim clips", Clips);
+        Step("strafe and back clips", Clips);
+        GoTo("go to Brill", new System.Numerics.Vector3(2269, 244, 34));
+        Step("accept and hand in a quest", Quest);
         GoTo("go hunting on Tirisfal's coast", new System.Numerics.Vector3(2520, 1470, 2));
         Step("kill and loot", KillAndLoot);
+        GoTo("go into the sea", new System.Numerics.Vector3(2680, 1428, 0));
+        Step("swim clips", Swim);
+        Step("die, release and return at the spirit healer", SpiritHealer);
         GoTo("go to Undercity's Portal to Blasted Lands", new System.Numerics.Vector3(1771, 57, -46));
         Step("click a portal", Portal);
     }
@@ -250,6 +261,108 @@ public partial class PlayCheck : Node
 
         return age > 8 && Loaded ? true : null;
     });
+
+    private float _yawBefore;
+    private Basis _cameraBefore;
+    private ulong _clicked;
+
+    /// <summary>WoW's mouse, as real events through the viewport, so they reach the player as the mouse's would.</summary>
+    private bool? Mouse(double age)
+    {
+        if (Player is not DesktopPlayer desktop)
+        {
+            return true;
+        }
+
+        var camera = GetViewport().GetCamera3D();
+        var center = GetViewport().GetVisibleRect().Size / 2;
+        void Button(MouseButton button, bool pressed, Vector2 at) =>
+            Input.ParseInputEvent(new InputEventMouseButton { ButtonIndex = button, Pressed = pressed, Position = at, GlobalPosition = at });
+        void Drag(float x) => Input.ParseInputEvent(new InputEventMouseMotion { Relative = new Vector2(x, 0), Position = center, GlobalPosition = center });
+
+        if (First)
+        {
+            (_phase, _phaseAt, _dialog) = (0, 0, null);
+        }
+
+        switch (_phase)
+        {
+            case 0:
+                _yawBefore = desktop.Rotation.Y;
+                Button(MouseButton.Right, true, center);
+                Drag(120);
+                Button(MouseButton.Right, false, center);
+                NextPhase(age);
+                break;
+            case 1 when age - _phaseAt > 0.3:
+                var turned = Mathf.AngleDifference(_yawBefore, desktop.Rotation.Y);
+                Note($"  right-drag turned the character {Mathf.RadToDeg(turned):F0} degrees");
+                if (Mathf.Abs(turned) < 0.1f)
+                {
+                    return false;
+                }
+
+                _yawBefore = desktop.Rotation.Y;
+                _cameraBefore = camera!.GlobalBasis;
+                Button(MouseButton.Left, true, center);
+                Drag(120);
+                Button(MouseButton.Left, false, center);
+                NextPhase(age);
+                break;
+            case 2 when age - _phaseAt > 0.3:
+                var bodyTurn = Mathf.AngleDifference(_yawBefore, desktop.Rotation.Y);
+                var cameraTurn = Mathf.AngleDifference(_cameraBefore.GetEuler().Y, camera!.GlobalBasis.GetEuler().Y);
+                Note($"  left-drag turned the camera {Mathf.RadToDeg(cameraTurn):F0} degrees and the character {Mathf.RadToDeg(bodyTurn):F0}");
+                if (Mathf.Abs(cameraTurn) < 0.1f || Mathf.Abs(bodyTurn) > 0.01f)
+                {
+                    return false;
+                }
+
+                // Face the nearest friendly NPC, so a click can find it on screen.
+                if (Nearest(u => u.IsNpc && !u.IsDead && Server.ReactionTo(u) != Reaction.Hostile) is not { } npc)
+                {
+                    Note("  no NPC in view to click");
+                    return false;
+                }
+
+                _clicked = (ulong)npc.Guid;
+                var away = npc.Node.GlobalPosition - desktop.GlobalPosition;
+                desktop.Rotation = new Vector3(0, Mathf.Atan2(-away.X, -away.Z), 0);
+                desktop.PitchDegrees = -10;
+                Server.SetTarget(0);
+                NextPhase(age);
+                break;
+            case 3 when age - _phaseAt > 0.5:
+                var node = Creatures.LiveNode((long)_clicked)!;
+                var at = camera!.UnprojectPosition(node.GlobalPosition + (Vector3.Up * node.Height * 0.5f));
+                Note($"  left-clicking {Server.Units[_clicked].Name} at ({at.X:F0}, {at.Y:F0}) on screen");
+                Button(MouseButton.Left, true, at);
+                Button(MouseButton.Left, false, at);
+                NextPhase(age);
+                break;
+            case 4 when age - _phaseAt > 0.3:
+                Note($"  target: {(Server.TargetStats is { } t ? t.Name : "none")}");
+                if (Server.Target != _clicked)
+                {
+                    return false;
+                }
+
+                var again = Creatures.LiveNode((long)_clicked)!;
+                var spot = camera!.UnprojectPosition(again.GlobalPosition + (Vector3.Up * again.Height * 0.5f));
+                Button(MouseButton.Right, true, spot);
+                Button(MouseButton.Right, false, spot);
+                NextPhase(age);
+                break;
+            case 5 when _dialog is { } opened:
+                Note($"  right-click opened {opened.GetType().Name}");
+                Shot("right-click");
+                Ui.GameHud? hud = GetParent().GetNodeOrNull<Ui.GameHud>("HudLayer/Hud");
+                hud?.CloseTopWindow();
+                return true;
+        }
+
+        return age - _phaseAt > 8 ? false : null;
+    }
 
     private ulong _vendorNpc;
     private VendorItem? _bought;
@@ -426,7 +539,7 @@ public partial class PlayCheck : Node
             return true;
         }
 
-        // Each clip for a second and a half, then a picture of the body.
+        // Each clip for a second and a half, then a picture of the body and the clip's name.
         (string Name, Vector2 Intent)[] moves = [("strafe-left", new Vector2(1, 0)), ("back", new Vector2(0, -1)), ("back-right", new Vector2(-1, -1)), ("forward-left", new Vector2(1, 1))];
         var index = (int)(age / 1.5);
         if (index < moves.Length)
@@ -436,30 +549,280 @@ public partial class PlayCheck : Node
             {
                 _shotClip = index + 1;
                 Shot(moves[index].Name);
+                var clip = Server.Avatar?.BodyClip ?? "";
+                _clips.Add(clip);
+                Note($"  {moves[index].Name}: clip {clip}");
             }
 
             return null;
         }
 
         desktop.ScriptedIntent = null;
-        if (index == moves.Length && _shotClip == moves.Length)
-        {
-            // Swimming needs water: the clip is chosen from the player's state, so pretend it.
-            desktop.SetSwimming(true, desktop.Feet.Y + 10);
-            desktop.ScriptedIntent = new Vector2(0, 1);
-            _shotClip++;
-        }
 
-        if (age > (moves.Length + 1.2) * 1.5 && _shotClip == moves.Length + 1)
+        // Strafing runs (5) or walks (4) turned; going back plays walking backwards (13).
+        return _clips.Count == moves.Length && _clips[1].StartsWith("13_") && _clips[2].StartsWith("13_") && _clips[0] is ['4' or '5', '_', ..];
+    }
+
+    private readonly List<string> _clips = [];
+
+    /// <summary>In the sea: forward plays swimming (42), back swimming backwards (45), still the swimming idle (41).</summary>
+    private bool? Swim(double age)
+    {
+        if (Player is not DesktopPlayer desktop)
         {
-            Shot("swim");
-            desktop.ScriptedIntent = null;
-            desktop.SetSwimming(false, 0);
-            _shotClip++;
             return true;
         }
 
-        return null;
+        if (First)
+        {
+            _swimClips.Clear();
+        }
+
+        (string Name, Vector2 Intent, string Clip)[] moves = [("swim-still", Vector2.Zero, "41_"), ("swim", new Vector2(0, 1), "42_"), ("swim-back", new Vector2(0, -1), "45_")];
+        var index = (int)(age / 2);
+        if (index < moves.Length)
+        {
+            desktop.ScriptedIntent = moves[index].Intent;
+            if (age - (index * 2) > 1.6 && _swimClips.Count == index)
+            {
+                var clip = Server.Avatar?.BodyClip ?? "";
+                _swimClips.Add(clip);
+                Shot(moves[index].Name);
+                Note($"  {moves[index].Name}: swimming {desktop.Swimming}, clip {clip}");
+            }
+
+            return null;
+        }
+
+        desktop.ScriptedIntent = null;
+        return _swimClips.Count == moves.Length && Enumerable.Range(0, moves.Length).All(i => _swimClips[i].StartsWith(moves[i].Clip));
+    }
+
+    private readonly List<string> _swimClips = [];
+
+    private readonly Queue<ulong> _questGivers = new();
+    private readonly Queue<ulong> _enders = new();
+    private readonly HashSet<uint> _failedQuests = [];
+    private ulong _questNpc;
+    private uint _quest;
+
+    /// <summary>
+    /// Takes a quest from the nearest quest giver that has one, completes it with a GM command,
+    /// and hands it in to the same giver, choosing the first reward.
+    /// </summary>
+    private bool? Quest(double age)
+    {
+        if (First)
+        {
+            (_phase, _phaseAt, _dialog, _quest) = (0, 0, null, 0);
+            _questGivers.Clear();
+            var feet = ((IPlayer)Player).Feet;
+            foreach (var (guid, _) in Creatures.LiveNodes
+                .Where(n => Server.Units.TryGetValue((ulong)n.Guid, out var u) && u.IsQuestGiver && !u.IsDead && Server.ReactionTo(u) != Reaction.Hostile)
+                .OrderBy(n => n.Node.GlobalPosition.DistanceTo(feet)))
+            {
+                _questGivers.Enqueue((ulong)guid);
+            }
+
+            Note($"  {_questGivers.Count} quest givers in view");
+        }
+
+        switch (_phase)
+        {
+            // Next giver: go to it, then ask what it has.
+            case 0:
+                if (!_questGivers.TryDequeue(out _questNpc))
+                {
+                    return false;
+                }
+
+                if (Creatures.LiveNode((long)_questNpc) is { } node)
+                {
+                    GoNextTo(node);
+                }
+
+                _dialog = null;
+                NextPhase(age);
+                break;
+            case 1 when age - _phaseAt > 3:
+                Server.Session.Interact(Server.Units[_questNpc] with { NpcFlags = NpcFlagMask.QuestGiver });
+                NextPhase(age);
+                break;
+            case 2 when _dialog is QuestShown { Step: QuestStep.RequestItems or QuestStep.OfferReward } open && !_failedQuests.Contains(open.QuestId):
+                // A giver with one quest to take back opens on it.
+                Note($"  {Server.Units[_questNpc].Name} takes back \"{open.Title}\" ({open.QuestId})");
+                _quest = open.QuestId;
+                _dialog = null;
+                (_phase, _phaseAt) = (4, age);
+                break;
+            case 2 when _dialog is GossipShown { Quests.Count: > 0 } list && list.Quests.All(q => q.Icon == 4) && list.Quests.LastOrDefault(q => q.Icon == 4 && !_failedQuests.Contains(q.Id)) is { } takes:
+                // A quest the character is on, which this one takes back: complete it and hand it in.
+                Note($"  {Server.Units[_questNpc].Name} takes back \"{takes.Title}\" ({takes.Id})");
+                _quest = takes.Id;
+                _dialog = null;
+                (_phase, _phaseAt) = (4, age);
+                break;
+            case 2 when _dialog is GossipShown { Quests.Count: > 0 } list:
+                // A new quest first: take it, complete it, and hand it in.
+                var offered = list.Quests.First(q => q.Icon != 4);
+                Note($"  {Server.Units[_questNpc].Name} offers {string.Join(", ", list.Quests.Where(q => q.Icon != 4).Select(q => q.Title))}");
+                _dialog = null;
+                _asked = offered.Id;
+                _alreadyOn = false;
+                Server.Session.QueryQuest(_questNpc, offered.Id);
+                NextPhase(age);
+                break;
+            case 2 when _dialog is QuestShown { Step: QuestStep.Details }:
+                // A giver with one quest shows it at once.
+                NextPhase(age);
+                break;
+            case 2 when _dialog is not null || age - _phaseAt > 4:
+                Note($"  {Server.Units[_questNpc].Name}: {_dialog switch { null => "no answer", GossipShown g => $"gossip, no quests ({g.Options.Count} options)", QuestShown q => $"quest {q.Step}", _ => _dialog.GetType().Name }}");
+                (_phase, _phaseAt) = (0, age);
+                break;
+            case 3 when _alreadyOn:
+                // Taken before: it goes straight to being completed and handed in.
+                _quest = _asked;
+                Note($"  already on quest {_quest}");
+                (_phase, _phaseAt) = (4, age);
+                break;
+            case 3 when _dialog is QuestShown { Step: QuestStep.Details } details:
+                _quest = details.QuestId;
+                Note($"  accepting \"{details.Title}\" ({details.QuestId})");
+                _dialog = null;
+                Server.Session.AcceptQuest(_questNpc, _quest);
+                (_phase, _phaseAt) = (4, age);
+                break;
+            case 4 when age - _phaseAt > 2:
+                Server.Session.Select(Server.Session.SelfGuid);
+                Server.Say($".quest complete {_quest}");
+                NextPhase(age);
+                break;
+            case 5 when age - _phaseAt > 2:
+                // Whoever takes it back: each giver in view, nearest first, until one lists it.
+                _enders.Clear();
+                var feet = ((IPlayer)Player).Feet;
+                foreach (var (guid, _) in Creatures.LiveNodes
+                    .Where(n => Server.Units.TryGetValue((ulong)n.Guid, out var u) && u.IsQuestGiver && !u.IsDead)
+                    .OrderBy(n => n.Node.GlobalPosition.DistanceTo(feet)))
+                {
+                    _enders.Enqueue((ulong)guid);
+                }
+
+                (_phase, _phaseAt) = (8, age);
+                break;
+            case 8:
+                if (!_enders.TryDequeue(out _questNpc))
+                {
+                    Note($"  no giver in view takes back quest {_quest}");
+                    _failedQuests.Add(_quest);
+                    (_phase, _phaseAt) = (0, age);
+                    break;
+                }
+
+                if (Creatures.LiveNode((long)_questNpc) is { } ender)
+                {
+                    GoNextTo(ender);
+                }
+
+                NextPhase(age);
+                break;
+            case 9 when age - _phaseAt > 3:
+                _dialog = null;
+                Server.Session.Interact(Server.Units[_questNpc] with { NpcFlags = NpcFlagMask.QuestGiver });
+                NextPhase(age);
+                break;
+            case 10 when _dialog is GossipShown shown && shown.Quests.FirstOrDefault(q => q.Id == _quest) is { } listed:
+                _dialog = null;
+                Server.Session.ChooseGossipQuest(_questNpc, listed);
+                break;
+            case 10 when _dialog is QuestShown { Step: QuestStep.RequestItems } request && request.QuestId == _quest:
+                _dialog = null;
+                Server.Session.RequestQuestReward(_questNpc, request.QuestId);
+                break;
+            case 10 when _dialog is QuestShown { Step: QuestStep.OfferReward } reward && reward.QuestId == _quest:
+                Note($"  handing in to {Server.Units[_questNpc].Name}, {reward.Choices.Count} rewards to choose from");
+                _dialog = null;
+                _questDone = false;
+                Server.Session.ChooseQuestReward(_questNpc, reward.QuestId, 0);
+                NextPhase(age);
+                break;
+            case 10 when _dialog is not null || age - _phaseAt > 4:
+                (_phase, _phaseAt) = (8, age);
+                break;
+            case 11 when _questDone:
+                Shot("quest");
+                return true;
+            case 11 when age - _phaseAt > 8:
+                Note($"  quest {_quest} wasn't handed in");
+                _failedQuests.Add(_quest);
+                (_phase, _phaseAt) = (0, age);
+                break;
+        }
+
+        return age - _phaseAt > 12 ? false : null;
+    }
+
+    private bool _questDone;
+    private bool _alreadyOn;
+    private uint _asked;
+
+    private ulong _healer;
+
+    /// <summary>Dies, releases to the graveyard as a ghost, and takes the spirit healer's offer.</summary>
+    private bool? SpiritHealer(double age)
+    {
+        if (First)
+        {
+            (_phase, _phaseAt) = (0, 0);
+            Server.Say(".gm off");
+            Server.Session.Select(Server.Session.SelfGuid);
+            Server.Say(".die");
+        }
+
+        var self = Server.Self;
+        switch (_phase)
+        {
+            case 0 when self is { IsCorpse: true }:
+                Note("  dead");
+                Shot("corpse");
+                Server.Session.ReleaseSpirit();
+                NextPhase(age);
+                break;
+            case 1 when self is { IsGhost: true } && age - _phaseAt > 6 && Loaded:
+                Note($"  a ghost, corpse {(Server.Corpse is { } c ? $"at ({c.X:F0}, {c.Y:F0})" : "unknown")}");
+                Shot("ghost");
+                if (Nearest(u => u.IsSpiritHealer) is not { } healer)
+                {
+                    Note("  no spirit healer in view");
+                    return false;
+                }
+
+                _healer = (ulong)healer.Guid;
+                GoNextTo(healer.Node);
+                _dialog = null;
+                NextPhase(age);
+                break;
+            case 2 when age - _phaseAt > 3:
+                Server.Session.Interact(Server.Units[_healer]);
+                NextPhase(age);
+                break;
+            case 3 when _dialog is GossipShown { Options.Count: > 0 } gossip:
+                Note($"  {Server.Units[_healer].Name}: {gossip.Options[0].Text}");
+                _dialog = null;
+                Server.Session.ChooseGossip(_healer, gossip.MenuId, gossip.Options[0].Index);
+                break;
+            case 3 when _dialog is SpiritHealerOffer:
+                Server.Session.AcceptSpiritHealer(_healer);
+                NextPhase(age);
+                break;
+            case 4 when self is { IsGhost: false, Unit.IsDead: false }:
+                Note($"  alive, health {self.Unit.Health}/{self.Unit.MaxHealth}");
+                Server.Say(".gm on");
+                return true;
+        }
+
+        return age - _phaseAt > 20 ? false : null;
     }
 
     private int _shotClip;

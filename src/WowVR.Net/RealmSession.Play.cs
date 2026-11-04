@@ -338,6 +338,22 @@ public sealed partial class RealmSession
     public void ChooseGossip(ulong npc, uint menuId, uint index) =>
         _ = SendQuietly(Opcodes.CMSG_GOSSIP_SELECT_OPTION, new PacketWriter().U64(npc).U32(menuId).U32(index).ToArray());
 
+    /// <summary>
+    /// Picking a quest in an NPC's list: one it takes back (icon 4) is handed in, which shows what it
+    /// still needs or the rewards; any other is asked about, to show it to accept.
+    /// </summary>
+    public void ChooseGossipQuest(ulong npc, GossipQuest quest)
+    {
+        if (quest.Icon == 4)
+        {
+            CompleteQuest(npc, quest.Id);
+        }
+        else
+        {
+            QueryQuest(npc, quest.Id);
+        }
+    }
+
     public void QueryQuest(ulong npc, uint quest) =>
         _ = SendQuietly(Opcodes.CMSG_QUESTGIVER_QUERY_QUEST, new PacketWriter().U64(npc).U32(quest).U8(1).ToArray());
 
@@ -438,6 +454,11 @@ public sealed partial class RealmSession
     /// <summary>Packets of the world beyond creatures' comings and goings. Runs on the reading thread.</summary>
     private void HandlePlay(WorldPacket p)
     {
+        if (LogMoves)
+        {
+            _log($"got 0x{p.Opcode:X3}, {p.Data.Length} bytes");
+        }
+
         switch (p.Opcode)
         {
             case Opcodes.MSG_MOVE_TELEPORT_ACK:
@@ -637,6 +658,9 @@ public sealed partial class RealmSession
                 Events.Enqueue(new ScreenMessage($"Spell {spell} failed (reason {reason}).", true));
                 break;
             }
+            case 0x18F: // SMSG_QUESTGIVER_QUEST_INVALID
+                Events.Enqueue(new ScreenMessage(QuestInvalid(new PacketReader(p.Data).U32()), true));
+                break;
             case Opcodes.SMSG_SPIRIT_HEALER_CONFIRM:
                 Events.Enqueue(new SpiritHealerOffer(new PacketReader(p.Data).U64()));
                 break;
@@ -1414,6 +1438,23 @@ public sealed partial class RealmSession
             Events.Enqueue(new ChatReceived(new ChatLine(ChatKind.Combat, "", line)));
         }
     }
+
+    /// <summary>Why a quest giver won't give a quest, by AzerothCore's <c>QuestFailedReason</c>.</summary>
+    internal static string QuestInvalid(uint code) => code switch
+    {
+        0 => "You don't meet the requirements for that quest.",
+        1 => "You are not high enough level for that quest.",
+        6 => "That quest is for another race.",
+        7 => "You have completed that quest.",
+        12 => "You can only be on one timed quest at a time.",
+        13 or 18 => "You are already on that quest.",
+        16 => "That quest needs another expansion.",
+        21 => "You don't have the items that quest needs.",
+        23 => "You don't have enough money for that quest.",
+        26 => "You have done all the daily quests you can today.",
+        29 => "You have completed that daily quest today.",
+        _ => $"You can't take that quest (reason {code}).",
+    };
 
     private static string InventoryError(byte code) => code switch
     {

@@ -92,4 +92,11 @@ public class PlayTests
     [InlineData(123456u, "12g 34s 56c")]
     public void MoneyReadsAsGoldSilverAndCopper(uint copper, string expected) =>
         Assert.Equal(expected, RealmSession.Money(copper));
+
+    [Theory]
+    [InlineData(13u, "You are already on that quest.")]
+    [InlineData(1u, "You are not high enough level for that quest.")]
+    [InlineData(21u, "You don't have the items that quest needs.")]
+    public void QuestRefusalsReadAsTheGameSays(uint code, string text) =>
+        Assert.Equal(text, RealmSession.QuestInvalid(code));
 }

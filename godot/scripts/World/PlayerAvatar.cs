@@ -49,6 +49,9 @@ public partial class PlayerAvatar : Node3D
     private readonly List<(int Bone, Quaternion Rotation)> _upperPose = [];
     private bool _upperCaptured;
 
+    /// <summary>The clip the body plays, named by sequence id and variation, as <c>13_0</c> for walking backwards.</summary>
+    public string BodyClip => _body?.Clip ?? "";
+
     /// <summary>The WoW orientation the body faces, which the server hears in VR.</summary>
     public float Facing => _facing;
 

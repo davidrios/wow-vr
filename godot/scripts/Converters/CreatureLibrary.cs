@@ -12,7 +12,11 @@ using Godot;
 namespace WowVR.Converters;
 
 /// <summary>A worn item's mesh and where it goes, in its bone's space.</summary>
-public sealed record CreatureItemAsset(string BoneName, Vector3 Offset, ArrayMesh Mesh, ParticleAsset[] Particles);
+public sealed record CreatureItemAsset(string BoneName, Vector3 Offset, ArrayMesh Mesh, ParticleAsset[] Particles)
+{
+    /// <summary>The M2 attachment it's worn on, as 5 and 6 for the shoulders.</summary>
+    public int Attachment { get; init; } = -1;
+}
 
 /// <summary>An emitter on a bone, at a position in that bone's space.</summary>
 public sealed record CreatureParticle(string BoneName, Vector3 Offset, ParticleAsset Particle);
@@ -56,6 +60,9 @@ public sealed class CreatureSkeletonAsset
     public int RightPalmBone { get; init; } = -1;
 
     public int LeftPalmBone { get; init; } = -1;
+
+    /// <summary>Each bone's key bone id, as in WoWModelViewer's enums.h, or -1: the VR body finds its spine, arms and fingers by them.</summary>
+    public int[] KeyBones { get; init; } = [];
     public required Aabb Bounds { get; init; }
 
     /// <summary>By clip name, sorted by time. Clips with no sounds aren't listed.</summary>
@@ -183,7 +190,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
                 {
                     held.Add(item.Attachment);
                     var offset = attachment.Position - model.Data.Bones[attachment.Bone].Pivot;
-                    items.Add(new CreatureItemAsset(BoneName(attachment.Bone), new Vector3(offset.X, offset.Y, offset.Z), itemMesh.Mesh, itemMesh.Particles));
+                    items.Add(new CreatureItemAsset(BoneName(attachment.Bone), new Vector3(offset.X, offset.Y, offset.Z), itemMesh.Mesh, itemMesh.Particles) { Attachment = item.Attachment });
                 }
             }
 
@@ -418,6 +425,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             SpineBone = Array.FindIndex(data.Bones, b => b.KeyBone == SpineKeyBone),
             RightPalmBone = data.Attachments.FirstOrDefault(a => a.Id == RightPalmAttachment) is { Bone: >= 0 } rightPalm ? rightPalm.Bone : -1,
             LeftPalmBone = data.Attachments.FirstOrDefault(a => a.Id == LeftPalmAttachment) is { Bone: >= 0 } leftPalm ? leftPalm.Bone : -1,
+            KeyBones = data.Bones.Select(b => b.KeyBone).ToArray(),
             Bounds = bounds,
             ClipSounds = clipSounds,
             Billboards = data.Bones

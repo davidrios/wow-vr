@@ -12,9 +12,11 @@ namespace WowVR.World;
 /// The player's own character, standing at their feet. On desktop it faces where the character
 /// turns and shows whole behind it, or headless in first person; it runs, walks backwards,
 /// strafes turned toward where it goes as WoW's characters do, swims and jumps. In VR the player
-/// stands in it: its head is hidden, it doesn't fidget, only its legs move when walking, its
-/// hands reach for the controllers, and the body turns to follow where they look once the head
-/// has turned far, or as they move.
+/// stands in it, as in VRChat: it's scaled so its eyes are at theirs, its head is hidden, it
+/// doesn't fidget, and only its legs walk. <see cref="VrBodyIk"/> poses the rest from the headset
+/// and hands. The body turns to follow where they look once the head has turned far, or as they
+/// move, and stays put while they lean, until the head is too far from the hips or they stand up
+/// straight again.
 /// </summary>
 public partial class PlayerAvatar : Node3D
 {
@@ -36,18 +38,48 @@ public partial class PlayerAvatar : Node3D
     /// <summary>How fast the body turns toward a strafe, in radians a second.</summary>
     private const float StrafeTurnRate = 10f;
 
+    /// <summary>How far the head may lean from over the hips before the body steps after it, as a share of the spine.</summary>
+    private const float LeanSlack = 0.45f;
+
+    /// <summary>With the eyes this near their standing height, the player is upright, and the body comes back under the head.</summary>
+    private const float UprightShare = 0.92f;
+    private const float RecenterRate = 1.5f;
+
+    /// <summary>How fast the standing height rises to a new highest, so a moment on tiptoe hardly counts.</summary>
+    private const float StandingRise = 0.7f;
+
+    private const float MinBodyScale = 0.3f;
+    private const float MaxBodyScale = 3f;
+
+    /// <summary>The attachment a helmet sits on, at the top of the head.</summary>
+    private const int HelmetAttachment = 11;
+
     private IPlayer _player = null!;
     private Node3D _playerNode = null!;
     private CreatureNode? _body;
     private Vector3 _lastFeet;
+    private Vector3 _lastAt;
     private float _speed;
     private float _facing;
     private float _strafeTurn;
     private bool _placed;
-    private ArmChain? _leftArm;
-    private ArmChain? _rightArm;
+    private VrBodyIk? _ik;
+    private float _assetScale = 1f;
+    private float _bodyScale = 1f;
+    private float _standingEye;
+    private Vector3 _root;
+    private bool _rooted;
     private readonly List<(int Bone, Quaternion Rotation)> _upperPose = [];
     private bool _upperCaptured;
+
+    /// <summary>The VR solver, once the body is built, for checks.</summary>
+    public VrBodyIk? Ik => _ik;
+
+    /// <summary>How much bigger than the model the VR body is drawn, so its eyes are at the player's.</summary>
+    public float BodyScale => _bodyScale;
+
+    /// <summary>For checks' pictures: keeps the head on in VR, where the player would see inside it.</summary>
+    public bool ShowHead { get; set; }
 
     /// <summary>The clip the body plays, named by sequence id and variation, as <c>13_0</c> for walking backwards.</summary>
     public string BodyClip => _body?.Clip ?? "";
@@ -96,21 +128,50 @@ public partial class PlayerAvatar : Node3D
                 _body = null;
                 _upperPose.Clear();
                 _upperCaptured = false;
+                _ik = null;
             }
 
             _body = new CreatureNode { Name = "Body", NoIdle = Vr };
             _body.Build(asset, "");
             AddChild(_body);
             _body.StartIdle();
+            _assetScale = asset.Scale;
             if (_playerNode is DesktopPlayer desktop)
             {
                 desktop.HasBody = true;
             }
             else
             {
-                FindArms(asset.Skeleton);
+                StartVr(asset);
             }
         }).CallDeferred());
+    }
+
+    /// <summary>Finds the body's spine, arms and legs for the solver, and notes which bones are the upper body.</summary>
+    private void StartVr(CreatureAsset asset)
+    {
+        var skeleton = _body!.Skeleton;
+        Vector3? headTop = asset.Attachments.TryGetValue(HelmetAttachment, out var helmet) && skeleton.FindBone(helmet.Bone) is >= 0 and var bone
+            ? skeleton.GetBoneGlobalRest(bone).Origin + helmet.Offset
+            : null;
+        _ik = VrBodyIk.Create(skeleton, asset.Skeleton, headTop);
+        GD.Print(_ik is null ? "VR body: no spine, arms or fingers found, so it only stands" : $"VR body: {_ik.Description}");
+        if (_playerNode is Xr.XrPlayer xr)
+        {
+            xr.ControllerHandsVisible = _ik is null;
+        }
+
+        var spine = asset.Skeleton.SpineBone;
+        if (spine >= 0)
+        {
+            for (var b = 0; b < skeleton.GetBoneCount(); b++)
+            {
+                if (IsBelow(skeleton, b, spine))
+                {
+                    _upperPose.Add((b, Quaternion.Identity));
+                }
+            }
+        }
     }
 
     public override void _Process(double delta)
@@ -121,37 +182,114 @@ public partial class PlayerAvatar : Node3D
         }
 
         var feet = _player.Feet;
-        var moved = new Vector3(feet.X - _lastFeet.X, 0, feet.Z - _lastFeet.Z).Length();
+        var jumped = !_placed || new Vector3(feet.X - _lastFeet.X, 0, feet.Z - _lastFeet.Z).Length() > JumpYards;
         _lastFeet = feet;
-        if (!_placed || moved > JumpYards || delta <= 0)
-        {
-            _placed = true;
-            moved = 0;
-        }
-        else
-        {
-            var speed = moved / (float)delta;
-            _speed = Mathf.Lerp(_speed, speed, 1f - Mathf.Exp(-SpeedSmoothing * (float)delta));
-        }
+        _placed = true;
 
-        _body.SetState(Server?.Self is { IsCorpse: true }, false);
-        _body.HeadHidden = _playerNode is not DesktopPlayer desktop || desktop.FirstPerson;
+        var dead = Server?.Self is { IsCorpse: true };
+        _body.SetState(dead, false);
+        _body.HeadHidden = !ShowHead && (_playerNode is not DesktopPlayer desktop || desktop.FirstPerson);
         if (_playerNode is DesktopPlayer player)
         {
+            UpdateSpeed(feet, jumped, delta);
             AnimateDesktop(player, (float)delta);
-        }
-        else
-        {
-            AnimateVr((float)delta);
+            _body.Move(feet, _facing + _strafeTurn, false, _speed, 0, delta);
+            _body.Animate(delta, 0);
+            return;
         }
 
-        _body.Move(feet, _facing + _strafeTurn, false, _speed, 0, delta);
+        // In VR the pace is the body's, not the feet's: leaning moves the feet under the head, but
+        // the body stays where it stood.
+        var stand = PlaceVr(feet, jumped, (float)delta);
+        UpdateSpeed(stand, jumped, delta);
+        AnimateVr((float)delta);
+        _body.Move(stand, _facing, false, _speed / _bodyScale, 0, delta);
         _body.Animate(delta, 0);
-        if (Vr)
+        if (!dead)
         {
             HoldUpperBody();
-            ReachForControllers();
+            if (_ik is not null && _playerNode is Xr.XrPlayer xr)
+            {
+                var (left, right) = xr.Wrists;
+                var fingers = xr.Fingers;
+                _ik.Solve(new VrPose(_player.Eyes, left, right, fingers.LeftGrip, fingers.LeftTrigger, fingers.RightGrip, fingers.RightTrigger));
+            }
         }
+    }
+
+    /// <summary>How fast the body goes, smoothed, from where it stands each frame.</summary>
+    private void UpdateSpeed(Vector3 at, bool jumped, double delta)
+    {
+        var moved = new Vector3(at.X - _lastAt.X, 0, at.Z - _lastAt.Z).Length();
+        _lastAt = at;
+        if (!jumped && delta > 0)
+        {
+            _speed = Mathf.Lerp(_speed, moved / (float)delta, 1f - Mathf.Exp(-SpeedSmoothing * (float)delta));
+        }
+    }
+
+    /// <summary>
+    /// Scales the body so its eyes are at the player's standing height, and says where it stands:
+    /// under the head, but staying put while the player leans, until the head is too far from the
+    /// hips or they stand straight again.
+    /// </summary>
+    private Vector3 PlaceVr(Vector3 feet, bool jumped, float delta)
+    {
+        if (_ik is null)
+        {
+            return feet;
+        }
+
+        var eyes = _player.Eyes;
+        var eyeHeight = eyes.Origin.Y - feet.Y;
+        if (eyeHeight > 0.5f * AppSettings.WorldScale)
+        {
+            _standingEye = _standingEye <= 0f ? eyeHeight
+                : eyeHeight > _standingEye ? Mathf.Lerp(_standingEye, eyeHeight, 1f - Mathf.Exp(-StandingRise * delta))
+                : _standingEye;
+        }
+
+        if (_standingEye > 0f)
+        {
+            _bodyScale = Mathf.Clamp(_standingEye / (_ik.EyeHeight * _assetScale), MinBodyScale, MaxBodyScale);
+            _body!.Scale = Vector3.One * _bodyScale;
+        }
+
+        // Where it stands is kept in the play space, which walking with the stick and turning move,
+        // and the player's own steps and leaning don't. XR Tools moves the feet under the head, so
+        // they can't say whether the player leans.
+        var space = _playerNode.GlobalTransform;
+        var size = _bodyScale * _assetScale;
+        var pivot = _ik.HeadPivotFor(eyes, size);
+        var neck = space.AffineInverse() * pivot;
+        neck.Y = 0;
+        if (jumped || !_rooted)
+        {
+            _root = neck;
+            _rooted = true;
+        }
+
+        // Leaning, the body stays where it stood, up to the slack; past it, it follows the head. A
+        // head that's dropped may be as far ahead as the spine reaches bent at the hips by that much,
+        // measured at its pivot, which a nod moves less than the eyes.
+        var spine = _ik.SpineLength * size;
+        var standingPivot = _standingEye - ((_ik.EyeHeight - _ik.HeadHeight) * size);
+        var dropped = Mathf.Clamp(standingPivot - (pivot.Y - feet.Y), 0f, spine);
+        var bowed = 0.97f * Mathf.Sqrt((spine * spine) - ((spine - dropped) * (spine - dropped)));
+        var slack = Mathf.Max(LeanSlack * spine, bowed);
+        var lean = neck - _root;
+        if (lean.Length() > slack)
+        {
+            _root = neck - (lean.Normalized() * slack);
+        }
+
+        if (eyeHeight > UprightShare * _standingEye)
+        {
+            _root = _root.Lerp(neck, 1f - Mathf.Exp(-RecenterRate * delta));
+        }
+
+        var stand = space * _root;
+        return new Vector3(stand.X, feet.Y, stand.Z);
     }
 
     /// <summary>
@@ -204,19 +342,31 @@ public partial class PlayerAvatar : Node3D
         var walking = _player.OnGround && !_player.Flying && _speed > StandSpeed;
         UpdateVrFacing(delta, walking);
         _strafeTurn = 0;
-        _body!.PlayMotion(walking ? (_speed > RunAbove ? M2SequenceIds.Run : M2SequenceIds.Walk) : M2SequenceIds.Stand, _speed);
+        // The legs are scaled with the body, so the same pace is a slower stride.
+        _body!.PlayMotion(walking ? (_speed > RunAbove ? M2SequenceIds.Run : M2SequenceIds.Walk) : M2SequenceIds.Stand, _speed / _bodyScale);
     }
 
-    /// <summary>The WoW orientation the body faces. A camera's yaw is that orientation, as <c>WowCoords</c> says.</summary>
+    /// <summary>
+    /// The WoW orientation the body faces. A camera's yaw is that orientation, as <c>WowCoords</c>
+    /// says. Looking straight down or up, the top of the head says which way the player faces.
+    /// </summary>
     private void UpdateVrFacing(float delta, bool walking)
     {
-        var forward = -_player.Eyes.Basis.Z;
-        if (new Vector2(forward.X, forward.Z).LengthSquared() < 1e-4f)
+        var eyes = _player.Eyes.Basis;
+        var forward = -eyes.Z;
+        var flat = new Vector2(forward.X, forward.Z);
+        if (flat.LengthSquared() < 0.25f)
+        {
+            var up = eyes.Y * (forward.Y < 0 ? 1 : -1);
+            flat += new Vector2(up.X, up.Z);
+        }
+
+        if (flat.LengthSquared() < 1e-4f)
         {
             return;
         }
 
-        var look = Formats.WowCoords.OrientationFromCameraYaw(Mathf.Atan2(-forward.X, -forward.Z));
+        var look = Formats.WowCoords.OrientationFromCameraYaw(Mathf.Atan2(-flat.X, -flat.Y));
         var gap = Mathf.AngleDifference(_facing, look);
         if (!walking && Mathf.Abs(gap) < VrTurnSlack)
         {
@@ -224,61 +374,6 @@ public partial class PlayerAvatar : Node3D
         }
 
         _facing = Mathf.LerpAngle(_facing, look, 1f - Mathf.Exp(-VrTurnRate * delta));
-    }
-
-    /// <summary>Three bones of an arm, shoulder to hand, which two-bone IK bends to reach a point.</summary>
-    private sealed record ArmChain(int Upper, int Lower, int Hand, bool Left);
-
-    /// <summary>
-    /// Finds each arm from the bone its palm's attachment hangs on, up through the forearm and the
-    /// upper arm, skipping the short helper bones between, and notes which bones are the upper body.
-    /// </summary>
-    private void FindArms(CreatureSkeletonAsset asset)
-    {
-        var skeleton = _body!.Skeleton;
-        _rightArm = ChainFrom(skeleton, asset.RightPalmBone, left: false);
-        _leftArm = ChainFrom(skeleton, asset.LeftPalmBone, left: true);
-        GD.Print($"VR body arms: left {_leftArm}, right {_rightArm}");
-
-        if (asset.SpineBone >= 0)
-        {
-            for (var bone = 0; bone < skeleton.GetBoneCount(); bone++)
-            {
-                if (IsBelow(skeleton, bone, asset.SpineBone))
-                {
-                    _upperPose.Add((bone, Quaternion.Identity));
-                }
-            }
-        }
-    }
-
-    private static ArmChain? ChainFrom(Skeleton3D skeleton, int hand, bool left)
-    {
-        if (hand < 0)
-        {
-            return null;
-        }
-
-        // Helper bones sit close to their parent; real arm bones are well apart.
-        const float minLength = 0.12f;
-        var lower = Ancestor(skeleton, hand, minLength);
-        var upper = lower >= 0 ? Ancestor(skeleton, lower, minLength) : -1;
-        return upper >= 0 ? new ArmChain(upper, lower, hand, left) : null;
-    }
-
-    /// <summary>The first ancestor that's at least <paramref name="minLength"/> away from the bone at rest.</summary>
-    private static int Ancestor(Skeleton3D skeleton, int bone, float minLength)
-    {
-        var origin = skeleton.GetBoneGlobalRest(bone).Origin;
-        for (var parent = skeleton.GetBoneParent(bone); parent >= 0; parent = skeleton.GetBoneParent(parent))
-        {
-            if (skeleton.GetBoneGlobalRest(parent).Origin.DistanceTo(origin) >= minLength)
-            {
-                return parent;
-            }
-        }
-
-        return -1;
     }
 
     private static bool IsBelow(Skeleton3D skeleton, int bone, int ancestor)
@@ -313,92 +408,5 @@ public partial class PlayerAvatar : Node3D
         {
             skeleton.SetBonePoseRotation(bone, rotation);
         }
-    }
-
-    /// <summary>Bends each arm so its hand is at the controller, with the elbow down and out.</summary>
-    private void ReachForControllers()
-    {
-        if (_playerNode is not Xr.XrPlayer xr)
-        {
-            return;
-        }
-
-        var (left, right) = xr.Controllers;
-        if (_leftArm is { } l)
-        {
-            Reach(l, left.GlobalPosition);
-        }
-
-        if (_rightArm is { } r)
-        {
-            Reach(r, right.GlobalPosition);
-        }
-    }
-
-    /// <summary>Two-bone IK in the skeleton's space: the elbow goes where the arm's lengths and a pole say, then the hand onto the goal.</summary>
-    private void Reach(ArmChain arm, Vector3 target)
-    {
-        var skeleton = _body!.Skeleton;
-        var toSkeleton = skeleton.GlobalTransform.AffineInverse();
-        var goal = toSkeleton * target;
-
-        var upper = skeleton.GetBoneGlobalPose(arm.Upper);
-        var lower = skeleton.GetBoneGlobalPose(arm.Lower);
-        var hand = skeleton.GetBoneGlobalPose(arm.Hand);
-        var a = upper.Origin;
-        var b = lower.Origin;
-        var c = hand.Origin;
-        var upperLength = a.DistanceTo(b);
-        var lowerLength = b.DistanceTo(c);
-        var reach = goal - a;
-        if (reach.LengthSquared() < 1e-6f || upperLength < 1e-4f || lowerLength < 1e-4f)
-        {
-            return;
-        }
-
-        var distance = Mathf.Clamp(reach.Length(), Mathf.Abs(upperLength - lowerLength) + 0.01f, upperLength + lowerLength - 0.001f);
-        var toGoal = reach.Normalized();
-
-        // The elbow bends down, and a little back and out to its own side. In the skeleton's space
-        // the model faces +X with Y up, and its left is -Z.
-        var pole = new Vector3(-0.3f, -1f, arm.Left ? -0.5f : 0.5f);
-        var poleAcross = pole - (toGoal * pole.Dot(toGoal));
-        poleAcross = poleAcross.LengthSquared() < 1e-6f ? Vector3.Down : poleAcross.Normalized();
-        var cosAngle = Mathf.Clamp(((upperLength * upperLength) + (distance * distance) - (lowerLength * lowerLength)) / (2 * upperLength * distance), -1f, 1f);
-        var elbow = a + (toGoal * upperLength * cosAngle) + (poleAcross * upperLength * Mathf.Sqrt(1 - (cosAngle * cosAngle)));
-
-        // Turn the upper arm so the elbow goes there, then the forearm so the hand reaches the goal.
-        var turnUpper = Rotation(b - a, elbow - a);
-        SetGlobalRotation(skeleton, arm.Upper, new Basis(turnUpper) * upper.Basis);
-
-        var handAfter = a + (turnUpper * (c - a));
-        var turnLower = Rotation(handAfter - elbow, a + (toGoal * distance) - elbow);
-        SetGlobalRotation(skeleton, arm.Lower, new Basis(turnLower * turnUpper) * lower.Basis);
-    }
-
-    private static Quaternion Rotation(Vector3 from, Vector3 to)
-    {
-        if (from.LengthSquared() < 1e-8f || to.LengthSquared() < 1e-8f)
-        {
-            return Quaternion.Identity;
-        }
-
-        var f = from.Normalized();
-        var t = to.Normalized();
-        if (f.Dot(t) > 0.99999f)
-        {
-            return Quaternion.Identity;
-        }
-
-        return new Quaternion(f, t);
-    }
-
-    /// <summary>Sets a bone's pose so its rotation in the skeleton's space is <paramref name="global"/>.</summary>
-    private static void SetGlobalRotation(Skeleton3D skeleton, int bone, Basis global)
-    {
-        var parent = skeleton.GetBoneParent(bone);
-        var parentBasis = parent >= 0 ? skeleton.GetBoneGlobalPose(parent).Basis : Basis.Identity;
-        var local = parentBasis.Inverse() * global;
-        skeleton.SetBonePoseRotation(bone, local.Orthonormalized().GetRotationQuaternion());
     }
 }

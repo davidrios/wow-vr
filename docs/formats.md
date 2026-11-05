@@ -116,6 +116,7 @@ Reached through `wa_m2_open` with the model and its `<name>00.skin`, which gives
 - **Track headers** are arrays of arrays, with one inner array per sequence. `read_sequence_keys` reads the outer one from the M2 and the inner one from wherever the sequence's keys are. The crate's `M2BoneData` reads both from the M2, which is garbage for external sequences, so don't use it for those.
 - **Global sequences** hold their keys in the first slot, and 16,408 of the 165,781 rotation tracks in stand, walk and run use one. None of those tracks is curved.
 - **Models:** 1,098 of the 1,104 models that displays use parse, and the other 6 are empty files.
+- **A character's skeleton** (`inspect bones <m2>` prints one): bones have no rest turn, so the pivots are the bind pose, which for characters stands with the arms hanging, the elbows a little bent and the palms toward the thighs. Key bones name the parts: 4 the lower spine and 5 the waist, both under one hips bone (human: 1, key 26), with the legs under the waist; 6 the head, hanging from a bone that holds the neck and the collarbones (2 left, 3 right), the upper arms (0 left, 1 right) under them, then the forearm, then the hand that holds the fingers' first bones (8 to 12 right, 13 to 17 left, index first, the thumb last). The legs have no key bones. Helper bones share a pivot with a real one (human: 35 at the left elbow), and the palm attachment's bone hangs below the hand. Model forward is +X in Godot's axes, the left -Z.
 
 ## M2 textures and effects
 

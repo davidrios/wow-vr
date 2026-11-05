@@ -33,6 +33,7 @@ public partial class Main : Node3D
     private const string SpawnsArgument = "--spawns=";
     private const string SampleSpawnsArgument = "--sample-spawns";
     private const string CreatureCheckArgument = "--creature-check";
+    private const string BodyCheckArgument = "--body-check";
 
     /// <summary>Where tools/spawn-exporter writes, next to the Godot project, when running from a checkout.</summary>
     private const string ProjectSpawnFolder = "res://../spawns";
@@ -609,6 +610,19 @@ public partial class Main : Node3D
                 {
                     AddChild(new PlayCheck { Server = server, Tiles = tiles, Player = _player, Creatures = creatures, Transports = transports, Objects = serverObjects });
                 }
+            }
+
+            // Offline, the body check stands a body of its own: a human man, or --body-check=race,sex[,shoulders].
+            if (session is null && arguments.FirstOrDefault(a => a.StartsWith(BodyCheckArgument)) is { } bodyCheck && _player is Xr.XrPlayer xrPlayer)
+            {
+                int[] look = bodyCheck.Length > BodyCheckArgument.Length ? [.. bodyCheck[(BodyCheckArgument.Length + 1)..].Split(',').Select(int.Parse)] : [1, 0];
+                var avatar = new PlayerAvatar { Name = "Avatar" };
+                AddChild(avatar);
+                // A third number puts that ItemDisplayInfo on the shoulders, which are hidden with the head.
+                var gear = new int[(int)EquipmentSlot.Count];
+                gear[(int)EquipmentSlot.Shoulders] = look.Length > 2 ? look[2] : 0;
+                avatar.Start(library, new CharacterAppearance(look[0], look[1], 0, 0, 0, 0, 0, gear), player, _player);
+                AddChild(new BodyCheck { Avatar = avatar, Player = xrPlayer, Tiles = tiles });
             }
 
             _loading?.Watch(tiles, creatures, player);

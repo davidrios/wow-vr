@@ -19,6 +19,7 @@ const string Usage = """
       check-models [text]         Parse every M2 and WMO, optionally only those containing text.
       emitters <m2 or display id>  Print a model's particle emitters.
       anims <m2 or object display id> Print a model's sequences and what moves in its stand.
+      bones <m2>                  Print a model's bone tree: key bones, pivots, attachments and where each is standing.
       sky <map id> <x> <y> <hour> Print the sky colors and fog at a WoW position and time.
       character <race> <sex> <skin> <face> <hair> <hair color> <facial hair> <out.png> [slot:display ...]
                                   Paint a player's body texture to PNG and print its look. Don't commit the output.
@@ -78,6 +79,8 @@ try
             return PrintEmitters(source, file);
         case ["anims", var file]:
             return PrintAnims(source, file);
+        case ["bones", var file]:
+            return PrintBones(source, file);
         case ["area", var map, var name]:
             return PrintArea(source, map, name);
         case ["character", var race, var sex, var skin, var face, var hair, var hairColor, var facial, var output, .. var gear]:
@@ -257,6 +260,42 @@ static int PrintEmitters(MpqAssetSource source, string file)
     }
 
     Console.WriteLine($"{model.Emitters.Count} emitters");
+    return 0;
+}
+
+static int PrintBones(MpqAssetSource source, string file)
+{
+    var model = M2SkinnedModel.Parse(source.Read(file) ?? throw new IOException($"Not in the client: {file}"), source.Read(M2Model.SkinPath(file))!, _ => true, q => source.Read(q.AnimPath(file)));
+    var stand = model.Clips.FirstOrDefault(c => c.Sequence.Id == 0) ?? model.Clips.FirstOrDefault();
+    var pose = stand is null ? null : M2BoneBake.Pose(model, stand, 0f);
+    var children = Enumerable.Range(0, model.Bones.Length).ToLookup(b => model.Bones[b].Parent);
+    var weighted = new int[model.Bones.Length];
+    for (var i = 0; i < model.BoneIndices.Length; i++)
+    {
+        if (model.BoneWeights[i] > 0 && model.BoneIndices[i] < weighted.Length)
+        {
+            weighted[model.BoneIndices[i]]++;
+        }
+    }
+
+    Console.WriteLine($"{model.Bones.Length} bones, Godot axes (the model faces +X, left is -Z); 'standing' is stand's first frame");
+    void Print(int bone, int depth)
+    {
+        var b = model.Bones[bone];
+        var standing = pose is null ? b.Pivot : System.Numerics.Vector3.Transform(b.Pivot, pose[bone]);
+        var attached = string.Concat(model.Attachments.Where(a => a.Bone == bone).Select(a => $" attachment {a.Id}"));
+        Console.WriteLine($"{new string(' ', depth * 2)}{bone}{(b.KeyBone >= 0 ? $" key {b.KeyBone}" : "")}: pivot {b.Pivot:F3} standing {standing:F3}, {weighted[bone]} vertices{attached}");
+        foreach (var child in children[bone])
+        {
+            Print(child, depth + 1);
+        }
+    }
+
+    foreach (var root in children[-1])
+    {
+        Print(root, 0);
+    }
+
     return 0;
 }
 

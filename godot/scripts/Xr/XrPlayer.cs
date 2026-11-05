@@ -83,6 +83,46 @@ public partial class XrPlayer : XROrigin3D, IPlayer
 
     /// <summary>Where each controller is, for the body's hands to follow.</summary>
     public (Node3D Left, Node3D Right) Controllers => (_leftController, _rightController);
+
+    private static readonly StringName GripAction = "grip";
+    private static readonly StringName TriggerAction = "trigger";
+
+    private Node3D _leftHand = null!;
+    private Node3D _rightHand = null!;
+    private (Skeleton3D Skeleton, int Bone)? _leftWrist;
+    private (Skeleton3D Skeleton, int Bone)? _rightWrist;
+
+    /// <summary>
+    /// Each wrist in the world, with the fingers along +Y and the thumb's side along +Z: where XR
+    /// Tools' hand puts its wrist bone, which is tuned to how a controller is held.
+    /// </summary>
+    public (Transform3D Left, Transform3D Right) Wrists => (WristOf(_leftController, _leftWrist, -1f), WristOf(_rightController, _rightWrist, 1f));
+
+    /// <summary>How far each grip and trigger is pressed, from 0 to 1.</summary>
+    public (float LeftGrip, float LeftTrigger, float RightGrip, float RightTrigger) Fingers =>
+        (_leftController.GetFloat(GripAction), _leftController.GetFloat(TriggerAction), _rightController.GetFloat(GripAction), _rightController.GetFloat(TriggerAction));
+
+    /// <summary>XR Tools' own hands, hidden while the body's hands are where they are.</summary>
+    public bool ControllerHandsVisible
+    {
+        set => _leftHand.Visible = _rightHand.Visible = value;
+    }
+
+    private static (Skeleton3D, int)? FindWrist(Node3D hand, string bone) =>
+        hand.FindChild("Skeleton3D", true, false) is Skeleton3D skeleton && skeleton.FindBone(bone) is >= 0 and var index ? (skeleton, index) : null;
+
+    private static Transform3D WristOf(XRController3D controller, (Skeleton3D Skeleton, int Bone)? wrist, float side)
+    {
+        if (wrist is { } w)
+        {
+            var at = w.Skeleton.GlobalTransform * w.Skeleton.GetBoneGlobalPose(w.Bone);
+            return new Transform3D(at.Basis.Orthonormalized(), at.Origin);
+        }
+
+        // Where XR Tools' left hand has it, mirrored for the right: behind and below the grip, the fingers forward.
+        var offset = new Vector3(0.03f * side, -0.05f, 0.177f) * AppSettings.WorldScale;
+        return controller.GlobalTransform * new Transform3D(new Basis(Vector3.Right, -Mathf.Pi / 2), offset);
+    }
     private bool _boost;
     private bool _frozen;
     private bool _held;
@@ -174,6 +214,10 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _leftController.ButtonPressed += OnLeftButtonPressed;
         _rightController = GetNode<XRController3D>("RightController");
         _rightController.ButtonPressed += OnRightButtonPressed;
+        _leftHand = GetNode<Node3D>("LeftController/LeftHand");
+        _rightHand = GetNode<Node3D>("RightController/RightHand");
+        _leftWrist = FindWrist(_leftHand, "Wrist_L");
+        _rightWrist = FindWrist(_rightHand, "Wrist_R");
         AppSettings.Changed += ApplySettings;
         ApplySettings();
 

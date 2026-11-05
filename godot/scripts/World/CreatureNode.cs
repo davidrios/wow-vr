@@ -98,6 +98,10 @@ public partial class CreatureNode : Node3D
             };
             attachment.AddChild(itemMesh);
             _meshes.Add(itemMesh);
+            if (item.Attachment is RightShoulderAttachment or LeftShoulderAttachment)
+            {
+                _shoulders.Add(itemMesh);
+            }
             foreach (var particle in item.Particles)
             {
                 itemMesh.AddChild(particle.NewNode(particle.Position));
@@ -643,10 +647,38 @@ public partial class CreatureNode : Node3D
     private const float HiddenScale = 1e-3f;
     private double _rate = 1;
 
-    /// <summary>Hides the head, and what's worn on it, for the player's own body seen from inside it.</summary>
+    private const int RightShoulderAttachment = 5;
+    private const int LeftShoulderAttachment = 6;
+
+    /// <summary>Shoulder pieces, hidden with the head: WoW's are big enough to fill the view from inside the body.</summary>
+    private readonly List<MeshInstance3D> _shoulders = [];
+    private bool _headHidden;
+
+    /// <summary>Hides the head, what's worn on it, and the shoulder pieces, for the player's own body seen from inside it.</summary>
     public bool HeadHidden
     {
-        set => _hiddenBone = value ? _asset.Skeleton.HeadBone : -1;
+        set
+        {
+            if (value == _headHidden)
+            {
+                return;
+            }
+
+            _headHidden = value;
+            var bone = value ? _asset.Skeleton.HeadBone : -1;
+
+            // Shown again, the head is put back to its size, which a clip without scale keys wouldn't do.
+            if (_hiddenBone >= 0)
+            {
+                Skeleton.SetBonePoseScale(_hiddenBone, Vector3.One);
+            }
+
+            _hiddenBone = bone;
+            foreach (var shoulder in _shoulders)
+            {
+                shoulder.Visible = !value;
+            }
+        }
     }
 
     /// <summary>Fires the sound events the clip passed since last time. Only worth calling near the player.</summary>

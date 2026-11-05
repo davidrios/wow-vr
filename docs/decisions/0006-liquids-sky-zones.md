@@ -4,7 +4,7 @@
 
 ## Decision
 
-- **Liquids are read by new code, not the old parsers.** `wow_alchemy_adt::read_liquid_layers` and `wow_alchemy_wmo::render::RenderLiquid` read the 3.3.5a layouts. The ADT crate's older `mh2o` module reads the wrong offsets and instance size, and still serves its conversion and editing tools.
+- **Liquids come from MH2O and MLIQ.** `wow_alchemy_adt::Adt::liquid_layers` and `wow_alchemy_wmo::WmoLiquid` read the 3.3.5a layouts. The older MCLQ liquid, which some tiles have instead, isn't drawn yet (see `formats.md`).
 - **Each tile has one liquid mesh, with one surface per liquid type.** WMO groups have their own. Materials are shared per liquid type, so the sky recolors them all at once.
 - **Water is painted, to match WoW's hand-painted world.** Color and transparency come from the light tables, over soft blotches, patches of thin ripple lines, a pale shore and a broken road of sunlight or moonlight. The client's `lake_a` frames add faint detail, faded into each other so they don't flicker. Magma and slime show their textures.
 - **Water suits a headset.** Nothing reads the screen and no geometry moves. Generated noise fades to flat grey in its mipmaps and ripple lines fade with distance, so distant water can't shimmer. Reflections use each eye's own direction, because `VIEW` is the same for both. Positions come from UV, so re-centering the world doesn't move the pattern, and every layer repeats a whole number of times per tile, so tiles join up.

@@ -22,6 +22,10 @@ Gotchas:
 
 An uncompressed BLP2 can have an alpha type byte of 2, as `textures\SunGlare.blp` does, with an alpha depth of 136. Its pixels hold their own alpha, so neither matters.
 
+A DXT mipmap holds `ceil(w/4) * ceil(h/4)` blocks. wow-alchemy used to size it as `ceil(w*h/16)`, which cut the small levels of non-square textures short, so about 160 of them, such as `Creature\PHOENIX\RIBBON_TEST.BLP`, fell back to uncompressed level 0 and now upload their own DXT chain. 866 files store fewer bytes than a level needs; decoding such a level is an error. The alpha type only picks a DXT kind, so `textures\TaxiMaps\TaxiMap00.blp`, palettized with type 4, loads.
+
+An MPQ patch can delete a file with a marker entry (flag `0x02000000`, size 0), as `patch-enUS.MPQ` does for `DBFilesClient\CharVariations.dbc`. The chain treats the file as gone from then on, as StormLib does; before, 5,122 such names read as 0 bytes.
+
 `BlpDecoder.Decode` gives RGBA8 for one mipmap level. Terrain uses `ConvertToBc1` instead, which gives a whole BC1 chain for the GPU:
 
 - A BC2 or BC3 block holds 8 bytes of alpha, then a color block that always has 4 colors. Terrain ignores alpha, so the color block alone makes a BC1 block, with no quality loss.
@@ -38,12 +42,12 @@ An uncompressed BLP2 can have an alpha type byte of 2, as `textures\SunGlare.blp
 
 Reached through `wa_adt_open`, which gives `AdtTerrain`. `TerrainMeshData` turns it into one mesh per tile.
 
-- **Chunk position:** the file stores north, west, base height. `McnkChunk.position` in wow-alchemy-adt reorders these confusingly, so the FFI restores world order, and a test checks it against each chunk's tile indexes.
+- **Chunk position:** the file stores north, west, base height, which `McnkHeader.position` keeps as stored, and a test checks it against each chunk's tile indexes.
 - **Vertices:** 145 per chunk, in alternating rows of 9 outer and 8 inner. Columns run east and rows run south.
 - **Normals:** signed bytes stored as WoW X, Y, Z. A test against the slope of the heights scored 0.989 for this and at most 0.71 for the others, and WoWModelViewer's `(-b1, b2, -b0)` is the same mapping. wow.export names the bytes x, z, y.
 - **Holes:** the low 16 bits are a 4x4 mask, so each bit covers 2x2 cells. High-resolution holes came after this client.
-- **Alpha maps:** the parser's `alpha_maps` field assumes 4096 bytes per map, which leaves it empty for ordinary 4-bit tiles. Use `raw_alpha` with `decode_alpha_map`, which handles 4-bit, 8-bit and RLE-compressed maps.
-- **MCAL size:** the subchunk's own size can be wrong, as WoWModelViewer warns. 1,127 of Northrend's 1,131 tiles failed until the parser also used the MCNK header's size, which includes the 8-byte subchunk header. A test now parses every tile of all four continents.
+- **Alpha maps:** `McnkChunk::alpha_map` decodes a layer's map, 4-bit, 8-bit or RLE-compressed, to 4096 bytes.
+- **MCAL size:** the subchunk's own size is often wrong (0 in about 210,000 chunks of the client, too large or small in 100,000 more), as WoWModelViewer warns. The MCNK header's size, which includes the 8-byte subchunk header, is the real one. Likewise MCLQ's own size is always 0, and MCNR has 13 bytes of padding its size doesn't count. wow-alchemy-adt reads and writes back every ADT of the client byte for byte.
 - **Reflection layers:** MCLY flag `0x400` marks a layer whose texture isn't a surface. All 968 flagged layers are in Northrend: 603 `TCB_*` cube maps, always as the base layer, and 365 `tgatest.blp` placeholders. Drawn as ground, they make chunk-sized squares of the wrong color, so `TerrainMeshData.SurfaceTexture` draws the next surface layer instead. The reflection itself isn't rendered yet.
 - **Vertex colors:** `MOCV` is BGRA. This is how 3.3.5a's client treats them. As they load, unless `MOHD` flag `0x8` is set, a transition batch's color (MOGP's first batch count, at byte 40) becomes `c >> 1`, keeping its alpha, and any other becomes `((c * a >> 6) + c) >> 1` with alpha 255. No base color is subtracted: that's in the wiki's code from the later build 18179. Unless `MOHD` flag `0x1` is set, transition vertices then attenuate: opacity adds up `1 - 0.15 * distance` over portals to the outside, drops to 0 within a yard of a portal to another room, the color moves towards 127 by it, and alpha becomes it. Pixel programs are `2 * texture * color`, and the programs are in the MPQs as readable ARB assembly at `shaders\\Pixel\\arbfp1\\` and `shaders\\Vertex\\arbvp1\\` (not `_shaders\\`, whose files are empty). A vertex program is chosen by `(shadow level * 15 + local lights) * 2 + lit`. Unlit passes the color through. Lit is `saturate(mocv * saturate(c10 + c11 * N.L) + c29)`, or on the unified path, `MOHD` flag `0x2`, `saturate(saturate(c10 + c11 * N.L) * c28 + mocv + c29)`. `c10` is ambient, `c11` directional light, `c12` its direction; `c28` is 0.5, and `c29` is half of the material's emissive plus, when the camera is in that WMO, the world's ambient. A material with flag `0x20` (window) uses a softer light: directional is the average of ambient and directional, and ambient is that plus 16/255. Unified interiors have `c10` = `MOHD`'s color and `c11` = 0. With `MOCV` on the normal path, interior batches are unlit, exterior batches lit, and a transition batch is drawn twice, lit with blend mode 9 and then unlit with blend mode 7, which mix by alpha. Only the lit pass takes shadows. Without `MOCV`, it draws lit unless material flag `0x1` is set. Blend modes' names are from memory of the wiki's table, and the two passes only make sense as a mix. The floor color for doodads and creatures is `2 * mocv`, plus `MOHD`'s color on the unified path, or `MOHD`'s color alone with no floor. Here the outside's light is added in linear space to match the ground outside, with its sun as dimmed as in shadow. Alpha picks the light by group flag `0x8`, not by which batches a vertex is in, and these aren't drawn: `c29`, window light, and the unified path's different lit form.
 - **Alpha map edges:** without MCNK flag `0x8000`, 4-bit maps repeat their second-to-last row and column in the last. WoWModelViewer differs: it always repeats the row, including for big alpha maps, ignores the flag, and its column fix never runs because it tests the wrong loop variable. wow.export does neither. This code hasn't been checked against the wiki or Noggit, so it's worth checking if chunk seams look wrong.
@@ -52,7 +56,8 @@ Reached through `wa_adt_open`, which gives `AdtTerrain`. `TerrainMeshData` turns
 
 `AdtTerrain.Liquids` comes from `MH2O` through `wa_adt_liquid`, and `WmoGroup.Liquid` from `MLIQ` through `wa_wmo_group_liquid`. `LiquidSurface` turns either into mesh data. See `decisions/0006-liquids-sky-zones.md`.
 
-- **MH2O offsets** count from the start of the chunk's data, and instances are 24 bytes. The crate's older `mh2o` module gets both wrong, so use `read_liquid_layers`.
+- **MH2O offsets** count from the start of the chunk's data, and instances are 24 bytes.
+- **MCLQ, the older liquid:** 636 tiles have water only in each chunk's `MCLQ` and none in `MH2O`, 386 of them in Outland (`Expansion01`), and also Valgarde70, Sunwell and several instances. wow-alchemy-adt reads it (`McnkChunk.liquid`), but nothing turns it into liquid layers yet, so that water isn't drawn.
 - **Grid:** columns run east and rows run south, like terrain. A test finds water above its lakebed at Crystal Lake only with this order.
 - **Vertex formats:** 0 is heights and depths, 1 heights and texture coordinates, 2 depths, 3 all three. With no vertex data, or format 2, the layer sits flat at its minimum height, as in Noggit. The wiki says format 2 is always at height 0, which this code doesn't check.
 - **Exists bits** run through the layer's area with no padding between rows.
@@ -145,7 +150,7 @@ See `decisions/0009-billboards-and-creature-sounds.md`.
 
 - **Which row:** `CreatureDisplayInfo` field 2, or `CreatureModelData` field 13 when that's 0, is a `CreatureSoundData` row.
 - **CreatureSoundData** (38 fields): 9 footstep, which is an id for `FootstepTerrainLookup` and not a sound, 11 wing flap, 14 to 18 fidgets, 24 loop, and 31 and 32 fidget delays as floats. The others are `SoundEntries` rows too.
-- **Ground cover:** `GroundEffectTexture` fields 1 to 4 are `GroundEffectDoodad` rows, 5 to 8 their weights and 9 an amount. `GroundEffectDoodad` field 1 is a model under `World\NoDXT\Detail\`. The 8 bytes `wow-alchemy` reads as `pred_tex` and `n_effect_doodad` are a per-cell bitmap of cells to leave clear, whose bit order is assumed to be row by row. Treating the amount as a count per cell, with random positions, is a guess, as no reference says how the client uses it.
+- **Ground cover:** `GroundEffectTexture` fields 1 to 4 are `GroundEffectDoodad` rows, 5 to 8 their weights and 9 an amount. `GroundEffectDoodad` field 1 is a model under `World\NoDXT\Detail\`. The 8 bytes of the MCNK header that wow-alchemy-adt calls `no_effect_doodad` are a per-cell bitmap of cells to leave clear, whose bit order is assumed to be row by row. Treating the amount as a count per cell, with random positions, is a guess, as no reference says how the client uses it.
 - **GroundEffectTexture** (11 fields): 10 is the `TerrainType` row. **TerrainType** (6 fields): 4 is the terrain's sound. **FootstepTerrainLookup** (5 fields): 1 creature footstep id, 2 terrain sound, 3 dry `SoundEntries` row, 4 wet.
 
 ## Creature displays
@@ -166,7 +171,7 @@ See `decisions/0009-billboards-and-creature-sounds.md`.
 
 ## WMO
 
-Reached through `wa_wmo_open` and `wa_wmo_group_open`, which use `wow_alchemy_wmo::render`. The crate's older `parser` and `group_parser` don't match 3.3.5a files: they read materials as 40 bytes where they're 64, use the wrong `MOGP` header and `MOBA` layouts, and test the wrong flag bits. They still serve its editing tools, and should move to `render`'s records.
+Reached through `wa_wmo_open` and `wa_wmo_group_open`, which use `wow_alchemy_wmo`'s `WmoRoot` and `WmoGroup`. They read every chunk of version 17 files, and every root and group of the client writes back byte for byte.
 
 - **Group files** are `<root>_NNN.wmo`. `MOGP` wraps all the other chunks, after a 68-byte header.
 - **Names:** materials and doodads hold offsets into `MOTX` and `MODN`, which can have gaps, so names must be read by offset. The top byte of a doodad's name offset is flags.

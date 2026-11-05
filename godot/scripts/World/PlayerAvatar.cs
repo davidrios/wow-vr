@@ -171,6 +171,13 @@ public partial class PlayerAvatar : Node3D
                     _upperPose.Add((b, Quaternion.Identity));
                 }
             }
+
+            // The hips hold the spine as well as the legs, and their sway and twist while walking
+            // would carry the whole upper body. The legs hang from the waist, which keeps walking.
+            if (skeleton.GetBoneParent(spine) is >= 0 and var hips)
+            {
+                _upperPose.Add((hips, Quaternion.Identity));
+            }
         }
     }
 

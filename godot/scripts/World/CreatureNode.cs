@@ -37,6 +37,9 @@ public partial class CreatureNode : Node3D
     private double _soundPosition;
     private BillboardBones? _billboards;
     private readonly List<MeshInstance3D> _meshes = [];
+
+    /// <summary>Its body and what it holds or wears, for the texture brush.</summary>
+    public IReadOnlyList<MeshInstance3D> Meshes => _meshes;
     private Color _light = new(1f, 1f, 1f, 0f);
     private Color _lightTarget = new(1f, 1f, 1f, 0f);
     private bool _lightKnown;
@@ -571,6 +574,50 @@ public partial class CreatureNode : Node3D
 
     private (string Clip, double Rate)? _stride;
 
+    /// <summary>Turning in place, in radians a second, and the least turn that counts as one.</summary>
+    private const float InPlaceTurnSpeed = 2.5f;
+    private const float InPlaceTurnMin = 0.2f;
+    private bool _shuffling;
+    private int _shuffleSide;
+
+    /// <summary>Steps round to the left for a positive side, the right for negative, and stops for 0.</summary>
+    private void Shuffle(float side)
+    {
+        var wanted = (int)side;
+        var free = !_oneShot && !_casting && !_holding;
+        if (wanted == 0 || !free)
+        {
+            if (_shuffling)
+            {
+                _shuffling = false;
+                _shuffleSide = 0;
+                if (free && !_dead && !_moving)
+                {
+                    PlayNextIdle();
+                }
+            }
+
+            return;
+        }
+
+        if (_shuffling && _shuffleSide == wanted)
+        {
+            return;
+        }
+
+        if (ClipFor(wanted > 0 ? M2SequenceIds.ShuffleLeft : M2SequenceIds.ShuffleRight) is not { } clip)
+        {
+            // Without the clip it still turns at the same pace, only standing.
+            _shuffling = true;
+            _shuffleSide = wanted;
+            return;
+        }
+
+        _shuffling = true;
+        _shuffleSide = wanted;
+        Play(clip, 1f);
+    }
+
     /// <summary>Applies where the creature should be. The world clock decides this, and only its turning is smoothed.</summary>
     public void Move(Vector3 position, float orientation, bool moving, float walkSpeed, float distance, double delta)
     {
@@ -581,7 +628,15 @@ public partial class CreatureNode : Node3D
         }
 
         var target = WowCoords.YawFromOrientation(orientation);
-        var yaw = _placed ? Mathf.LerpAngle(_yaw, target, 1f - Mathf.Exp(-TurnRate * (float)delta)) : target;
+
+        // Standing, as to face someone talking to it and back, it turns at a steady pace and steps
+        // round, as the client's units do. Moving, it turns quickly into its path.
+        var gap = Mathf.AngleDifference(_yaw, target);
+        var inPlace = _placed && !moving && !_motionChosen && !_dead && Mathf.Abs(gap) > InPlaceTurnMin;
+        var yaw = !_placed ? target
+            : inPlace || _shuffling ? _yaw + Mathf.Clamp(gap, -InPlaceTurnSpeed * (float)delta, InPlaceTurnSpeed * (float)delta)
+            : Mathf.LerpAngle(_yaw, target, 1f - Mathf.Exp(-TurnRate * (float)delta));
+        Shuffle(inPlace || (_shuffling && Mathf.Abs(gap) > 0.01f) ? Mathf.Sign(gap) : 0);
         if (!_placed || yaw != _yaw)
         {
             _yaw = Mathf.Abs(Mathf.AngleDifference(yaw, target)) < 1e-4f ? target : yaw;

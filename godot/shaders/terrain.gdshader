@@ -15,6 +15,11 @@ uniform bool checkerboard = false;
 // Debug view: swaps red and blue in vertex colors, to compare byte orders.
 uniform bool swap_vertex_colors = false;
 
+// Dev: tagged layers, 1 or 0 by their index in "layers", are tinted this color, by its alpha,
+// while the texture brush is on.
+uniform vec4 dev_tint = vec4(0.0);
+uniform float tagged_layers[64];
+
 // WoW repeats a terrain texture 8 times across a chunk.
 const float TEXTURE_REPEATS = 8.0;
 
@@ -45,17 +50,26 @@ void fragment() {
 	float mask3 = texture(specular_masks, vec3(uv, layer_indexes.w)).r;
 
 	vec3 color;
+	float tagged;
 	if (alpha_is_weights) {
 		float total = alpha.r + alpha.g + alpha.b;
 		vec3 weights = alpha / max(total, 1.0);
 		float rest = max(1.0 - total, 0.0);
 		color = layer0 * rest + layer1 * weights.r + layer2 * weights.g + layer3 * weights.b;
 		specular_mask = mask0 * rest + mask1 * weights.r + mask2 * weights.g + mask3 * weights.b;
+		tagged = tagged_layers[int(layer_indexes.x)] * rest + tagged_layers[int(layer_indexes.y)] * weights.r
+			+ tagged_layers[int(layer_indexes.z)] * weights.g + tagged_layers[int(layer_indexes.w)] * weights.b;
 	} else {
 		color = mix(layer0, layer1, alpha.r);
 		color = mix(color, layer2, alpha.g);
 		color = mix(color, layer3, alpha.b);
 		specular_mask = mix(mix(mix(mask0, mask1, alpha.r), mask2, alpha.g), mask3, alpha.b);
+		tagged = mix(mix(mix(tagged_layers[int(layer_indexes.x)], tagged_layers[int(layer_indexes.y)], alpha.r),
+			tagged_layers[int(layer_indexes.z)], alpha.g), tagged_layers[int(layer_indexes.w)], alpha.b);
+	}
+
+	if (dev_tint.a > 0.0) {
+		color = mix(color, dev_tint.rgb * dot(color, vec3(0.6667)), dev_tint.a * tagged);
 	}
 
 	// Vertex colors tint the texture in gamma space, and 127 is neutral.

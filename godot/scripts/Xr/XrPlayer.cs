@@ -96,7 +96,19 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     /// Each wrist in the world, with the fingers along +Y and the thumb's side along +Z: where XR
     /// Tools' hand puts its wrist bone, which is tuned to how a controller is held.
     /// </summary>
-    public (Transform3D Left, Transform3D Right) Wrists => (WristOf(_leftController, _leftWrist, -1f), WristOf(_rightController, _rightWrist, 1f));
+    public (Transform3D Left, Transform3D Right) Wrists
+    {
+        get
+        {
+            // XR Tools places its two hands differently, and its right one sits bent back. So the
+            // right wrist is the left's, mirrored, which looks right in the headset.
+            var left = WristOf(_leftController, _leftWrist, -1f);
+            var inController = _leftController.GlobalTransform.AffineInverse() * left;
+            var mirror = new Basis(new Vector3(-1, 0, 0), Vector3.Up, Vector3.Back);
+            var mirrored = new Transform3D(mirror * inController.Basis * mirror, inController.Origin * new Vector3(-1, 1, 1));
+            return (left, _rightController.GlobalTransform * mirrored);
+        }
+    }
 
     /// <summary>How far each grip and trigger is pressed, from 0 to 1.</summary>
     public (float LeftGrip, float LeftTrigger, float RightGrip, float RightTrigger) Fingers =>
@@ -268,12 +280,18 @@ public partial class XrPlayer : XROrigin3D, IPlayer
 
         _wristMenu.Visible = open;
         _wristMenu.Set(Enabled, open);
-        _pointer.Set(Enabled, open || _uiMode || _hud is not null);
+        _pointer.Set(Enabled, open || _uiMode || _hud is not null || AppSettings.TextureBrush);
         _teleport.Set(Enabled, !open && !_held);
     }
 
     private void ApplySettings()
     {
+        // The texture brush needs the laser, even offline, where nothing else does.
+        if (_wristMenu is not null && IsNodeReady())
+        {
+            _pointer.Set(Enabled, _wristMenu.Visible || _uiMode || _hud is not null || AppSettings.TextureBrush);
+        }
+
         var scale = AppSettings.WorldScale;
         XRServer.WorldScale = scale;
 
@@ -362,12 +380,17 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _keyboard.Scale = Vector3.One * 0.45f * scale;
     }
 
+    /// <summary>Whether the right trigger is held with the texture brush on, which paints rather than selects.</summary>
+    public bool Painting => AppSettings.TextureBrush && _rightController.IsButtonPressed(TriggerClick) && PointerRay is not null;
+
+    private static readonly StringName TriggerClick = "trigger_click";
+
     /// <summary>The right controller's laser, while it isn't on a panel or the menu.</summary>
     public (Vector3 From, Vector3 Direction)? PointerRay
     {
         get
         {
-            if (_interaction is null || PointingAtPanel || _wristMenu.Visible || _uiMode)
+            if ((_interaction is null && !AppSettings.TextureBrush) || PointingAtPanel || _wristMenu.Visible || _uiMode)
             {
                 return null;
             }
@@ -396,6 +419,8 @@ public partial class XrPlayer : XROrigin3D, IPlayer
                 break;
             case "by_button" when _interaction.Ground is { Aiming: true }:
                 _interaction.World.CancelAiming();
+                break;
+            case "trigger_click" when AppSettings.TextureBrush:
                 break;
             case "trigger_click" when !PointingAtPanel && !_wristMenu.Visible:
                 _interaction.Select(aim.Origin, -aim.Basis.Z);

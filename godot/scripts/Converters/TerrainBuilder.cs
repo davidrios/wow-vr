@@ -69,6 +69,7 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
         {
             _textures.Clear();
             _specularMasks.Clear();
+            _replacements.Clear();
         }
 
         var images = new Godot.Collections.Array<Image>(mesh.Textures.Select(name => LoadTexture(name, size)));
@@ -88,19 +89,27 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
         material.SetShaderParameter("specular_masks", specularMasks);
         material.SetShaderParameter("alpha_atlas", ImageTexture.CreateFromImage(atlas));
         material.SetShaderParameter("alpha_is_weights", map.BigAlpha);
+        TextureTags.RegisterTerrain(material, mesh.Textures);
         return material;
     }
 
     /// <summary>The largest power of two the texture covers, up to the limit, or 0 if it's missing.</summary>
     private int TextureSizeOf(string name) => _sizes.GetOrAdd(name, file =>
     {
-        var data = source.Read(file);
-        if (data is null)
+        int width, height;
+        if (Replacement(file) is { } replacement)
+        {
+            (width, height) = (replacement.GetWidth(), replacement.GetHeight());
+        }
+        else if (source.Read(file) is { } data)
+        {
+            (width, height) = BlpDecoder.ReadSize(data);
+        }
+        else
         {
             return 0;
         }
 
-        var (width, height) = BlpDecoder.ReadSize(data);
         var size = System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(width, height) / 2 + 1);
         return Math.Min((int)size, MaxTextureSize);
     });
@@ -108,6 +117,13 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
     /// <summary>Texture arrays need one size and format, so every layer becomes a BC1 chain of the tile's size.</summary>
     private Image LoadTexture(string name, int size) => _textures.GetOrAdd((name, size), key =>
     {
+        // A replacement from the dev tool's folder, as an upscale to try.
+        if (Replacement(key.Name) is { } replacement)
+        {
+            var chain = BlpDecoder.ConvertRgbaToBc1(replacement.GetData(), replacement.GetWidth(), replacement.GetHeight(), key.Size);
+            return Image.CreateFromData(key.Size, key.Size, true, Image.Format.Dxt1, chain);
+        }
+
         var data = source.Read(key.Name);
         if (data is null)
         {
@@ -117,6 +133,20 @@ public sealed class TerrainBuilder(IAssetSource source, WdtMap map)
         var mipmaps = data is null ? SolidMagentaBc1(key.Size) : BlpDecoder.ConvertToBc1(data, key.Size);
         return Image.CreateFromData(key.Size, key.Size, true, Image.Format.Dxt1, mipmaps);
     });
+
+    /// <summary>The dev tool's PNG for a layer, read once while its tile is built.</summary>
+    private readonly ConcurrentDictionary<string, Image?> _replacements = new(StringComparer.OrdinalIgnoreCase);
+
+    private Image? Replacement(string name)
+    {
+        // Cleared with the layers, so a PNG saved or swapped later is picked up by tiles built after.
+        if (_replacements.Count > MaxCachedTextures)
+        {
+            _replacements.Clear();
+        }
+
+        return _replacements.GetOrAdd(name, TextureTags.LoadReplacement);
+    }
 
     /// <summary>
     /// A layer's shininess is the alpha of a file beside it named <c>_s</c>, whose colors are the

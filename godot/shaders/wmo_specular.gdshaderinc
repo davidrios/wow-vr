@@ -11,12 +11,14 @@ uniform int mode = 1;
 uniform float specular_strength = 1.0;
 uniform float metal_strength = 4.0;
 uniform float specular_power = 10.0;
+// Dev: a tagged texture is tinted this color, by its alpha, while the texture brush is on.
+uniform vec4 dev_tint = vec4(0.0);
 
 varying float texture_alpha;
 
 void fragment() {
 	vec4 color = texture(albedo_texture, UV);
-	ALBEDO = color.rgb;
+	ALBEDO = mix(color.rgb, dev_tint.rgb * dot(color.rgb, vec3(0.6667)), dev_tint.a);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 	texture_alpha = color.a;

@@ -95,6 +95,9 @@ public partial class CreatureManager : Node
 
         /// <summary>It faces the player until then, on the creatures' clock.</summary>
         public double FacePlayerUntil { get; set; }
+
+        /// <summary>For checks: the way it faces until <see cref="FacePlayerUntil"/>, instead of the player.</summary>
+        public float? FaceOrientation { get; set; }
     }
 
     private sealed record TileState(Node3D Node, TerrainHeights Heights, Node3D Container, List<Entry> Entries);
@@ -226,6 +229,17 @@ public partial class CreatureManager : Node
         if (_live.TryGetValue(guid, out var entry))
         {
             entry.FacePlayerUntil = _clock + seconds;
+            entry.FaceOrientation = null;
+        }
+    }
+
+    /// <summary>For checks, offline: a standing creature turns to a WoW orientation for that long, as to someone talking to it.</summary>
+    public void TurnTo(CreatureNode node, float orientation, double seconds)
+    {
+        if (_nodes.Concat(_live.Values).FirstOrDefault(e => e.Node == node) is { } entry)
+        {
+            entry.FacePlayerUntil = _clock + seconds;
+            entry.FaceOrientation = orientation;
         }
     }
 
@@ -647,7 +661,11 @@ public partial class CreatureManager : Node
 
         // Talking to the player, a unit standing still turns to them, and back to its own way after.
         var facing = motion.Facing;
-        if (!motion.Moving && _clock < entry.FacePlayerUntil && _world is not null)
+        if (!motion.Moving && _clock < entry.FacePlayerUntil && entry.FaceOrientation is { } turned)
+        {
+            facing = turned;
+        }
+        else if (!motion.Moving && _clock < entry.FacePlayerUntil && _world is not null)
         {
             var (_, x, y, _) = _world.PlayerLocation;
             facing = (float)Math.Atan2(y - motion.Y, x - motion.X);

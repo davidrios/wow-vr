@@ -34,6 +34,7 @@ public partial class Main : Node3D
     private const string SampleSpawnsArgument = "--sample-spawns";
     private const string CreatureCheckArgument = "--creature-check";
     private const string BodyCheckArgument = "--body-check";
+    private const string BrushCheckArgument = "--brush-check";
 
     /// <summary>Where tools/spawn-exporter writes, next to the Godot project, when running from a checkout.</summary>
     private const string ProjectSpawnFolder = "res://../spawns";
@@ -625,11 +626,21 @@ public partial class Main : Node3D
                 AddChild(new BodyCheck { Avatar = avatar, Player = xrPlayer, Tiles = tiles });
             }
 
+            // Dev: tags textures under the pointer while it's on in the menu.
+            var brush = new TextureBrush { Name = "TextureBrush", Tiles = tiles, Creatures = creatures, Player = _player };
+            AddChild(brush);
+            if (Array.IndexOf(arguments, BrushCheckArgument) >= 0)
+            {
+                AddChild(new BrushCheck { Brush = brush, Tiles = tiles, Player = player, Creatures = creatures });
+            }
+
             _loading?.Watch(tiles, creatures, player);
 
             var groundCover = new GroundCoverManager { Name = "GroundCover" };
             AddChild(groundCover);
-            groundCover.Start(GroundEffectTable.Read(source), tiles);
+            var groundEffects = GroundEffectTable.Read(source);
+            groundCover.Start(groundEffects, tiles);
+            brush.GroundEffects = groundEffects;
 
             var water = new PlayerWater { Name = "PlayerWater" };
             AddChild(water);

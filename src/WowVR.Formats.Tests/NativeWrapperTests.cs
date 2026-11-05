@@ -23,6 +23,19 @@ public class NativeWrapperTests
         return stream.ToArray();
     }
 
+    /// <summary>A replacement terrain texture from a PNG of any size becomes the same chain a BLP would.</summary>
+    [Fact]
+    public void RgbaPixelsConvertToBc1Chains()
+    {
+        var pixels = new byte[30 * 20 * 4];
+        Array.Fill(pixels, (byte)200);
+
+        // 16, 8, 4, 2 and 1 pixels are 16, 4, 1, 1 and 1 blocks of 8 bytes.
+        Assert.Equal(23 * 8, BlpDecoder.ConvertRgbaToBc1(pixels, 30, 20, 16).Length);
+        Assert.Throws<ArgumentException>(() => BlpDecoder.ConvertRgbaToBc1(pixels, 30, 21, 16));
+        Assert.Throws<WowAlchemyException>(() => BlpDecoder.ConvertRgbaToBc1(pixels, 30, 20, 12));
+    }
+
     [Fact]
     public void DbcFileReadsFieldsAndStrings()
     {

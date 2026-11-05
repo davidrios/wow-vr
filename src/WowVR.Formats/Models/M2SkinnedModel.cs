@@ -12,6 +12,10 @@ public static class M2SequenceIds
     public const int Death = 1;
     public const int Dead = 6;
     public const int WalkBackwards = 13;
+
+    /// <summary>Stepping round on the spot, which the client plays for a unit turning where it stands.</summary>
+    public const int ShuffleLeft = 11;
+    public const int ShuffleRight = 12;
     public const int AttackUnarmed = 16;
     public const int Attack1H = 17;
     public const int Attack2H = 18;
@@ -61,7 +65,7 @@ public static class M2SequenceIds
     /// <summary>The sequences this game plays beyond standing, walking and running.</summary>
     public static readonly int[] Extra =
     [
-        Death, Dead, WalkBackwards, AttackUnarmed, Attack1H, Attack2H, ReadyUnarmed, Ready1H, JumpStart, Jump, JumpEnd, Fall,
+        Death, Dead, WalkBackwards, ShuffleLeft, ShuffleRight, AttackUnarmed, Attack1H, Attack2H, ReadyUnarmed, Ready1H, JumpStart, Jump, JumpEnd, Fall,
         SwimIdle, Swim, SwimLeft, SwimRight, SwimBackwards, Open, Close,
         CombatWound, SpellPrecast, SpellCast, SpellCastArea, NpcWelcome, NpcGoodbye, ReadySpellDirected, ReadySpellOmni,
         SpellCastDirected, SpellCastOmni, BattleRoar, ReadyAbility, Special1H, Special2H, ShieldBash, EmoteTalk,

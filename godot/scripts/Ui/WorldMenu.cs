@@ -309,6 +309,13 @@ public partial class WorldMenu : PanelContainer
         var frames = new HBoxContainer();
         frames.AddChild(VideoToggle("Unlock FPS (desktop)", () => AppSettings.UnlockFps, on => AppSettings.UnlockFps = on));
         frames.AddChild(VideoToggle("FPS display", () => AppSettings.FpsDisplay, on => AppSettings.FpsDisplay = on));
+
+        // Dev: the pointer tags the textures it paints over, saving them to the folder for upscaling.
+        frames.AddChild(VideoToggle("Texture brush (dev)", () => AppSettings.TextureBrush, on =>
+        {
+            AppSettings.TextureBrush = on;
+            GD.Print($"Texture brush {(on ? "on" : "off")}: {Converters.TextureTags.TaggedCount} tagged, in {Converters.TextureTags.Folder}");
+        }));
         rows.AddChild(frames);
 
         var back = new Button { Text = "Back" };

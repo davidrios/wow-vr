@@ -240,6 +240,11 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
 
         switch (@event)
         {
+            // With the texture brush on, the left button paints rather than orbiting and selecting.
+            case InputEventMouseButton { ButtonIndex: MouseButton.Left } button when !_menuLayer.Visible && AppSettings.TextureBrush && (!button.Pressed || PointerRay is not null):
+                Painting = button.Pressed;
+                break;
+
             case InputEventMouseButton { ButtonIndex: MouseButton.Left or MouseButton.Right } button when !_menuLayer.Visible:
                 OnMouseButton(button);
                 break;
@@ -393,6 +398,9 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
 
         _leftHeld = _rightHeld = false;
     }
+
+    /// <summary>Whether the left button is held with the texture brush on.</summary>
+    public bool Painting { get; private set; }
 
     /// <summary>The ray under the mouse cursor, while it's free and over the world rather than a window.</summary>
     public (Vector3 From, Vector3 Direction)? PointerRay

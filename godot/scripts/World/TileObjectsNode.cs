@@ -531,9 +531,11 @@ public partial class TileObjectsNode : Node3D
 
     private StaticBody3D AddDoodadBody(M2Asset model, Transform3D transform)
     {
-        var body = new StaticBody3D
+        var body = new DoodadBody
         {
             Transform = new Transform3D(transform.Basis.Orthonormalized(), transform.Origin),
+            Model = model,
+            Placement = transform,
         };
         body.AddToGroup(DoodadCollisionGroup);
         body.AddChild(new CollisionShape3D { Shape = model.ShapeAt(transform.Basis.X.Length()) });

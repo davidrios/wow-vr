@@ -18,6 +18,9 @@ public sealed record M2Asset(ArrayMesh Mesh, float Radius, Vector3[] CollisionFa
     /// <summary>Its particle emitters.</summary>
     public ParticleAsset[] Particles { get; init; } = [];
 
+    /// <summary>Its file in the client, for the texture brush's notes.</summary>
+    public string Path { get; init; } = "";
+
     /// <summary>The same mesh for copies inside buildings, made when one first needs it.</summary>
     public ArrayMesh? InteriorMesh { get; set; }
 
@@ -47,6 +50,9 @@ public sealed record SurfaceArrays(Godot.Collections.Array Arrays, Mesh.ArrayFor
 public sealed class WmoGroupAsset
 {
     public ArrayMesh? Mesh { get; init; }
+
+    /// <summary>Its WMO's file and its number, for the texture brush's notes.</summary>
+    public string Name { get; init; } = "";
 
     /// <summary>Null when the group has no liquid.</summary>
     public ArrayMesh? LiquidMesh { get; init; }
@@ -290,6 +296,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
                 {
                     Particles = model.Emitters.Count > 0 ? DoodadParticles(ParseStand(path, m2, skin)) : [],
                     Surfaces = surfaces,
+                    Path = path,
                 }
                 : null;
         }
@@ -370,6 +377,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         {
             Particles = DoodadParticles(data),
             Surfaces = surfaces,
+            Path = path,
         };
     }
 
@@ -496,7 +504,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             for (var i = 0; i < groups.Length; i++)
             {
                 WmoVertexLight.Apply(root, parsed, i);
-                groups[i] = parsed[i] is { } group ? LoadGroup(group) : new WmoGroupAsset();
+                groups[i] = parsed[i] is { } group ? LoadGroup(group, $"{path} group {i}") : new WmoGroupAsset();
             }
 
             return new WmoAsset(root, groups);
@@ -508,13 +516,14 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         }
     }
 
-    private WmoGroupAsset LoadGroup(WmoGroup group)
+    private WmoGroupAsset LoadGroup(WmoGroup group, string name)
     {
         var faces = group.CollisionFaces.Select(ToGodot).ToArray();
         var mesh = BuildMesh(group.Surfaces, group.Indoor, null);
 
         return new WmoGroupAsset
         {
+            Name = name,
             Mesh = mesh,
             LiquidMesh = group.Liquid is { } liquid ? liquids.BuildMesh([liquid]) : null,
             LiquidHeights = group.Liquid is { } surface ? new LiquidHeightField(surface) : null,
@@ -677,6 +686,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         var result = new ShaderMaterial { Shader = shader };
         result.SetShaderParameter("albedo_texture", texture);
         result.SetShaderParameter("mode", (int)material.Shader);
+        TextureTags.Register(result, material.Texture);
         return result;
     }
 
@@ -716,6 +726,8 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
                 result.SetShaderParameter("alpha_key", PlainAlphaKey);
             }
         }
+
+        TextureTags.Register(result, material.Texture, effect.HasTwoTextures ? material.Texture2 : null);
 
         // A skybox's owner runs its effects, because some follow the time of day.
         if (effect.Animated && !skybox)
@@ -925,6 +937,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
                 break;
         }
 
+        TextureTags.Register(result, material.Texture);
         return result;
     }
 
@@ -937,6 +950,13 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
     {
         try
         {
+            // A replacement from the dev tool's folder, as an upscale to try.
+            if (TextureTags.LoadReplacement(path) is { } replacement)
+            {
+                replacement.GenerateMipmaps();
+                return ImageTexture.CreateFromImage(replacement);
+            }
+
             var data = source.Read(path);
             if (data is not { Length: > 0 })
             {

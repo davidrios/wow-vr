@@ -16,6 +16,8 @@ uniform vec2 uv_offset1 = vec2(0.0);
 uniform vec3 tint = vec3(1.0);
 uniform float element_alpha = 1.0;
 uniform float alpha_key = 0.878;
+// Dev: a tagged texture is tinted this color, by its alpha, while the texture brush is on.
+uniform vec4 dev_tint = vec4(0.0);
 
 #include "res://shaders/wow_fog.gdshaderinc"
 
@@ -284,6 +286,7 @@ void fragment() {
 	ALBEDO = mix(ALBEDO, vec3(1.0), fog_amount(VERTEX));
 #endif
 
+	ALBEDO = mix(ALBEDO, dev_tint.rgb * dot(ALBEDO, vec3(0.6667)), dev_tint.a);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 }

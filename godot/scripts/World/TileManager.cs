@@ -363,6 +363,9 @@ public partial class TileManager : Node3D
         return _objects.Values.Any(o => o.Indoors(point)) ? null : liquid;
     }
 
+    /// <summary>The terrain's height under a point, where its tile is loaded.</summary>
+    public float? TerrainHeightAt(Vector3 point) => TerrainLiquidAt(point)?.Ground;
+
     /// <summary>The deepest a terrain liquid is over a point, whatever the point's height.</summary>
     public (float Surface, float Depth)? DeepestLiquidAt(Vector3 point) =>
         TerrainLiquidAt(point) is { Liquid: { } liquid } terrain ? (liquid.Surface, liquid.Surface - terrain.Ground) : null;
@@ -566,6 +569,49 @@ public partial class TileManager : Node3D
             GD.PushError($"Could not read the location: {e.Message}");
         }
     }
+
+    private ((int X, int Y) Tile, AdtTerrain Terrain)? _brushTerrain;
+
+    /// <summary>
+    /// For the texture brush: the textures of the terrain chunk at a point in the scene, all its
+    /// layers. Reads the tile's file, and keeps it for the next call.
+    /// </summary>
+    public string[] TerrainTexturesAt(Vector3 at) => [.. TerrainLayersAt(at).Select(l => l.Texture)];
+
+    /// <summary>The terrain chunk's layers at a point: each texture, and the ground effect that scatters grass on it, or 0.</summary>
+    public (string Texture, uint Effect)[] TerrainLayersAt(Vector3 at)
+    {
+        var (wowX, wowY) = (-(at.Z + _originZ), -(at.X + _originX));
+        var tile = WowCoords.TileAt(wowX, wowY);
+        var ix = (int)((WowCoords.MapOrigin - wowY - tile.X * WowCoords.TileSize) / WowCoords.ChunkSize);
+        var iy = (int)((WowCoords.MapOrigin - wowX - tile.Y * WowCoords.TileSize) / WowCoords.ChunkSize);
+        if (ix is < 0 or >= AdtTerrain.ChunksPerSide || iy is < 0 or >= AdtTerrain.ChunksPerSide)
+        {
+            return [];
+        }
+
+        if (_brushTerrain?.Tile != tile)
+        {
+            if (_source.Read(_map.TilePath(tile.X, tile.Y)) is not { } data)
+            {
+                return [];
+            }
+
+            _brushTerrain = (tile, AdtTerrain.Parse(data, _map.BigAlpha));
+        }
+
+        var terrain = _brushTerrain.Value.Terrain;
+        var chunk = terrain.Chunks[iy * AdtTerrain.ChunksPerSide + ix];
+        return [.. Enumerable.Range(0, chunk.LayerCount).Select(i => (terrain.TextureNames[chunk.TextureIds[i]], i < chunk.EffectIds.Length ? chunk.EffectIds[i] : 0u))];
+    }
+
+    /// <summary>The terrain repeats each texture once per cell: 8 times across a chunk, both ways.</summary>
+    public static double TerrainAreaPerRepeat => Math.Pow(WowCoords.ChunkSize / 8, 2);
+
+    /// <summary>Whether a body is the terrain's own collision, rather than a building's, a doodad's or an object's.</summary>
+    public static bool IsTerrainBody(Node body) => body.GetParent() is MeshInstance3D { Name: var name } && name.ToString().StartsWith("Tile_", StringComparison.Ordinal);
+
+    public IAssetSource Source => _source;
 
     private void RecenterIfNeeded(Vector3 camera)
     {

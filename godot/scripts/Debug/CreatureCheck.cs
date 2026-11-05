@@ -59,6 +59,7 @@ public partial class CreatureCheck : Node
 
         _watched += delta;
         _worstFrame = Mathf.Max(_worstFrame, (float)delta * 1000f);
+        WatchTurning(delta);
         foreach (var (node, start) in _startPositions)
         {
             if (!GodotObject.IsInstanceValid(node))
@@ -127,12 +128,66 @@ public partial class CreatureCheck : Node
             problems.Add("no creature made a sound");
         }
 
+        if (_turner is null)
+        {
+            problems.Add("no standing creature to turn");
+        }
+        else
+        {
+            GD.Print($"Turning in place: shuffled {(_sawShuffle ? "yes" : "no")} (model has {(_turner.ClipFor(Formats.Models.M2SequenceIds.ShuffleLeft) is null ? "no" : "a")} shuffle), fastest {_fastestTurn:F2} rad/s, back {Mathf.Abs(Mathf.AngleDifference(_turner.Facing, _turnFrom)):F2} rad from where it faced, now playing {_turner.Clip}");
+            if (_turner.ClipFor(Formats.Models.M2SequenceIds.ShuffleLeft) is not null && !_sawShuffle)
+            {
+                problems.Add("turning in place didn't play the shuffle");
+            }
+
+            if (_fastestTurn > 2.7f)
+            {
+                problems.Add($"turning in place was {_fastestTurn:F2} rad/s");
+            }
+
+            if (Mathf.Abs(Mathf.AngleDifference(_turner.Facing, _turnFrom)) > 0.05f || _turner.Clip.StartsWith("11_") || _turner.Clip.StartsWith("12_"))
+            {
+                problems.Add("it didn't turn back and stand");
+            }
+        }
+
         if (_worstFrame > MaxFrameMilliseconds)
         {
             problems.Add($"a frame took {_worstFrame:F1} ms");
         }
 
         Finish(problems.Count == 0, string.Join(", ", problems));
+    }
+
+    private CreatureNode? _turner;
+    private float _turnFrom;
+    private float _lastFacing;
+    private bool _sawShuffle;
+    private float _fastestTurn;
+
+    /// <summary>A standing creature turns most of the way round, as to someone talking to it, then back.</summary>
+    private void WatchTurning(double delta)
+    {
+        if (_turner is null && _watched > 3)
+        {
+            _turner = Named(SampleSpawns.StandingName).FirstOrDefault();
+            if (_turner is not null)
+            {
+                _turnFrom = _lastFacing = _turner.Facing;
+                Creatures.TurnTo(_turner, _turnFrom + 2f, 3);
+            }
+
+            return;
+        }
+
+        if (_turner is null || !GodotObject.IsInstanceValid(_turner) || delta <= 0)
+        {
+            return;
+        }
+
+        _sawShuffle |= _turner.Clip.StartsWith("11_") || _turner.Clip.StartsWith("12_");
+        _fastestTurn = Mathf.Max(_fastestTurn, Mathf.Abs(Mathf.AngleDifference(_lastFacing, _turner.Facing)) / (float)delta);
+        _lastFacing = _turner.Facing;
     }
 
     private IEnumerable<CreatureNode> Named(string name) =>

@@ -96,6 +96,9 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library, EntryPoint = "wa_blp_to_bc1")]
     internal static partial WaStatus BlpToBc1(byte* data, nuint length, uint size, out WaBuffer buffer);
 
+    [LibraryImport(Library, EntryPoint = "wa_rgba_to_bc1")]
+    internal static partial WaStatus RgbaToBc1(byte* pixels, uint width, uint height, uint size, out WaBuffer buffer);
+
     [LibraryImport(Library, EntryPoint = "wa_dbc_open")]
     internal static partial nint DbcOpen(byte* data, nuint length);
 

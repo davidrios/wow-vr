@@ -87,4 +87,26 @@ public static class BlpDecoder
             return NativeMethods.TakeBuffer(buffer);
         }
     }
+
+    /// <summary>
+    /// The same chain as <see cref="ConvertToBc1"/>, from RGBA pixels of any size, 4 bytes each,
+    /// row by row, such as a PNG's: a replacement for a terrain texture.
+    /// </summary>
+    public static unsafe byte[] ConvertRgbaToBc1(ReadOnlySpan<byte> rgba, int width, int height, int size)
+    {
+        if (rgba.Length != width * height * 4)
+        {
+            throw new ArgumentException($"{rgba.Length} bytes don't fill {width}x{height} RGBA pixels.", nameof(rgba));
+        }
+
+        fixed (byte* data = rgba)
+        {
+            if (NativeMethods.RgbaToBc1(data, (uint)width, (uint)height, (uint)size, out var buffer) != WaStatus.Ok)
+            {
+                throw new WowAlchemyException(NativeMethods.LastErrorMessage());
+            }
+
+            return NativeMethods.TakeBuffer(buffer);
+        }
+    }
 }

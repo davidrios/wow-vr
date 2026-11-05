@@ -282,6 +282,18 @@ public static class AppSettings
         set => WriteMovement(VideoSection, "particles", value);
     }
 
+    private const string DevSection = "dev";
+
+    /// <summary>Dev: the pointer tags the textures it paints over, saving them to <see cref="TextureFolder"/>, and tagged ones show tinted.</summary>
+    public static bool TextureBrush
+    {
+        get => Read(DevSection, "texture_brush", false).AsBool();
+        set => WriteMovement(DevSection, "texture_brush", value);
+    }
+
+    /// <summary>Dev: where tagged textures are saved and replacements are read from, laid out as the MPQs are.</summary>
+    public static string TextureFolder => Read(DevSection, "texture_folder", "user://textures").AsString();
+
     private const string LastPlaceSection = "last_place";
 
     /// <summary>Where the player was when last seen, in WoW coordinates, to start there next time. Null before there's one.</summary>

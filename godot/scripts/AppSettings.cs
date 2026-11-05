@@ -291,8 +291,23 @@ public static class AppSettings
         set => WriteMovement(DevSection, "texture_brush", value);
     }
 
-    /// <summary>Dev: where tagged textures are saved and replacements are read from, laid out as the MPQs are.</summary>
-    public static string TextureFolder => Read(DevSection, "texture_folder", "user://textures").AsString();
+    /// <summary>
+    /// Dev: where tagged textures are saved and replacements are read from, laid out as the MPQs
+    /// are. Without one set, <c>wowvr_textures</c> in the client's Data folder, beside its MPQs.
+    /// </summary>
+    public static string TextureFolder
+    {
+        get
+        {
+            var set = Read(DevSection, "texture_folder", "").AsString();
+            if (set.Length > 0)
+            {
+                return set;
+            }
+
+            return ClientPath.Length > 0 ? System.IO.Path.Combine(ClientPath, "Data", "wowvr_textures") : "user://wowvr_textures";
+        }
+    }
 
     private const string LastPlaceSection = "last_place";
 

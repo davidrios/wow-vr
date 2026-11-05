@@ -21,6 +21,12 @@ public sealed record M2Asset(ArrayMesh Mesh, float Radius, Vector3[] CollisionFa
     /// <summary>The same mesh for copies inside buildings, made when one first needs it.</summary>
     public ArrayMesh? InteriorMesh { get; set; }
 
+    /// <summary>
+    /// What <see cref="Mesh"/>'s surfaces were made from, in order, so <see cref="InteriorMesh"/> can be
+    /// made without reading the mesh back from the renderer, which waits for the render thread.
+    /// </summary>
+    public IReadOnlyList<SurfaceArrays> Surfaces { get; init; } = [];
+
     private const float ScaleKeyPrecision = 100f;
 
     private readonly ConcurrentDictionary<int, ConcavePolygonShape3D> _shapes = new();
@@ -33,6 +39,9 @@ public sealed record M2Asset(ArrayMesh Mesh, float Radius, Vector3[] CollisionFa
         Mathf.RoundToInt(scale * ScaleKeyPrecision),
         _ => new ConcavePolygonShape3D { Data = CollisionFaces.Select(f => f * scale).ToArray() });
 }
+
+/// <summary>The arrays and format one mesh surface was made from.</summary>
+public sealed record SurfaceArrays(Godot.Collections.Array Arrays, Mesh.ArrayFormat Format);
 
 /// <summary>One WMO group ready to draw and collide with, in the WMO's own space.</summary>
 public sealed class WmoGroupAsset
@@ -275,8 +284,13 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
 
             var model = M2Model.Parse(m2, skin);
             var used = new List<ModelMaterial>();
-            return BuildMesh(model.Surfaces, indoor: false, used) is { } mesh
-                ? new M2Asset(mesh, model.Radius, model.CollisionFaces.Select(ToGodot).ToArray(), used.ToArray()) { Particles = model.Emitters.Count > 0 ? DoodadParticles(ParseStand(path, m2, skin)) : [] }
+            var surfaces = new List<SurfaceArrays>();
+            return BuildMesh(model.Surfaces, indoor: false, used, surfaces) is { } mesh
+                ? new M2Asset(mesh, model.Radius, model.CollisionFaces.Select(ToGodot).ToArray(), used.ToArray())
+                {
+                    Particles = model.Emitters.Count > 0 ? DoodadParticles(ParseStand(path, m2, skin)) : [],
+                    Surfaces = surfaces,
+                }
                 : null;
         }
         catch (WowAlchemyException e)
@@ -335,13 +349,14 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         bounds = bounds.Merge(new Aabb(ToGodot(sequence.BoundsMin), ToGodot(sequence.BoundsMax - sequence.BoundsMin)));
         ArrayMesh? mesh = null;
         var used = new List<ModelMaterial>();
+        var surfaces = new List<SurfaceArrays>();
         foreach (var (key, parts) in byMaterial)
         {
             if (GetMaterial(key, indoor: false) is { } material)
             {
                 used.Add(key);
                 mesh ??= new ArrayMesh { CustomAabb = bounds };
-                AddBakedSurface(mesh, data, bake, parts, material, key.Effect!.UsesSecondUv, key.Billboard);
+                surfaces.Add(AddBakedSurface(mesh, data, bake, parts, material, key.Effect!.UsesSecondUv, key.Billboard));
             }
         }
 
@@ -351,10 +366,14 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         }
 
         var faces = M2Model.Parse(m2, skin).CollisionFaces.Select(ToGodot).ToArray();
-        return new M2Asset(mesh, Mathf.Max(bounds.Size.Length() / 2f, 0.1f), faces, used.ToArray()) { Particles = DoodadParticles(data) };
+        return new M2Asset(mesh, Mathf.Max(bounds.Size.Length() / 2f, 0.1f), faces, used.ToArray())
+        {
+            Particles = DoodadParticles(data),
+            Surfaces = surfaces,
+        };
     }
 
-    public static void AddBakedSurface(ArrayMesh mesh, M2SkinnedModel data, M2BoneBake bake, List<int[]> parts, Material material, bool secondUv, bool billboard)
+    public static SurfaceArrays AddBakedSurface(ArrayMesh mesh, M2SkinnedModel data, M2BoneBake bake, List<int[]> parts, Material material, bool secondUv, bool billboard)
     {
         var remap = new int[data.Positions.Length];
         Array.Fill(remap, -1);
@@ -420,6 +439,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         var format = (Mesh.ArrayFormat)customFormat;
         mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays, flags: format);
         mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, material);
+        return new SurfaceArrays(arrays, format);
     }
 
     /// <summary>What turns a vertex to the viewer: its heaviest bone decides.</summary>
@@ -538,14 +558,17 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
                 return existing;
             }
 
-            var mesh = (ArrayMesh)model.Mesh.Duplicate();
-            for (var i = 0; i < model.Materials.Length && i < mesh.GetSurfaceCount(); i++)
+            // Built from the kept arrays: duplicating the mesh would read it back from the renderer.
+            var mesh = new ArrayMesh { CustomAabb = model.Mesh.CustomAabb };
+            for (var i = 0; i < model.Surfaces.Count; i++)
             {
+                mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, model.Surfaces[i].Arrays, flags: model.Surfaces[i].Format);
+
                 // Unlit parts, such as a lantern's glass, glow the same anywhere, and keep their material.
-                if (!model.Materials[i].Unlit && GetMaterial(model.Materials[i], indoor: true) is { } material)
-                {
-                    mesh.SurfaceSetMaterial(i, material);
-                }
+                var material = i < model.Materials.Length && !model.Materials[i].Unlit
+                    ? GetMaterial(model.Materials[i], indoor: true)
+                    : null;
+                mesh.SurfaceSetMaterial(i, material ?? model.Mesh.SurfaceGetMaterial(i));
             }
 
             model.InteriorMesh = mesh;
@@ -578,7 +601,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
         return (mesh, materials.ToArray());
     }
 
-    private ArrayMesh? BuildMesh(IReadOnlyList<ModelSurface> surfaces, bool indoor, List<ModelMaterial>? used)
+    private ArrayMesh? BuildMesh(IReadOnlyList<ModelSurface> surfaces, bool indoor, List<ModelMaterial>? used, List<SurfaceArrays>? kept = null)
     {
         ArrayMesh? mesh = null;
         foreach (var surface in surfaces)
@@ -615,6 +638,7 @@ public sealed class ModelLibrary(IAssetSource source, LiquidLibrary liquids)
             mesh ??= new ArrayMesh();
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
             mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, material);
+            kept?.Add(new SurfaceArrays(arrays, 0));
         }
 
         return mesh;

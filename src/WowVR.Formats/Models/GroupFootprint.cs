@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Numerics;
 
 namespace WowVR.Formats.Models;
@@ -18,14 +17,14 @@ public sealed class GroupFootprint
     private readonly float _minY;
     private readonly int _width;
     private readonly int _height;
-    private readonly BitArray _cells;
+    private readonly bool[] _cells;
 
     private GroupFootprint(Vector2 min, Vector2 max)
     {
         (_minX, _minY) = (min.X, min.Y);
         _width = Math.Max((int)MathF.Ceiling((max.X - min.X) / CellSize), 1);
         _height = Math.Max((int)MathF.Ceiling((max.Y - min.Y) / CellSize), 1);
-        _cells = new BitArray(_width * _height);
+        _cells = new bool[_width * _height];
     }
 
     /// <summary>From triangles in the file's axes, as (X, Y) from above.</summary>
@@ -74,11 +73,15 @@ public sealed class GroupFootprint
         {
             for (var column = fromColumn; column <= toColumn; column++)
             {
-                var center = new Vector2(_minX + (column + 0.5f) * CellSize, _minY + (row + 0.5f) * CellSize);
-                if (IsNear(center, a, b, c))
+                // Floors, ceilings and walls overlap from above, so most cells are already covered.
+                var cell = row * _width + column;
+                if (_cells[cell])
                 {
-                    _cells[row * _width + column] = true;
+                    continue;
                 }
+
+                var center = new Vector2(_minX + (column + 0.5f) * CellSize, _minY + (row + 0.5f) * CellSize);
+                _cells[cell] = IsNear(center, a, b, c);
             }
         }
     }

@@ -302,6 +302,10 @@ public partial class WorldMenu : PanelContainer
         occlusionSliders.AddChild(VideoSlider("Occlusion size", AppSettings.MinOcclusionSize, AppSettings.MaxOcclusionSize, 0.05, "0.00", () => AppSettings.OcclusionSize, v => AppSettings.OcclusionSize = v));
         rows.AddChild(occlusionSliders);
 
+        var interfaceScale = new HBoxContainer();
+        interfaceScale.AddChild(VideoSlider("Interface scale (desktop)", AppSettings.MinInterfaceScale, AppSettings.MaxInterfaceScale, 0.25, "0.00'x'", () => AppSettings.InterfaceScale, v => AppSettings.InterfaceScale = v, whenReleased: true));
+        rows.AddChild(interfaceScale);
+
         var frames = new HBoxContainer();
         frames.AddChild(VideoToggle("Unlock FPS (desktop)", () => AppSettings.UnlockFps, on => AppSettings.UnlockFps = on));
         frames.AddChild(VideoToggle("FPS display", () => AppSettings.FpsDisplay, on => AppSettings.FpsDisplay = on));
@@ -321,15 +325,29 @@ public partial class WorldMenu : PanelContainer
     }
 
     /// <summary>A slider that shows its value, and follows presets.</summary>
-    private VBoxContainer VideoSlider(string name, float min, float max, double step, string format, Func<float> read, Action<float> write)
+    /// <param name="whenReleased">Changes the setting only when the slider is let go, for one that resizes the slider itself.</param>
+    private VBoxContainer VideoSlider(string name, float min, float max, double step, string format, Func<float> read, Action<float> write, bool whenReleased = false)
     {
         string Text(double v) => $"{name}: {v.ToString(format, System.Globalization.CultureInfo.InvariantCulture)}";
         var label = new Label { Text = Text(read()) };
         var slider = new HSlider { MinValue = min, MaxValue = max, Step = step, Value = read() };
+        var dragging = false;
+        slider.DragStarted += () => dragging = true;
+        slider.DragEnded += changed =>
+        {
+            dragging = false;
+            if (whenReleased && changed)
+            {
+                write((float)slider.Value);
+            }
+        };
         slider.ValueChanged += v =>
         {
             label.Text = Text(v);
-            write((float)v);
+            if (!whenReleased || !dragging)
+            {
+                write((float)v);
+            }
         };
         _refreshVideo.Add(() =>
         {

@@ -33,6 +33,7 @@ public partial class GlueScreens : Node3D
     /// <summary>Where the character stands, and where the viewer is: VR's feet, and desktop's camera.</summary>
     private static readonly Vector3 CharacterSpot = new(0, 0, 0);
     private static readonly Vector3 ViewerSpot = new(0, 0, 2.6f);
+    private const float DesktopPanelScale = 0.5f;
     private static readonly Vector3 DesktopCamera = new(-0.75f, 1.25f, 3.3f);
     private static readonly Vector3 DesktopLookAt = new(-0.75f, 1.0f, 0f);
 
@@ -111,7 +112,11 @@ public partial class GlueScreens : Node3D
             AddChild(_desktopLayer);
             _panel = GD.Load<PackedScene>("res://scenes/GluePanel.tscn").Instantiate<GluePanel>();
             _desktopLayer.AddChild(_panel);
-            _panel.Position = new Vector2(48, 40);
+
+            // The panel is laid out at the size VR's viewport draws it, which on a desktop is right
+            // for a 4K screen. Half of it is right for 1080p, and the interface scale does the rest.
+            _panel.Scale = Vector2.One * DesktopPanelScale;
+            _panel.Position = new Vector2(24, 20);
         }
         else
         {

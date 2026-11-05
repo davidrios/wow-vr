@@ -244,8 +244,13 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
                 OnMouseButton(button);
                 break;
 
+            // A list that has scrolled to its end lets the wheel through; over the interface it still isn't the camera's.
             case InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelUp or MouseButton.WheelDown } wheel when HasBody && !_menuLayer.Visible:
-                Zoom = _zoom + (wheel.ButtonIndex == MouseButton.WheelDown ? ZoomStep : -ZoomStep);
+                if (GetViewport().GuiGetHoveredControl() is null)
+                {
+                    Zoom = _zoom + (wheel.ButtonIndex == MouseButton.WheelDown ? ZoomStep : -ZoomStep);
+                }
+
                 break;
 
             case InputEventMouseMotion motion when _leftHeld || _rightHeld:
@@ -382,7 +387,8 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
         if (Input.MouseMode == Input.MouseModeEnum.Captured)
         {
             Input.MouseMode = Input.MouseModeEnum.Visible;
-            Input.WarpMouse(_cursorBeforeDrag);
+            // The viewport's warp turns the interface's units back into the window's pixels.
+            GetViewport().WarpMouse(_cursorBeforeDrag);
         }
 
         _leftHeld = _rightHeld = false;

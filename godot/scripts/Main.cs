@@ -467,6 +467,11 @@ public partial class Main : Node3D
     {
         var scale = AppSettings.RenderScale;
         var viewport = GetViewport();
+
+        // Checks press the interface with real mouse positions, so they keep it at its own size.
+        // The headset's panels have their own viewports, which this doesn't touch.
+        var check = OS.GetCmdlineUserArgs().Any(a => a.Contains("-check"));
+        GetTree().Root.ContentScaleFactor = check || viewport.UseXR ? 1f : AppSettings.InterfaceScale;
         viewport.Scaling3DMode = scale < 1f && !viewport.UseXR ? Viewport.Scaling3DModeEnum.Fsr : Viewport.Scaling3DModeEnum.Bilinear;
         viewport.Scaling3DScale = scale;
     }

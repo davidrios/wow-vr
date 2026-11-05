@@ -173,6 +173,25 @@ public static class AppSettings
         }
     }
 
+    public const float MinInterfaceScale = 0.75f;
+    public const float MaxInterfaceScale = 3f;
+
+    /// <summary>
+    /// Desktop only: how big the interface is drawn. Without a saved one, the screen's height over
+    /// 1080, so it's the same size on a 4K screen as on 1080p.
+    /// </summary>
+    public static float InterfaceScale
+    {
+        get => Read(InterfaceSection, "scale", ScreenInterfaceScale()).AsSingle();
+        set => WriteMovement(InterfaceSection, "scale", Mathf.Clamp(value, MinInterfaceScale, MaxInterfaceScale));
+    }
+
+    private static float ScreenInterfaceScale()
+    {
+        var height = DisplayServer.ScreenGetSize(DisplayServer.WindowGetCurrentScreen()).Y;
+        return Mathf.Clamp(Mathf.Round(height / 1080f * 4f) / 4f, 1f, MaxInterfaceScale);
+    }
+
     private static float? _musicVolume;
     private static float? _ambienceVolume;
 

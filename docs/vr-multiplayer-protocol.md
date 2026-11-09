@@ -2,12 +2,13 @@
 
 An extension to AzerothCore's 3.3.5a (build 12340) world protocol that lets WowVR clients see each
 other's VR bodies: where each player's head and hands are, how their fingers are closed, how they
-lean, and where they point. The server only checks and relays it; it never interprets a pose.
+lean, where they point, and with full body trackers (SlimeVR, Vive trackers), where their hips,
+chest, feet, knees and elbows are. The server only checks and relays it; it never interprets a pose.
 Players on stock 3.3.5a clients are unaffected: they never receive any of it, and see the
 character as before. See `decisions/0016-vr-multiplayer.md` for why it's done this way.
 
 This document is the contract between the server work (in AzerothCore) and the client work (in
-this repo). Byte order is little-endian throughout, as in the rest of the protocol, except the
+this repo, done: `src/WowVR.Net/VrPoses.cs`, `RealmSession.Vr.cs`, and `godot/scripts/World/VrMultiplayer.cs`). Byte order is little-endian throughout, as in the rest of the protocol, except the
 packet header's size, as usual.
 
 ## 1. Server parts
@@ -138,6 +139,20 @@ character at its normal size.
 - **A hand's** position is the wrist joint. Its identity rotation has the fingers (wrist to middle
   knuckle) along `+X` and the back of the hand toward `+Z`, a hand held out flat, palm down. The
   thumb is then toward `-Y` for the left hand and `+Y` for the right.
+- **Full body joints** are the player's joints, not where the trackers sit: the sender turns each
+  tracker into its joint with its own calibration, and scales them as everything else, so the
+  observer fits them to the character's proportions as it does the head.
+  - **The hips'** position is the middle of the hip joints, where the spine meets the legs; its
+    identity rotation faces `+X`, upright, with `+Z` up the spine.
+  - **The chest's** position is the top of the chest, between the shoulders; its identity rotation
+    is the hips'.
+  - **A foot's** position is the ankle joint; its identity rotation has the toes along `+X` and the
+    sole toward `-Z`, a foot flat on the ground.
+  - **Knees and elbows** are only positions, the middle of the joint: they say which way the leg or
+    arm bends. A rotation would add nothing: each is a hinge, so the hips, knee and ankle fix the
+    thigh and the plane the leg bends in, and the foot's rotation the shin's twist; the shoulder,
+    elbow and wrist do the same for the arm. Only a straight limb leaves the bend plane open, and
+    then the foot's or the hand's rotation says which way it faces.
 
 ### 3.2 `CMSG_WOWVR_POSE` (0x525)
 
@@ -148,7 +163,7 @@ A fixed header, then the parts its `parts` bits say are there, in this order.
 | `sequence`| uint16 | Counts up by one each pose, wrapping. The receiver drops one older than the last it drew. |
 | `time`    | uint16 | The sender's clock, in milliseconds, wrapping, for spacing poses out when they arrive in bursts. |
 | `state`   | uint8  | Bit 0: in VR. Bit 1: seated (the body shouldn't stand up to the head). Bit 2: the left hand is tracked. Bit 3: the right hand is tracked. Bit 4: pointing (the pointer part says where). Bits 5-7: 0. |
-| `parts`   | uint8  | Which parts follow. Bits 7 and above of a later version are refused by v1. |
+| `parts`   | uint16 | Which parts follow. Bit 15 is refused. |
 
 | Bit | Part      | Bytes | Fields |
 |-----|-----------|-------|--------|
@@ -159,8 +174,18 @@ A fixed header, then the parts its `parts` bits say are there, in this order.
 | 4   | Triggers  | 4     | `uint8` left grip, left trigger, right grip, right trigger, 0 open to 255 closed. |
 | 5   | Fingers   | 10    | `uint8` curl of each finger, left hand then right, thumb to little finger, 0 straight to 255 curled: for hand tracking and controllers that sense fingers. |
 | 6   | Pointer   | 3     | `uint8` hand (0 left, 1 right). `uint16` length of the ray in hundredths of a yard, 0 for unending. Drawn from that hand along its `+X`. |
+| 7   | Hips      | 10    | Position (6), rotation (4). |
+| 8   | Chest     | 10    | Position (6), rotation (4). |
+| 9   | Left foot | 10    | Position (6), rotation (4). |
+| 10  | Right foot| 10    | Position (6), rotation (4). |
+| 11  | Left knee | 6     | Position. |
+| 12  | Right knee| 6     | Position. |
+| 13  | Left elbow| 6     | Position. |
+| 14  | Right elbow| 6    | Position. |
 
-The largest pose is 6 + 53 = 59 bytes. A client sends one at `sendRate`, and may send fewer while
+The header is 7 bytes, and the largest pose is 7 + 117 = 124 bytes. A client sends the full body
+parts it has trackers for. While the player walks with the stick rather than their own feet, it
+leaves out the feet and knees, so observers draw the character's walk. A client sends one at `sendRate`, and may send fewer while
 nothing moves, at least one a second while in VR, so observers' timeouts don't run out.
 
 ### 3.3 Checks on arrival
@@ -207,20 +232,25 @@ once the player is in the new map.
 ## 4. Clients
 
 - **Sending:** a VR client sends a pose at `sendRate` from the frame's head, wrists, triggers and
-  lean, in the character's space at its own size, with `sequence` counting up. A desktop client
-  sends none, but asks for bit 1 to see VR players.
+  lean, and the joints of any full body trackers, in the character's space at its own size, with
+  `sequence` counting up. A desktop client sends none, but asks for bit 1 to see VR players.
+- **Full body trackers** come through OpenXR as SteamVR's tracker roles
+  (`/user/vive_tracker_htcx/role/waist`, `chest`, `left_foot`, `right_foot`, `left_knee`,
+  `right_knee`, `left_elbow`, `right_elbow`), which is how SlimeVR's virtual trackers and Vive
+  trackers both arrive. The hips drive the body instead of being guessed from the head, the feet
+  are the legs' targets, and knees and elbows say which way they bend.
 - **Drawing:** an observer keeps the last two poses per player and draws between them, about one
   send interval behind, so poses arriving unevenly still move smoothly. It solves the body as for
-  its own player, from the head, hands and lean, at the character's normal size. Untracked hands
+  its own player, from the head, hands, lean and whatever joints came, at the character's normal size. Untracked hands
   fall back to the character's animation. Without a pose for `poseTimeoutMs`, or with state bit 0
   clear, the character goes back to its normal animation, blended over a moment.
 - **Stock servers:** without the announcement, nothing of this is sent, and nothing changes.
 
 ## 5. Bandwidth
 
-A full pose with head, both hands, triggers and lean is 6 + 40 = 46 bytes, 52 with the client's
-header. At 20 a second that's about 1 KB/s up per VR player, and about 1 KB/s down for each VR
-player in view.
+A pose with head, both hands, triggers and lean is 7 + 40 = 47 bytes, 53 with the client's header;
+with hips, chest, feet, knees and elbows, 7 + 104 = 111 bytes. At 20 a second that's 1 to 2.3 KB/s
+up per VR player, and about the same down for each VR player in view.
 
 ## 6. Checking the server work
 
@@ -235,8 +265,8 @@ Without the WowVR client, with two sessions on one server (a small script speaki
    bytes unchanged, and doesn't come back to A.
 4. Poses sent at 100 a second reach B at `WowVR.SendRate`, the newest each time.
 5. B out of range (beyond `WowVR.PoseRange`, or not seeing A, as with A stealthed) gets none.
-6. A pose with a wrong length, an unknown part bit, or a position 20 yards out is dropped, and the
-   session stays connected.
+6. A pose with a wrong length, part bit 15, or a position 20 yards out (in any part, the full body
+   joints too) is dropped, and the session stays connected.
 7. B coming into view of A gets A's state and last pose at once if it's newer than the timeout.
 8. A state with bit 0 clear reaches B at once, and B no longer gets the stored pose on coming into
    view.

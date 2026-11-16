@@ -49,6 +49,34 @@ public class ClientDataTests(ClientFixture client) : IClassFixture<ClientFixture
         Assert.True(texture.Width > 0 && texture.Height > 0);
     }
 
+    [Theory]
+    [InlineData(@"TILESET\Elwynn\ElwynnGrassBase.blp")]
+    [InlineData(@"textures\SunCenter.blp")]
+    [InlineData(@"Character\Human\Male\HumanMaleSkin00_00.blp")]
+    [InlineData(@"Interface\Icons\INV_Misc_QuestionMark.blp")]
+    public void InfoSaysHowATextureIsStored(string path)
+    {
+        var data = Source.Read(path)!;
+
+        var info = BlpDecoder.ReadInfo(data);
+        var gpu = BlpDecoder.ConvertToGpu(data);
+
+        Assert.Equal(2, info.Version);
+        Assert.Equal(BlpDecoder.ReadSize(data), (info.Width, info.Height));
+        Assert.Equal(info.Encoding == BlpEncoding.Dxt, info.Dxt != 0);
+
+        // The GPU path keeps a file's DXT blocks only with a whole chain of mipmaps; the icon has none.
+        if (gpu.Format != GpuTextureFormat.Rgba8)
+        {
+            Assert.Equal((BlpEncoding.Dxt, (int)gpu.Format), (info.Encoding, info.Dxt));
+        }
+
+        if (path.StartsWith("Character", StringComparison.Ordinal))
+        {
+            Assert.Equal(BlpEncoding.Palette, info.Encoding);
+        }
+    }
+
     [Fact]
     public void MapTableHasTheContinents()
     {

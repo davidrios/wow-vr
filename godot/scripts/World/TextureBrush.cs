@@ -14,6 +14,7 @@ namespace WowVR.World;
 /// in VR, tags the textures of what's under the pointer, as <see cref="TextureTags"/> describes:
 /// all of a building's, a doodad's or a creature's, or all the layers of the ground's chunk there
 /// with the grass they scatter. Doodads without collision, such as most bushes, can't be pointed at.
+/// The menu's button, or F5 with the brush on, tags everything in the camera's view instead.
 /// </summary>
 public partial class TextureBrush : Node
 {
@@ -44,9 +45,33 @@ public partial class TextureBrush : Node
 
     private sealed record SurfaceData(Vector3[] Positions, Vector2[] Uvs, int[] Indices);
 
-    public override void _Ready() => AppSettings.Changed += OnSettingsChanged;
+    /// <summary>Asks the brush in the world to tag everything in view, as the menu's button does.</summary>
+    public static event Action? TagViewRequested;
 
-    public override void _ExitTree() => AppSettings.Changed -= OnSettingsChanged;
+    public static void RequestTagView() => TagViewRequested?.Invoke();
+
+    public override void _Ready()
+    {
+        AppSettings.Changed += OnSettingsChanged;
+        TagViewRequested += OnTagViewRequested;
+    }
+
+    public override void _ExitTree()
+    {
+        AppSettings.Changed -= OnSettingsChanged;
+        TagViewRequested -= OnTagViewRequested;
+    }
+
+    private void OnTagViewRequested() => TagView();
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (AppSettings.TextureBrush && @event is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.F5 })
+        {
+            TagView();
+            GetViewport().SetInputAsHandled();
+        }
+    }
 
     private void OnSettingsChanged()
     {
@@ -141,6 +166,170 @@ public partial class TextureBrush : Node
         }
     }
 
+    /// <summary>
+    /// Tags every texture drawn in the camera's view: the buildings, doodads, creatures and objects
+    /// whose bounds are inside it and in range, on the layers the camera shows (so not the outside
+    /// from inside a building), and every ground chunk inside it with the grass its layers scatter.
+    /// What's hidden behind something nearer counts too. Returns how many textures it found.
+    /// </summary>
+    public int TagView()
+    {
+        if (GetViewport().GetCamera3D() is not { } camera)
+        {
+            return 0;
+        }
+
+        var started = Time.GetTicksMsec();
+        var planes = camera.GetFrustum().ToArray();
+        var world = camera.GetWorld3D();
+        var eye = camera.GlobalPosition;
+        var mask = camera.CullMask;
+        var found = new Dictionary<string, Found>();
+        Found At(string where) => found.TryGetValue(where, out var f) ? f : found[where] = new Found { Where = where };
+
+        bool InView(Aabb box) => Array.TrueForAll(planes, p => !AllOver(p, box));
+
+        bool Shown(GeometryInstance3D item)
+        {
+            if (!item.IsVisibleInTree() || (item.Layers & mask) == 0 || item.GetWorld3D() != world)
+            {
+                return false;
+            }
+
+            var box = item.GlobalTransform * item.GetAabb();
+            return (item.VisibilityRangeEnd <= 0 || eye.DistanceTo(box.GetCenter()) <= item.VisibilityRangeEnd + item.VisibilityRangeEndMargin)
+                && InView(box);
+        }
+
+        // Creatures by name, then everything else that draws.
+        var creatureMeshes = new HashSet<MeshInstance3D>();
+        foreach (var node in AllCreatures())
+        {
+            foreach (var instance in node.Meshes)
+            {
+                creatureMeshes.Add(instance);
+                if (Shown(instance))
+                {
+                    AddMesh(At($"creature {node.Name}"), instance);
+                }
+            }
+        }
+
+        foreach (var node in GetTree().Root.FindChildren("*", nameof(GeometryInstance3D), true, false))
+        {
+            switch (node)
+            {
+                case MeshInstance3D instance when !creatureMeshes.Contains(instance) && Shown(instance):
+                    AddMesh(At(WhereOf(instance)), instance);
+                    break;
+
+                // Doodads, instance by instance. Ground cover is left to its chunks below.
+                case MultiMeshInstance3D { Multimesh: { Mesh: { } mesh } multi } batch when batch.HasMeta(TextureTags.WhereMeta) && Shown(batch):
+                    AddInstances(At(batch.GetMeta(TextureTags.WhereMeta).AsString()), batch, multi, mesh, InView);
+                    break;
+            }
+        }
+
+        if ((mask & TileManager.OutsideLayer) != 0)
+        {
+            var terrain = At("terrain");
+            var effects = new HashSet<uint>();
+            foreach (var chunk in Tiles.TerrainChunksNear(eye, Mathf.Min(camera.Far, 3000f)))
+            {
+                if (InView(chunk))
+                {
+                    AddTerrain(terrain, chunk.GetCenter(), effects);
+                }
+            }
+        }
+
+        var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var fresh = 0;
+        foreach (var what in found.Values)
+        {
+            foreach (var part in what.Scattered.Prepend(what))
+            {
+                foreach (var (texture, (area, uv)) in part.Areas)
+                {
+                    if (textures.Add(texture) && !TextureTags.IsTagged(texture))
+                    {
+                        fresh++;
+                    }
+
+                    Tag(texture, part.Where, uv > 1e-9 ? area / uv : part.FixedArea);
+                }
+            }
+        }
+
+        LastView = textures.Count;
+        LastViewPlaces = [.. found.Values.Where(f => f.Areas.Count > 0).Select(f => f.Where)];
+        GD.Print($"Tagging everything in view: {textures.Count} textures ({fresh} new) on {LastViewPlaces.Length} things, found in {Time.GetTicksMsec() - started} ms");
+        return textures.Count;
+    }
+
+    /// <summary>How many textures the last <see cref="TagView"/> found, and on what, for checks.</summary>
+    public int LastView { get; private set; }
+
+    public string[] LastViewPlaces { get; private set; } = [];
+
+    /// <summary>Whether a box is all on the outer side of one of the camera's planes.</summary>
+    private static bool AllOver(Plane plane, Aabb box)
+    {
+        // The corner furthest against the plane's normal: if even it is over, the whole box is.
+        var corner = new Vector3(
+            plane.Normal.X >= 0 ? box.Position.X : box.End.X,
+            plane.Normal.Y >= 0 ? box.Position.Y : box.End.Y,
+            plane.Normal.Z >= 0 ? box.Position.Z : box.End.Z);
+        return plane.IsPointOver(corner);
+    }
+
+    /// <summary>What the notes call a mesh: its building or model, else the node it's under.</summary>
+    private static string WhereOf(MeshInstance3D instance) =>
+        instance.HasMeta(TextureTags.WhereMeta) ? WmoName(instance.GetMeta(TextureTags.WhereMeta).AsString())
+        : instance.GetParent() is { } parent ? parent.Name.ToString() : instance.Name.ToString();
+
+    /// <summary>
+    /// A doodad batch's instances in view: each surface's areas in the model, scaled to each
+    /// instance's size, since a doodad is scaled the same along every axis.
+    /// </summary>
+    private void AddInstances(Found found, MultiMeshInstance3D batch, MultiMesh multi, Mesh mesh, Func<Aabb, bool> inView)
+    {
+        var bounds = mesh.GetAabb();
+        var toWorld = batch.GlobalTransform;
+        var squared = 0.0;
+        var count = 0;
+        for (var i = 0; i < multi.InstanceCount; i++)
+        {
+            var t = toWorld * multi.GetInstanceTransform(i);
+            if (inView(t * bounds))
+            {
+                squared += Math.Pow(Math.Abs(t.Basis.Determinant()), 2.0 / 3.0);
+                count++;
+            }
+        }
+
+        if (count == 0)
+        {
+            return;
+        }
+
+        var surfaces = SurfacesOf(mesh);
+        for (var i = 0; i < surfaces.Length; i++)
+        {
+            var textures = TextureTags.TexturesOf(batch.MaterialOverride ?? mesh.SurfaceGetMaterial(i));
+            if (textures.Length == 0)
+            {
+                continue;
+            }
+
+            var (area, uv) = TextureTags.Areas(surfaces[i].Positions, surfaces[i].Uvs, surfaces[i].Indices, Transform3D.Identity);
+            foreach (var texture in textures)
+            {
+                found.Add(texture, (area * squared, uv * count));
+            }
+        }
+    }
+
     /// <summary>What a stroke found: each texture with its surfaces' areas in the world and in texture coordinates, summed.</summary>
     private sealed class Found
     {
@@ -166,14 +355,14 @@ public partial class TextureBrush : Node
     /// All the layers of the ground's chunk there, and the grass, flowers and stones those layers
     /// scatter, which have no collision to be pointed at. The grass is placed at its own size.
     /// </summary>
-    private void AddTerrain(Found found, Vector3 at)
+    private void AddTerrain(Found found, Vector3 at, HashSet<uint>? effectsDone = null)
     {
         found.Where = "terrain";
         found.FixedArea = TileManager.TerrainAreaPerRepeat;
         foreach (var (texture, effect) in Tiles.TerrainLayersAt(at))
         {
             found.Add(texture, (0, 0));
-            if (effect == 0 || GroundEffects?.Find(effect) is not { } scattered)
+            if (effect == 0 || effectsDone?.Add(effect) == false || GroundEffects?.Find(effect) is not { } scattered)
             {
                 continue;
             }

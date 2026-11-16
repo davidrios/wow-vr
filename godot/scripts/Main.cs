@@ -600,6 +600,7 @@ public partial class Main : Node3D
                 avatar.Start(library, GlueScreens.AppearanceOf(session.Character), player, _player);
                 avatar.Server = server;
                 server.Avatar = avatar;
+                AddChild(new VrMultiplayer { Name = "VrMultiplayer", Server = server, Creatures = creatures, Player = _player });
                 AddChild(new SpellEffects { Name = "SpellEffects", World = server, Creatures = creatures, Library = library, Sounds = creatureSounds, Tiles = tiles });
                 AddHud(server, new Interaction(server, creatures, tiles), tiles);
                 if (Array.IndexOf(arguments, "--spell-check") >= 0)
@@ -622,8 +623,9 @@ public partial class Main : Node3D
                 // A third number puts that ItemDisplayInfo on the shoulders, which are hidden with the head.
                 var gear = new int[(int)EquipmentSlot.Count];
                 gear[(int)EquipmentSlot.Shoulders] = look.Length > 2 ? look[2] : 0;
-                avatar.Start(library, new CharacterAppearance(look[0], look[1], 0, 0, 0, 0, 0, gear), player, _player);
-                AddChild(new BodyCheck { Avatar = avatar, Player = xrPlayer, Tiles = tiles });
+                var appearance = new CharacterAppearance(look[0], look[1], 0, 0, 0, 0, 0, gear);
+                avatar.Start(library, appearance, player, _player);
+                AddChild(new BodyCheck { Avatar = avatar, Player = xrPlayer, Tiles = tiles, Library = library, Appearance = appearance });
             }
 
             // Dev: tags textures under the pointer while it's on in the menu.

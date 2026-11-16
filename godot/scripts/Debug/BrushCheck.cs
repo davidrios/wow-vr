@@ -77,6 +77,15 @@ public partial class BrushCheck : Node
             Check("A creature nearby", false, "none; run with --sample-spawns");
         }
 
+        // Everything in the camera's view at once, as the menu's button does.
+        TextureBrush.RequestTagView();
+        await Seconds(3);
+        var places = Brush.LastViewPlaces;
+        Check("Tagging everything in view takes the ground", places.Contains("terrain"), $"{Brush.LastView} textures on {places.Length} things");
+        Check("Tagging everything in view takes doodads", places.Any(p => p.EndsWith(".m2", System.StringComparison.OrdinalIgnoreCase)), string.Join(", ", places.Take(12)));
+        var added = TextureTags.TaggedCount - taggedAtStart;
+        Check("Tagging everything in view saves them", added > 0 || pngsAtStart > 0, $"{TextureTags.TaggedCount} tagged now");
+
         AppSettings.TextureBrush = false;
         await Seconds(0.2);
         Check("The tint goes with the brush", TintedMaterials() == 0, $"{TintedMaterials()} materials still tinted");
@@ -116,8 +125,18 @@ public partial class BrushCheck : Node
         var notes = TextureTags.NotesPath(painted.Texture);
         var laidOut = png.Replace('\\', '/').EndsWith(Path.ChangeExtension(painted.Texture.Replace('\\', '/'), ".png"), System.StringComparison.OrdinalIgnoreCase);
         Check($"{what}: the PNG is saved where the MPQ has it", File.Exists(png) && laidOut, png);
-        var text = File.Exists(notes) ? File.ReadAllText(notes) : "";
-        Check($"{what}: the notes say how much one repeat covers", text.Contains(painted.Where) && text.Contains("largest"), text.Split('\n').Skip(3).FirstOrDefault()?.Trim() ?? "no notes");
+        var (used, largest, stored) = (false, 0.0, "no notes");
+        if (File.Exists(notes))
+        {
+            using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(notes));
+            var root = json.RootElement;
+            used = root.GetProperty("uses").EnumerateArray().Any(u => u.GetProperty("where").GetString() == painted.Where);
+            largest = root.GetProperty("largest").GetProperty("area").GetDouble();
+            stored = $"BLP{root.GetProperty("version").GetInt32()} {(root.TryGetProperty("compression", out var c) ? c.GetString() : "uncompressed")}";
+        }
+
+        Check($"{what}: the notes say how much one repeat covers", used && largest > 0, $"largest {largest:F3} square yards");
+        Check($"{what}: the notes say how the original was stored", stored.StartsWith("BLP2"), stored);
         Check($"{what}: it takes all of its textures", Brush.LastStroke >= minimumTextures, $"{Brush.LastStroke} textures");
         if (painted.Where == "terrain" || what == "the ground")
         {

@@ -1,0 +1,16 @@
+[configuration]
+
+entry_symbol = "humanoid_ik_library_init"
+compatibility_minimum = "4.7"
+reloadable = true
+
+[libraries]
+
+windows.debug.x86_64 = "res://addons/humanoid_ik/bin/libhumanoid_ik.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/humanoid_ik/bin/libhumanoid_ik.windows.template_release.x86_64.dll"
+linux.debug.x86_64 = "res://addons/humanoid_ik/bin/libhumanoid_ik.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://addons/humanoid_ik/bin/libhumanoid_ik.linux.template_release.x86_64.so"
+linux.debug.arm64 = "res://addons/humanoid_ik/bin/libhumanoid_ik.linux.template_debug.arm64.so"
+linux.release.arm64 = "res://addons/humanoid_ik/bin/libhumanoid_ik.linux.template_release.arm64.so"
+macos.debug = "res://addons/humanoid_ik/bin/libhumanoid_ik.macos.template_debug.framework"
+macos.release = "res://addons/humanoid_ik/bin/libhumanoid_ik.macos.template_release.framework"

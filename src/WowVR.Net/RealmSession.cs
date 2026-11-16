@@ -293,6 +293,7 @@ public sealed partial class RealmSession : IDisposable
                 }
             }
 
+            ResetVr();
             _inWorld = true;
             _reader = Task.Run(ReadLoop);
         }

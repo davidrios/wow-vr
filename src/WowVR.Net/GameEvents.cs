@@ -278,7 +278,37 @@ public sealed record InventoryChanged(IReadOnlyList<OwnedItem> Items, IReadOnlyL
 public sealed record AttackChanged(ulong Target, bool Attacking) : SessionEvent;
 
 /// <summary>A melee swing landed, or missed, so units can play their attack and the HUD can show it.</summary>
-public sealed record SwingHappened(ulong Attacker, ulong Target, uint Damage, bool Missed) : SessionEvent;
+/// <summary>
+/// A melee swing, from SMSG_ATTACKERSTATEUPDATE: its hit flags (AzerothCore's <c>HitInfo</c>) and
+/// the victim's state (0 intact, 1 hit, 2 dodged, 3 parried, 5 blocked, 6 evaded, 7 immune).
+/// </summary>
+public sealed record SwingHappened(ulong Attacker, ulong Target, uint Damage, uint HitInfo, byte VictimState) : SessionEvent
+{
+    public const uint OffHandFlag = 0x4;
+    public const uint MissFlag = 0x10;
+    public const uint FullAbsorb = 0x20;
+    public const uint PartialAbsorb = 0x40;
+    public const uint FullResist = 0x80;
+    public const uint PartialResist = 0x100;
+    public const uint CriticalFlag = 0x200;
+    public const uint Blocked = 0x2000;
+    public const uint Glancing = 0x10000;
+    public const uint Crushing = 0x20000;
+
+    public uint Absorbed { get; init; }
+    public uint Resisted { get; init; }
+    public uint BlockedAmount { get; init; }
+
+    public bool Missed => (HitInfo & MissFlag) != 0 || VictimState is 0 or 2 or 3 or 6 or 7;
+    public bool Critical => (HitInfo & CriticalFlag) != 0;
+    public bool OffHand => (HitInfo & OffHandFlag) != 0;
+}
+
+/// <summary>The server stopped the player's ranged auto attack.</summary>
+public sealed record AutoRepeatStopped : SessionEvent;
+
+/// <summary>Any unit started or stopped attacking another, as the server shows it.</summary>
+public sealed record UnitAttackChanged(ulong Attacker, ulong Victim, bool Attacking) : SessionEvent;
 
 /// <summary>A game object the server shows: its model, where it is, and how it's turned, in WoW coordinates.</summary>
 public sealed record GameObjectInfo(ulong Guid, uint Entry, string Name, uint DisplayId, uint Type, Vector3 Position, Quaternion Rotation, float Scale, uint Flags, uint State, uint PathProgress, uint[] Data);
@@ -349,3 +379,13 @@ public sealed record AreaEffectGone(ulong Guid) : SessionEvent;
 
 /// <summary>The server set a spell's cooldown, in milliseconds from now, or cleared it with 0.</summary>
 public sealed record CooldownSet(uint Spell, uint Milliseconds) : SessionEvent;
+
+/// <summary>The server speaks WowVR's VR protocol: what it agreed to, and how often to send poses.</summary>
+public sealed record VrReady(ushort Version, uint Capabilities, ushort SendRate, ushort MaxReceiveRate, ushort PoseTimeoutMs) : SessionEvent;
+
+/// <summary>Another player's VR pose, as the server relayed it.</summary>
+public sealed record VrPoseReceived(ulong Guid, VrPoseMessage Pose) : SessionEvent;
+
+/// <summary>Another player went into VR or out of it, or changed how they play.</summary>
+public sealed record VrStateReceived(ulong Guid, VrState State) : SessionEvent;
+

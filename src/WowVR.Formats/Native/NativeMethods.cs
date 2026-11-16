@@ -27,6 +27,18 @@ internal struct WaImage
     public uint MipCount;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal struct WaBlpInfo
+{
+    public uint Width;
+    public uint Height;
+    public uint Version;
+    public uint Encoding;
+    public uint Dxt;
+    public uint AlphaBits;
+    public uint MipCount;
+}
+
 /// <summary>Bindings for wow-alchemy-ffi. The contract is in its include/wow_alchemy.h.</summary>
 internal static unsafe partial class NativeMethods
 {
@@ -92,6 +104,9 @@ internal static unsafe partial class NativeMethods
 
     [LibraryImport(Library, EntryPoint = "wa_blp_size")]
     internal static partial WaStatus BlpSize(byte* data, nuint length, out uint width, out uint height);
+
+    [LibraryImport(Library, EntryPoint = "wa_blp_info")]
+    internal static partial WaStatus BlpInfo(byte* data, nuint length, out WaBlpInfo info);
 
     [LibraryImport(Library, EntryPoint = "wa_blp_to_bc1")]
     internal static partial WaStatus BlpToBc1(byte* data, nuint length, uint size, out WaBuffer buffer);

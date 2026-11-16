@@ -318,6 +318,11 @@ public partial class WorldMenu : PanelContainer
         }));
         rows.AddChild(frames);
 
+        // Dev: tags every texture in the camera's view at once, as F5 does with the brush on.
+        var tagView = new Button { Text = "Tag everything in view (dev)" };
+        tagView.Pressed += World.TextureBrush.RequestTagView;
+        rows.AddChild(tagView);
+
         var back = new Button { Text = "Back" };
         back.Pressed += () => ShowVideoPage(false);
         rows.AddChild(back);

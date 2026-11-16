@@ -162,7 +162,7 @@ public partial class TileObjectsNode : Node3D
             var layers = batch.Interior ? 1u : Outside;
             AddDoodadCell(batch, layers);
 
-            _pending.Add(new PendingItem(batch.Center, () => AddChild(Ranged(new MultiMeshInstance3D { Multimesh = batch.MultiMesh, Layers = layers }, batch.VisibleRange))));
+            _pending.Add(new PendingItem(batch.Center, () => AddChild(Named(Ranged(new MultiMeshInstance3D { Multimesh = batch.MultiMesh, Layers = layers }, batch.VisibleRange), batch.Model.Path))));
         }
 
         foreach (var wmo in objects.Wmos)
@@ -207,6 +207,7 @@ public partial class TileObjectsNode : Node3D
                             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                             Layers = layers,
                         }, batch.VisibleRange);
+                        Named(item, batch.Model.Path);
                         AddChild(item);
                         Track(item, groupIndex);
                     }));
@@ -233,6 +234,7 @@ public partial class TileObjectsNode : Node3D
                             Layers = LayersOf(index),
                             VisibilityRangeEnd = group.Indoor ? mesh.GetAabb().Size.Length() + IndoorVisibleMargin : 0f,
                         };
+                        Named(item, group.Name);
                         node.AddChild(item);
                         Track(item, index);
                     }));
@@ -265,6 +267,13 @@ public partial class TileObjectsNode : Node3D
                 }
             }
         }
+    }
+
+    /// <summary>Notes what a mesh draws, for the texture brush's notes.</summary>
+    private static T Named<T>(T item, string what) where T : GeometryInstance3D
+    {
+        item.SetMeta(TextureTags.WhereMeta, what);
+        return item;
     }
 
     /// <summary>Shows a doodad batch up to its range, shortened by the detail distance setting.</summary>

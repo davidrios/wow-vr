@@ -3,6 +3,7 @@
 
 using System.Linq;
 using System.Threading.Tasks;
+using WowVR.Formats.World;
 using WowVR.World;
 using Godot;
 
@@ -23,6 +24,16 @@ public partial class BodyCheck : Node
     public required PlayerAvatar Avatar { get; init; }
     public required Xr.XrPlayer Player { get; init; }
     public required TileManager Tiles { get; init; }
+
+    /// <summary>To build a second copy of the body, posed only from the pose others would receive.</summary>
+    public required Converters.CreatureLibrary Library { get; init; }
+    public required CharacterAppearance Appearance { get; init; }
+
+    private CreatureNode? _mirror;
+    private VrBodyIk? _mirrorIk;
+    private Vector3 _mirrorOffset;
+    private VrPose? _mirrorPose;
+    private ushort _sequence;
 
     /// <summary>The simulated player's eye height, in real meters.</summary>
     private const float EyeHeight = 1.65f;
@@ -88,20 +99,25 @@ public partial class BodyCheck : Node
         Avatar.ShowHead = _shots is not null;
         _camera = new Camera3D { Fov = 50, Far = 500 };
         AddChild(_camera);
+        await BuildMirror(body);
 
         // Standing first, so the body takes the player's height from it.
         await Seconds(1.5);
         var eyes = Player.Eyes.Origin.Y - Player.Feet.Y;
-        var bodyEyes = ik.EyeHeight * body.Skeleton.GlobalTransform.Basis.Scale.Y;
+        var bodyEyes = ik.UprightEyeHeight * body.Skeleton.GlobalTransform.Basis.Scale.Y;
         Check("The body is scaled to the player", Mathf.Abs(eyes - bodyEyes) < 0.05f, $"scale {Avatar.BodyScale:F2}: its eyes {bodyEyes:F2} yards up, the player's {eyes:F2}");
 
-        var ground = body.Skeleton.GlobalTransform * body.Skeleton.GetBoneGlobalPose(ik.Bones.Feet.FirstOrDefault()).Origin;
+        // The solved pose: outside the extension, the bones read as animated.
+        ik.KeepSolvedPose = true;
+        await Seconds(0.2);
+        var ground = body.Skeleton.GlobalTransform * ik.Pose(ik.Bones.Feet.FirstOrDefault()).Origin;
         Quaternion[]? openFingers = null;
         foreach (var pose in Poses)
         {
             Apply(pose);
             await Seconds(1.0);
             Measure(pose, ik, body.Skeleton, ground.Y);
+            MeasureMirror(pose, ik, body.Skeleton);
             var fingers = ik.FingerBones(left: false).Select(b => body.Skeleton.GetBonePoseRotation(b)).ToArray();
             if (pose.Grip > 0 && openFingers is not null)
             {
@@ -121,10 +137,80 @@ public partial class BodyCheck : Node
         Finish();
     }
 
+    /// <summary>
+    /// A second copy of the character beside the player, at its own size, as another player would
+    /// see it: posed each frame only from the bytes this body would send.
+    /// </summary>
+    private async Task BuildMirror(CreatureNode body)
+    {
+        var asset = await Task.Run(() => Library.BuildCharacter(Appearance));
+        if (asset is null)
+        {
+            Check("A second copy of the body is built", false, "it couldn't be");
+            return;
+        }
+
+        _mirror = new CreatureNode { Name = "Mirror", NoIdle = true };
+        _mirror.Build(asset, "");
+        AddChild(_mirror);
+        _mirror.StartIdle();
+        _mirrorIk = VrBodyIk.Create(_mirror.Skeleton, asset);
+        if (_mirrorIk is not null)
+        {
+            _mirrorIk.KeepSolvedPose = true;
+        }
+        _mirrorOffset = body.Skeleton.GlobalBasis.Orthonormalized() * Vector3.Back * 2.2f;
+        ProcessPriority = 200;
+    }
+
+    public override void _Process(double delta)
+    {
+        if (_mirror is null || _mirrorIk is null)
+        {
+            return;
+        }
+
+        var feet = Player.Feet + _mirrorOffset;
+        _mirror.Move(feet, Avatar.Facing, false, 0, 0, delta);
+        _mirror.Animate(delta, 0);
+
+        // Through the bytes, so their precision counts.
+        if (Avatar.CharacterPose(_sequence++, 0) is { } sent
+            && Net.VrPoseMessage.Read(sent.Write()) is { } received
+            && VrPoseSpace.Decode(received, feet, _mirror.Yaw) is { } decoded)
+        {
+            _mirror.GlobalPosition = decoded.Stand;
+            _mirrorIk.Solve(decoded.Pose);
+            _mirrorPose = decoded.Pose;
+        }
+    }
+
+    /// <summary>The copy's head and hands where the player's are, in the character's space at its own size.</summary>
+    private void MeasureMirror(Pose pose, VrBodyIk ik, Skeleton3D skeleton)
+    {
+        if (_mirror is null || _mirrorIk is null || _mirrorPose is null)
+        {
+            Check($"{pose.Name}: others see the body", false, "no copy posed from the pose sent");
+            return;
+        }
+
+        var playerFrame = new Transform3D(new Basis(Vector3.Up, Formats.WowCoords.YawFromOrientation(Avatar.Facing)), Player.Feet).AffineInverse();
+        var mirrorFrame = new Transform3D(new Basis(Vector3.Up, _mirror.Yaw), Player.Feet + _mirrorOffset).AffineInverse();
+        Vector3 Own(int bone) => playerFrame * (skeleton.GlobalTransform * ik.Pose(bone).Origin) / Avatar.BodyScale;
+        Vector3 Seen(int bone) => mirrorFrame * (_mirror.Skeleton.GlobalTransform * _mirrorIk.Pose(bone).Origin);
+
+        var (own, seen) = (ik.Bones, _mirrorIk.Bones);
+        var gaps = new[] { ("head", own.Head, seen.Head), ("left hand", own.Left[2], seen.Left[2]), ("right hand", own.Right[2], seen.Right[2]) }
+            .Select(b => (b.Item1, Gap: Own(b.Item2).DistanceTo(Seen(b.Item3)))).ToArray();
+        var worst = gaps.Max(g => g.Gap);
+        Check($"{pose.Name}: others see the head and hands where they are", worst < 0.04f,
+            $"{string.Join(", ", gaps.Select(g => $"{g.Item1} {g.Gap * 100:F1} cm"))} apart at the character's size");
+    }
+
     private void Measure(Pose pose, VrBodyIk ik, Skeleton3D skeleton, float ground)
     {
         var toWorld = skeleton.GlobalTransform;
-        Vector3 At(int bone) => toWorld * skeleton.GetBoneGlobalPose(bone).Origin;
+        Vector3 At(int bone) => toWorld * ik.Pose(bone).Origin;
         var scale = toWorld.Basis.Scale.X;
         var (leftWrist, rightWrist) = Player.Wrists;
         var bones = ik.Bones;
@@ -144,7 +230,7 @@ public partial class BodyCheck : Node
             Check($"{pose.Name}: the {side} hand is at the wrist", miss < 0.02f || outOfReach, $"{miss * 100:F1} cm off{(outOfReach ? ", out of reach" : "")}");
 
             // The fingers point where the real ones do.
-            var fingers = (toWorld.Basis.Orthonormalized() * skeleton.GetBoneGlobalPose(arm[2]).Basis.Orthonormalized() * ik.FingersRest(left)).Normalized();
+            var fingers = (toWorld.Basis.Orthonormalized() * ik.Pose(arm[2]).Basis.Orthonormalized() * ik.FingersRest(left)).Normalized();
             var off = Mathf.RadToDeg(fingers.AngleTo(wrist.Basis.Y));
             Check($"{pose.Name}: the {side} hand lies as the real one", off < 5f, $"{off:F1} degrees off");
 
@@ -209,10 +295,11 @@ public partial class BodyCheck : Node
         var forward = facing * Vector3.Right;
         var right = facing * Vector3.Back;
         var size = body.Height;
-        var chest = body.GlobalPosition + (Vector3.Up * size * 0.6f);
+        var chest = body.GlobalPosition + (Vector3.Up * size * 0.6f) + (_mirror is null ? Vector3.Zero : _mirrorOffset / 2);
+        var distance = _mirror is null ? 1.6f : 2.4f;
         foreach (var (view, from) in new[] { ("front", forward), ("side", right) })
         {
-            _camera.GlobalPosition = chest + (from * size * 1.6f) + (Vector3.Up * size * 0.1f);
+            _camera.GlobalPosition = chest + (from * size * distance) + (Vector3.Up * size * 0.1f);
             _camera.LookAt(chest, Vector3.Up);
             _camera.MakeCurrent();
             await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);

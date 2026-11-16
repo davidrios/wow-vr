@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using WowVR.Converters;
 using WowVR.Formats;
 using WowVR.Formats.Models;
+using WowVR.Formats.World;
 using Godot;
 
 namespace WowVR.World;
@@ -172,6 +173,7 @@ public partial class CreatureNode : Node3D
         if (_sinceAnimated >= interval)
         {
             _player.Advance(_sinceAnimated);
+            _layer?.Apply(Skeleton, _sinceAnimated);
             _billboards?.Apply(Skeleton);
             if (_hiddenBone >= 0)
             {
@@ -250,6 +252,12 @@ public partial class CreatureNode : Node3D
     /// <summary>The way it faces now, as a WoW orientation, smoothed as it turns.</summary>
     public float Facing => _yaw - Mathf.Pi / 2;
 
+    /// <summary>Its turn about the up axis in the scene, which its model is drawn at.</summary>
+    public float Yaw => _yaw;
+
+    /// <summary>What it was built from, for a VR player's body solver.</summary>
+    public CreatureAsset Asset => _asset;
+
     /// <summary>How wide it is, for picking it.</summary>
     public float Radius => Mathf.Max(Mathf.Max(_asset.Skeleton.Bounds.Size.X, _asset.Skeleton.Bounds.Size.Z) * 0.5f * _asset.Scale * Scale.X, 0.4f);
 
@@ -309,7 +317,8 @@ public partial class CreatureNode : Node3D
         }
 
         _dead = dead;
-        _oneShot = false;
+        (_oneShot, _swingWhole) = (false, false);
+        _layer?.Stop();
         _casting = false;
         if (dead)
         {
@@ -418,16 +427,143 @@ public partial class CreatureNode : Node3D
         return parent is BoneAttachment3D ? parent : holder;
     }
 
-    /// <summary>Swings once, then goes back to what it was doing.</summary>
-    public void PlayAttack()
+    /// <summary>What it holds, which chooses its swings, parries and ready stance.</summary>
+    public MeleeWeapons Weapons { get; set; } = MeleeWeapons.None;
+
+    private bool _combatReady;
+
+    /// <summary>It's attacking something: between swings it stands ready rather than idling.</summary>
+    public bool CombatReady
     {
-        if (_dead || (ClipFor(M2SequenceIds.Attack1H) ?? ClipFor(M2SequenceIds.AttackUnarmed) ?? ClipFor(M2SequenceIds.Attack2H)) is not { } attack)
+        get => _combatReady;
+        set
+        {
+            if (value == _combatReady)
+            {
+                return;
+            }
+
+            _combatReady = value;
+            if (!_moving && !_oneShot && !_casting && !_holding && !_dead && !_shuffling)
+            {
+                PlayNextIdle();
+            }
+        }
+    }
+
+    /// <summary>How quickly a swing or flinch started while moving takes over the upper body, in seconds.</summary>
+    private const double LayerFadeIn = 0.1;
+
+    private UpperBodyLayer? _layer;
+
+    /// <summary>A swing is playing on the whole body, which hands it to the upper body if the body starts moving.</summary>
+    private bool _swingWhole;
+
+    /// <summary>The upper body's own clip, made when first needed; null for a model with no spine to divide it at.</summary>
+    private UpperBodyLayer? Layer => _layer ??= _asset.Skeleton.SpineBone < 0 ? null
+        : new UpperBodyLayer(Array.ConvertAll(_asset.Skeleton.Bones, b => b.Parent), _asset.Skeleton.SpineBone, bone => $"{SkeletonName}:{Skeleton.GetBoneName(bone)}");
+
+    /// <summary>Whether the model can swing with its upper body while its legs walk: it has a spine to divide it at.</summary>
+    public bool CanLayer => _asset.Skeleton.SpineBone >= 0;
+
+    /// <summary>Whether a swing or flinch is playing on the upper body over the legs' own clip.</summary>
+    public bool UpperBodyPlaying => _layer?.Playing == true;
+
+    /// <summary>
+    /// The body started moving in the middle of a whole-body swing: the rest of it carries on in the
+    /// upper body, from where it was, while the legs walk.
+    /// </summary>
+    private void HandOffSwing()
+    {
+        if (!_oneShot || !_swingWhole || Layer is not { } layer || _player.GetAnimation(_clip) is not { } swing)
         {
             return;
         }
 
+        layer.Start(swing, _player.CurrentAnimationPosition, 0);
+        (_oneShot, _swingWhole) = (false, false);
+    }
+
+    /// <summary>The first of these sequences the model has, with its id, or null.</summary>
+    private (int Sequence, string Clip)? FirstClip(int[] sequences)
+    {
+        foreach (var sequence in sequences)
+        {
+            if (ClipFor(sequence) is { } clip)
+            {
+                return (sequence, clip);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Swings once with the main hand, then goes back to what it was doing.</summary>
+    public void PlayAttack() => PlaySwing(offHand: false);
+
+    /// <summary>
+    /// Swings once, with the off hand's clip for <paramref name="offHand"/>, unless it's dead, moving
+    /// or casting. Returns when the whoosh sounds and the blow lands, in seconds from now, from the
+    /// clip's own marks or a share of its length; null for a model with no swing at all.
+    /// </summary>
+    public (float Swing, float Hit)? PlaySwing(bool offHand)
+    {
+        if (_dead || FirstClip(MeleeAnimations.Attack(Weapons.Grip, offHand)) is not { } attack)
+        {
+            return null;
+        }
+
+        var animation = _player.GetAnimation(attack.Clip);
+        var length = animation is not null ? (float)animation.Length : 1f;
+        var (swing, hit) = _asset.Skeleton.ClipStrikes.GetValueOrDefault(attack.Clip);
+        var hitAt = hit ?? length * MeleeAnimations.DefaultHitFraction;
+        var swingAt = Mathf.Min(swing ?? length * MeleeAnimations.DefaultSwingFraction, hitAt);
+        if (_casting || _holding)
+        {
+            return (swingAt, hitAt);
+        }
+
+        if (_moving)
+        {
+            // On the move, the arms swing while the legs keep walking or running.
+            if (animation is not null)
+            {
+                Layer?.Start(animation, 0, LayerFadeIn);
+            }
+        }
+        else
+        {
+            _layer?.Stop();
+            (_oneShot, _swingWhole) = (true, true);
+            Play(attack.Clip, 1f);
+        }
+
+        return (swingAt, hitAt);
+    }
+
+    /// <summary>
+    /// Takes a swing as the server says it went: flinches, staggers at a critical, dodges, parries
+    /// with what it holds or blocks. Only while standing, and not in the middle of its own swing.
+    /// </summary>
+    public void PlayReaction(MeleeOutcome outcome)
+    {
+        if (_dead || _oneShot || _casting || _holding || _layer?.Playing == true || FirstClip(MeleeAnimations.Reaction(outcome, Weapons)) is not { } reaction)
+        {
+            return;
+        }
+
+        if (_moving)
+        {
+            if (_player.GetAnimation(reaction.Clip) is { } animation)
+            {
+                Layer?.Start(animation, 0, LayerFadeIn);
+            }
+
+            return;
+        }
+
         _oneShot = true;
-        Play(attack, 1f);
+        Play(reaction.Clip, 1f);
     }
 
     /// <summary>The clip for a sequence id, or null when the model has none.</summary>
@@ -453,6 +589,11 @@ public partial class CreatureNode : Node3D
     public void PlayMotion(int sequence, float speed, float? rateOverride = null)
     {
         _motionChosen = true;
+        if (sequence != M2SequenceIds.Stand)
+        {
+            HandOffSwing();
+        }
+
         if (_dead || _oneShot || _casting)
         {
             return;
@@ -555,7 +696,7 @@ public partial class CreatureNode : Node3D
         }
 
         var wasOneShot = _oneShot;
-        _oneShot = false;
+        (_oneShot, _swingWhole) = (false, false);
         _clip = "";
         if (wasOneShot && _moving && !_motionChosen && _stride is { } s)
         {
@@ -648,6 +789,11 @@ public partial class CreatureNode : Node3D
         if (_name is not null && _name.Visible != (_selected || (AppSettings.NamePlates && distance < NameRange)))
         {
             _name.Visible = !_name.Visible;
+        }
+
+        if (moving && !_motionChosen)
+        {
+            HandOffSwing();
         }
 
         if (_dead || _oneShot || _motionChosen || _casting)
@@ -778,6 +924,14 @@ public partial class CreatureNode : Node3D
                 _clip = stand;
             }
 
+            return;
+        }
+
+        // Fighting, it stands ready between swings instead of fidgeting.
+        if (_combatReady && FirstClip(MeleeAnimations.Ready(Weapons.Grip)) is { } ready)
+        {
+            _player.Play(ready.Clip, BlendSeconds);
+            _clip = ready.Clip;
             return;
         }
 

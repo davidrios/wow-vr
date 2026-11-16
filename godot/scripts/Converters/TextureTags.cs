@@ -5,6 +5,8 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using WowVR.Formats.Assets;
 using WowVR.Formats.Textures;
 using Godot;
@@ -15,8 +17,8 @@ namespace WowVR.Converters;
 /// A dev tool for trying out upscaled textures: tagged textures are saved as PNGs in a folder laid
 /// out as the MPQs are (<c>World\Azeroth\x.blp</c> as <c>World/Azeroth/x.png</c>), so it can be
 /// packed again, and whatever is in that folder is loaded instead of the client's texture and
-/// counts as tagged. Beside each PNG, a <c>.txt</c> says how much of the world one repeat of it
-/// covers where it's been tagged, to size its upscale by. While the texture brush is on, what
+/// counts as tagged. Beside each PNG, a <c>.json</c> says how the original was stored and how
+/// much of the world one repeat of it covers where it's been tagged, to size its upscale by. While the texture brush is on, what
 /// uses a tagged texture is tinted. Thread-safe: textures load off the main thread.
 /// </summary>
 public static class TextureTags
@@ -29,6 +31,9 @@ public static class TextureTags
     private static readonly StringName DevTint = "dev_tint";
     private static readonly StringName TaggedLayers = "tagged_layers";
     private const int MaxTerrainLayers = 64;
+
+    /// <summary>Meta on a building's group or a doodad batch naming what it draws, for the notes of what's tagged in view.</summary>
+    public static readonly StringName WhereMeta = "texture_where";
 
     private static readonly ConcurrentDictionary<string, byte> Tagged = new(StringComparer.OrdinalIgnoreCase);
 
@@ -58,7 +63,10 @@ public static class TextureTags
     /// </summary>
     public static string PngPath(string texture) => Path.Combine(Folder, Path.ChangeExtension(texture.Replace('\\', '/').ToLowerInvariant(), ".png"));
 
-    public static string NotesPath(string texture) => Path.ChangeExtension(PngPath(texture), ".txt");
+    public static string NotesPath(string texture) => Path.ChangeExtension(PngPath(texture), ".json");
+
+    /// <summary>Where notes went before they were JSON, read once and replaced.</summary>
+    private static string OldNotesPath(string texture) => Path.ChangeExtension(PngPath(texture), ".txt");
 
     /// <summary>The folder's PNG for a texture, as RGBA, which then counts as tagged; null without one.</summary>
     public static Image? LoadReplacement(string texture)
@@ -126,7 +134,7 @@ public static class TextureTags
             return false;
         }
 
-        var (width, height) = BlpDecoder.ReadSize(data);
+        var info = BlpDecoder.ReadInfo(data);
         var png = PngPath(texture);
         var added = false;
         if (!File.Exists(png))
@@ -146,7 +154,7 @@ public static class TextureTags
         added |= Tagged.TryAdd(texture, 0);
         if (areaPerRepeat is { } area && area > 1e-6)
         {
-            WriteNotes(texture, width, height, where, area);
+            WriteNotes(texture, info, where, area);
         }
 
         return added;
@@ -213,46 +221,87 @@ public static class TextureTags
     }
 
     /// <summary>
-    /// The notes beside a PNG: one line per place it's been tagged, with how many square yards one
-    /// repeat covers there, and the texture's texels per square yard and per yard along an edge.
+    /// The notes beside a PNG: how the original was stored (its BLP version, and which DXT when it
+    /// was compressed), and one entry per place it's been tagged, with how many square yards one
+    /// repeat covers there and the texture's texels per square yard and per yard along an edge.
     /// The largest area comes first, as what an upscale should be sized for.
     /// </summary>
-    private static void WriteNotes(string texture, int width, int height, string where, double area)
+    private static void WriteNotes(string texture, BlpInfo info, string where, double area)
     {
         lock (NotesLock)
         {
             var path = NotesPath(texture);
             var uses = new Dictionary<string, double>();
-            if (File.Exists(path))
+            try
             {
-                foreach (var line in File.ReadAllLines(path).Where(l => l.Length > 0 && l[0] != '#'))
+                if (File.Exists(path) && JsonSerializer.Deserialize<Notes>(File.ReadAllText(path), NotesJson) is { Uses: { } known })
                 {
-                    var parts = line.Split('	');
-                    if (parts.Length >= 2 && parts[0] is not ("largest" or "where")
-                        && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var known))
+                    foreach (var use in known)
                     {
-                        uses[parts[0]] = known;
+                        uses[use.Where] = use.Area;
                     }
                 }
+                else if (File.Exists(OldNotesPath(texture)))
+                {
+                    ReadOldNotes(OldNotesPath(texture), uses);
+                }
+            }
+            catch (Exception e) when (e is JsonException or IOException)
+            {
+                GD.PushWarning($"Could not read the notes in {path}, starting them again: {e.Message}");
             }
 
             uses[where] = area;
-            var texels = (double)width * height;
-            string Row(string name, double a) => string.Create(CultureInfo.InvariantCulture, $"{name}	{a:F3}	{texels / a:F1}	{Math.Sqrt(texels / a):F2}");
+            var texels = (double)info.Width * info.Height;
+            Use Row(string name, double a) => new(name, Math.Round(a, 3), Math.Round(texels / a, 1), Math.Round(Math.Sqrt(texels / a), 2));
 
-            var lines = new List<string>
-            {
-                $"# {texture}: {width}x{height} texels",
-                "# area: square yards one repeat of the texture covers there; density: texels per square yard; per_yard: texels per yard along an edge.",
-                "# Size an upscale for the largest area, where it's spread thinnest.",
-                Row("largest", uses.Values.Max()),
-                "where	area	density	per_yard",
-            };
-            lines.AddRange(uses.OrderByDescending(u => u.Value).Select(u => Row(u.Key, u.Value)));
+            Use[] ordered = [.. uses.OrderByDescending(u => u.Value).Select(u => Row(u.Key, u.Value))];
+            var notes = new Notes(
+                texture,
+                info.Width,
+                info.Height,
+                info.Version,
+                info.Encoding == BlpEncoding.Dxt ? $"DXT{info.Dxt}" : null,
+                info.AlphaBits,
+                ordered[0],
+                ordered);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllLines(path, lines);
+            File.WriteAllText(path, JsonSerializer.Serialize(notes, NotesJson));
+            File.Delete(OldNotesPath(texture));
         }
     }
+
+    /// <summary>The tab-separated notes written before, by where and area.</summary>
+    private static void ReadOldNotes(string path, Dictionary<string, double> uses)
+    {
+        foreach (var line in File.ReadAllLines(path).Where(l => l.Length > 0 && l[0] != '#'))
+        {
+            var parts = line.Split('\t');
+            if (parts.Length >= 2 && parts[0] is not ("largest" or "where")
+                && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var known))
+            {
+                uses[parts[0]] = known;
+            }
+        }
+    }
+
+    private static readonly JsonSerializerOptions NotesJson = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    /// <summary>
+    /// A texture's notes. <c>version</c> is the BLP's (2 in WoW); <c>compression</c> is DXT1, DXT3
+    /// or DXT5 when the original was, and missing when it was palettized or plain BGRA.
+    /// <c>largest</c> is the use where one repeat covers the most, to size an upscale for.
+    /// <c>area</c> is the square yards one repeat covers there, <c>density</c> the texels per
+    /// square yard, <c>per_yard</c> the texels per yard along an edge.
+    /// </summary>
+    private sealed record Notes(string Texture, int Width, int Height, int Version, string? Compression, int AlphaBits, Use Largest, Use[] Uses);
+
+    private sealed record Use(string Where, double Area, double Density, double PerYard);
 
     /// <summary>
     /// How many square yards one repeat of a surface's texture covers: its triangles' area in the

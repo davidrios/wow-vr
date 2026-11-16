@@ -39,3 +39,8 @@ __pycache__/
 
 # Local notes between sessions
 docs/handoff.md
+
+# SCons build leftovers of the GDExtension
+extensions/**/*.obj
+extensions/**/*.o
+extensions/**/.sconsign.dblite

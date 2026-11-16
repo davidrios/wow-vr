@@ -303,6 +303,9 @@ public sealed partial class RealmSession
 
     public void StopAttack() => _ = SendQuietly(Opcodes.CMSG_ATTACKSTOP, []);
 
+    /// <summary>Stops a ranged auto attack, as Auto Shot or a wand's Shoot, after its current shot.</summary>
+    public void CancelAutoRepeat() => _ = SendQuietly(Opcodes.CMSG_CANCEL_AUTO_REPEAT_SPELL, []);
+
     /// <summary>Right-clicking an NPC: its talk window, its quests or its wares, whichever it has.</summary>
     public void Interact(UnitStats unit)
     {
@@ -495,6 +498,11 @@ public sealed partial class RealmSession
             case Opcodes.MSG_MOVE_TELEPORT:
                 ReadOtherMovement(p.Data);
                 break;
+            case Opcodes.SMSG_WOWVR_HELLO:
+            case Opcodes.SMSG_WOWVR_STATE:
+            case Opcodes.SMSG_WOWVR_POSE:
+                ReadVr(p);
+                break;
             case Opcodes.SMSG_MESSAGECHAT:
             case Opcodes.SMSG_GM_MESSAGECHAT:
                 ReadChat(p.Data, p.Opcode == Opcodes.SMSG_GM_MESSAGECHAT);
@@ -580,6 +588,8 @@ public sealed partial class RealmSession
                     Events.Enqueue(new AttackChanged(victim, true));
                 }
 
+                Events.Enqueue(new UnitAttackChanged(attacker, victim, true));
+
                 break;
             }
             case Opcodes.SMSG_ATTACKSTOP:
@@ -591,6 +601,8 @@ public sealed partial class RealmSession
                 {
                     Events.Enqueue(new AttackChanged(victim, false));
                 }
+
+                Events.Enqueue(new UnitAttackChanged(attacker, victim, false));
 
                 break;
             }
@@ -608,6 +620,13 @@ public sealed partial class RealmSession
                 break;
             case Opcodes.SMSG_ATTACKERSTATEUPDATE:
                 ReadSwing(p.Data);
+                break;
+            case Opcodes.SMSG_CANCEL_AUTO_REPEAT:
+                if (new PacketReader(p.Data).PackedGuid() == Character.Guid)
+                {
+                    Events.Enqueue(new AutoRepeatStopped());
+                }
+
                 break;
             case Opcodes.SMSG_INVENTORY_CHANGE_FAILURE:
                 if (p.Data.Length > 0 && p.Data[0] != 0)
@@ -825,7 +844,7 @@ public sealed partial class RealmSession
     {
         var r = new PacketReader(data);
         var kind = (ChatKind)r.U8();
-        r.U32(); // language
+        var language = r.U32();
         var sender = r.U64();
         r.U32();
         var name = "";
@@ -867,7 +886,13 @@ public sealed partial class RealmSession
         }
 
         r.U32(); // length
-        var text = StripCodes(r.CString());
+        var raw = r.CString();
+        if (ReadVrAnnouncement(kind, language, sender, raw))
+        {
+            return;
+        }
+
+        var text = StripCodes(raw);
         if (name.Length == 0 && sender != 0)
         {
             name = _playerNames.GetValueOrDefault(sender, "");
@@ -1421,22 +1446,105 @@ public sealed partial class RealmSession
 
     private void ReadSwing(byte[] data)
     {
+        var swing = ParseSwing(data);
+        Events.Enqueue(swing);
+        if (swing.Attacker == Character.Guid || swing.Target == Character.Guid)
+        {
+            Events.Enqueue(new ChatReceived(new ChatLine(ChatKind.Combat, "", SwingLine(swing))));
+        }
+    }
+
+    /// <summary>SMSG_ATTACKERSTATEUPDATE, as AzerothCore's <c>Unit::SendAttackStateUpdate</c> writes it.</summary>
+    internal static SwingHappened ParseSwing(byte[] data)
+    {
         var r = new PacketReader(data);
         var hitInfo = r.U32();
         var attacker = r.PackedGuid();
         var target = r.PackedGuid();
         var damage = r.U32();
-        var missed = (hitInfo & 0x10) != 0 || damage == 0; // miss
-        Events.Enqueue(new SwingHappened(attacker, target, damage, missed));
+        r.U32(); // overkill
+        var parts = r.U8();
+        for (var i = 0; i < parts; i++)
+        {
+            r.U32(); // school
+            r.F32();
+            r.U32();
+        }
+
+        uint absorbed = 0, resisted = 0, blocked = 0;
+        if ((hitInfo & (SwingHappened.FullAbsorb | SwingHappened.PartialAbsorb)) != 0)
+        {
+            for (var i = 0; i < parts; i++)
+            {
+                absorbed += r.U32();
+            }
+        }
+
+        if ((hitInfo & (SwingHappened.FullResist | SwingHappened.PartialResist)) != 0)
+        {
+            for (var i = 0; i < parts; i++)
+            {
+                resisted += r.U32();
+            }
+        }
+
+        var victimState = r.U8();
+        r.U32();
+        r.U32(); // melee spell
+        if ((hitInfo & SwingHappened.Blocked) != 0)
+        {
+            blocked = r.U32();
+        }
+
+        return new SwingHappened(attacker, target, damage, hitInfo, victimState) { Absorbed = absorbed, Resisted = resisted, BlockedAmount = blocked };
+    }
+
+    /// <summary>A swing as the combat log says it, from the player's side.</summary>
+    private string SwingLine(SwingHappened swing)
+    {
         string NameFor(ulong guid) => guid == Character.Guid ? "You"
             : _objects.Objects.TryGetValue(guid, out var o) && NameOf(o) is { Length: > 0 } n ? n : "Something";
-        if (attacker == Character.Guid || target == Character.Guid)
+        var mine = swing.Attacker == Character.Guid;
+        var me = swing.Target == Character.Guid;
+        var who = NameFor(swing.Attacker);
+        var whom = me ? "you" : NameFor(swing.Target);
+        var victim = NameFor(swing.Target);
+        var notes = new List<string>();
+        if (swing.BlockedAmount > 0)
         {
-            var who = NameFor(attacker);
-            var whom = target == Character.Guid ? "you" : NameFor(target);
-            var line = missed ? $"{who} miss{(attacker == Character.Guid ? "" : "es")} {whom}." : $"{who} hit{(attacker == Character.Guid ? "" : "s")} {whom} for {damage}.";
-            Events.Enqueue(new ChatReceived(new ChatLine(ChatKind.Combat, "", line)));
+            notes.Add($"{swing.BlockedAmount} blocked");
         }
+
+        if (swing.Absorbed > 0)
+        {
+            notes.Add($"{swing.Absorbed} absorbed");
+        }
+
+        if (swing.Resisted > 0)
+        {
+            notes.Add($"{swing.Resisted} resisted");
+        }
+
+        if ((swing.HitInfo & SwingHappened.Crushing) != 0)
+        {
+            notes.Add("crushing");
+        }
+
+        if ((swing.HitInfo & SwingHappened.Glancing) != 0)
+        {
+            notes.Add("glancing");
+        }
+
+        var extra = notes.Count == 0 ? "" : $" ({string.Join(", ", notes)})";
+        return swing.VictimState switch
+        {
+            2 => me ? "You dodge." : $"{victim} dodges.",
+            3 => me ? "You parry." : $"{victim} parries.",
+            6 => me ? "You evade." : $"{victim} evades.",
+            7 => me ? "You are immune." : $"{victim} is immune.",
+            _ when swing.Missed => $"{who} miss{(mine ? "" : "es")} {whom}.",
+            _ => $"{who} {(swing.Critical ? "crit" : "hit")}{(mine ? "" : "s")} {whom} for {swing.Damage}{extra}.",
+        };
     }
 
     /// <summary>Why a quest giver won't give a quest, by AzerothCore's <c>QuestFailedReason</c>.</summary>

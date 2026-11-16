@@ -24,6 +24,8 @@ An uncompressed BLP2 can have an alpha type byte of 2, as `textures\SunGlare.blp
 
 A DXT mipmap holds `ceil(w/4) * ceil(h/4)` blocks. wow-alchemy used to size it as `ceil(w*h/16)`, which cut the small levels of non-square textures short, so about 160 of them, such as `Creature\PHOENIX\RIBBON_TEST.BLP`, fell back to uncompressed level 0 and now upload their own DXT chain. 866 files store fewer bytes than a level needs; decoding such a level is an error. The alpha type only picks a DXT kind, so `textures\TaxiMaps\TaxiMap00.blp`, palettized with type 4, loads.
 
+`wa_blp_info` (`BlpDecoder.ReadInfo`) reads how a texture is stored without decoding it: version, encoding (JPEG, palette, DXT, BGRA), DXT kind and alpha bits. `wa_blp_to_gpu` isn't a guide to that: it decodes DXT files without a whole mipmap chain to RGBA, as `Interface\Icons\INV_Misc_QuestionMark.blp` is.
+
 An MPQ patch can delete a file with a marker entry (flag `0x02000000`, size 0), as `patch-enUS.MPQ` does for `DBFilesClient\CharVariations.dbc`. The chain treats the file as gone from then on, as StormLib does; before, 5,122 such names read as 0 bytes.
 
 `BlpDecoder.Decode` gives RGBA8 for one mipmap level. Terrain uses `ConvertToBc1` instead, which gives a whole BC1 chain for the GPU:
@@ -153,6 +155,17 @@ See `decisions/0009-billboards-and-creature-sounds.md`.
 - **CreatureSoundData** (38 fields): 9 footstep, which is an id for `FootstepTerrainLookup` and not a sound, 11 wing flap, 14 to 18 fidgets, 24 loop, and 31 and 32 fidget delays as floats. The others are `SoundEntries` rows too.
 - **Ground cover:** `GroundEffectTexture` fields 1 to 4 are `GroundEffectDoodad` rows, 5 to 8 their weights and 9 an amount. `GroundEffectDoodad` field 1 is a model under `World\NoDXT\Detail\`. The 8 bytes of the MCNK header that wow-alchemy-adt calls `no_effect_doodad` are a per-cell bitmap of cells to leave clear, whose bit order is assumed to be row by row. Treating the amount as a count per cell, with random positions, is a guess, as no reference says how the client uses it.
 - **GroundEffectTexture** (11 fields): 10 is the `TerrainType` row. **TerrainType** (6 fields): 4 is the terrain's sound. **FootstepTerrainLookup** (5 fields): 1 creature footstep id, 2 terrain sound, 3 dry `SoundEntries` row, 4 wet.
+
+## Melee
+
+- **The server's report:** `SMSG_ATTACKERSTATEUPDATE` is the hit flags, two packed guids, the damage, the overkill, a count of damage parts (school, float and integer amount each), then absorbs and resists per part only when their flags are set, the victim's state, two unused `uint32`s and the blocked amount when `0x2000` is set (AzerothCore's `Unit::SendAttackStateUpdate`). Flags: `0x4` off hand, `0x10` miss, `0x200` critical, `0x2000` blocked, `0x10000` glancing, `0x20000` crushing, `0x40000` no animation. States: 0 untouched, 1 hit, 2 dodged, 3 parried, 6 evaded, 7 immune. A dodge or parry doesn't set the miss flag.
+- **Attackers:** `SMSG_ATTACKSTART` (two full guids) and `SMSG_ATTACKSTOP` (two packed guids and a `uint32`) come for every unit in view, not only the player.
+- **Clips** (AnimationData): 16 to 19 attacks unarmed, 1H, 2H and 2H loose (polearms, staves, spears), 87 the off hand's and 117 the off hand's unarmed; 20 to 23 parries the same way, 24 shield block, 30 dodge; 25 to 28 standing ready; 9 combat wound and 10 combat critical. Fist weapons are held as unarmed.
+- **Attack clip events:** `$CSS` is when the swing's whoosh sounds, and `$CST` (characters) or `$CAH` (kobolds and other creatures) when the blow lands; `$CPP` comes first in each. Where a clip has none, a quarter and four tenths of its length stand in, by eye.
+- **WeaponImpactSounds** (23 fields): 1 weapon subclass, 2 whether the weapon is metal, 3 to 12 the sounds on ten surfaces and 13 to 22 their criticals. The surfaces, from the sounds' names: flesh, chain, plate, metal shield, wooden shield, parried by metal, parried by wood, wood, stone, ethereal. Subclass 13 (fist weapons, "Unarmed_Generic") stands for a bare hand. `Item.dbc` field 3 overrides the subclass when not -1, and field 4 is the material (1 metal, 2 wood).
+- **WeaponSwingSounds2** (4 fields): 1 light, medium or heavy, 2 critical, 3 the sound.
+- **CreatureSoundData** for melee: 1 exertion, 2 critical exertion, 3 injury, 4 critical injury, 5 crushing blow, 6 death, 19 to 22 a beast's own attack sounds (a wolf's bite). Field 25 is 0 in all but 2 rows, so it isn't the impact surface.
+- **Guesses:** what a creature's hide sounds like isn't in the tables found: creatures sound as flesh, and players by their chest (mail as chain, plate as plate). Light swings are daggers and fist weapons, heavy ones two-handers. A plain swing grunts and a plain hit cries half the time; criticals always do.
 
 ## Creature displays
 

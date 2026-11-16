@@ -75,6 +75,8 @@ public static class Opcodes
     public const ushort SMSG_ATTACKSWING_DEADTARGET = 0x148;
     public const ushort SMSG_ATTACKSWING_CANT_ATTACK = 0x149;
     public const ushort SMSG_ATTACKERSTATEUPDATE = 0x14A;
+    public const ushort CMSG_CANCEL_AUTO_REPEAT_SPELL = 0x26D;
+    public const ushort SMSG_CANCEL_AUTO_REPEAT = 0x29C;
     public const ushort CMSG_REPOP_REQUEST = 0x15A;
     public const ushort SMSG_RESURRECT_REQUEST = 0x15B;
     public const ushort CMSG_RESURRECT_RESPONSE = 0x15C;
@@ -142,6 +144,14 @@ public static class Opcodes
     public const ushort SMSG_TIME_SYNC_REQ = 0x390;
     public const ushort CMSG_TIME_SYNC_RESP = 0x391;
     public const ushort SMSG_GM_MESSAGECHAT = 0x3B3;
+    // WowVR's own, for VR bodies on a server with mod-wowvr: docs/vr-multiplayer-protocol.md.
+    // A stock server disconnects a client that sends these, so they wait for its announcement.
+    public const ushort CMSG_WOWVR_HELLO = 0x521;
+    public const ushort SMSG_WOWVR_HELLO = 0x522;
+    public const ushort CMSG_WOWVR_STATE = 0x523;
+    public const ushort SMSG_WOWVR_STATE = 0x524;
+    public const ushort CMSG_WOWVR_POSE = 0x525;
+    public const ushort SMSG_WOWVR_POSE = 0x526;
 }
 
 /// <summary>Indexes into an object's update fields, in 32-bit words, for 3.3.5a.</summary>
@@ -257,4 +267,5 @@ public enum MoveFlags : uint
     WaterWalking = 0x10000000,
     Hover = 0x40000000,
     Moving = Forward | Backward | StrafeLeft | StrafeRight,
+
 }

@@ -51,9 +51,6 @@ public partial class PlayerAvatar : Node3D
     private const float MinBodyScale = 0.3f;
     private const float MaxBodyScale = 3f;
 
-    /// <summary>The attachment a helmet sits on, at the top of the head.</summary>
-    private const int HelmetAttachment = 11;
-
     private IPlayer _player = null!;
     private Node3D _playerNode = null!;
     private CreatureNode? _body;
@@ -69,8 +66,6 @@ public partial class PlayerAvatar : Node3D
     private float _standingEye;
     private Vector3 _root;
     private bool _rooted;
-    private readonly List<(int Bone, Quaternion Rotation)> _upperPose = [];
-    private bool _upperCaptured;
 
     /// <summary>The VR solver, once the body is built, for checks.</summary>
     public VrBodyIk? Ik => _ik;
@@ -94,6 +89,9 @@ public partial class PlayerAvatar : Node3D
     public ServerWorld? Server { get; set; }
 
     private bool Vr => _playerNode is not DesktopPlayer;
+
+    /// <summary>Whether the body follows a headset and hands rather than playing its own clips.</summary>
+    public bool InVr => Vr;
 
     private CreatureLibrary _library = null!;
     private int _buildVersion;
@@ -126,8 +124,6 @@ public partial class PlayerAvatar : Node3D
                 RemoveChild(_body);
                 _body.QueueFree();
                 _body = null;
-                _upperPose.Clear();
-                _upperCaptured = false;
                 _ik = null;
             }
 
@@ -147,38 +143,17 @@ public partial class PlayerAvatar : Node3D
         }).CallDeferred());
     }
 
-    /// <summary>Finds the body's spine, arms and legs for the solver, and notes which bones are the upper body.</summary>
+    /// <summary>Finds the body's spine, arms and legs for the solver, and which bones are the upper body.</summary>
     private void StartVr(CreatureAsset asset)
     {
         var skeleton = _body!.Skeleton;
-        Vector3? headTop = asset.Attachments.TryGetValue(HelmetAttachment, out var helmet) && skeleton.FindBone(helmet.Bone) is >= 0 and var bone
-            ? skeleton.GetBoneGlobalRest(bone).Origin + helmet.Offset
-            : null;
-        _ik = VrBodyIk.Create(skeleton, asset.Skeleton, headTop);
+        _ik = VrBodyIk.Create(skeleton, asset);
         GD.Print(_ik is null ? "VR body: no spine, arms or fingers found, so it only stands" : $"VR body: {_ik.Description}");
         if (_playerNode is Xr.XrPlayer xr)
         {
             xr.ControllerHandsVisible = _ik is null;
         }
 
-        var spine = asset.Skeleton.SpineBone;
-        if (spine >= 0)
-        {
-            for (var b = 0; b < skeleton.GetBoneCount(); b++)
-            {
-                if (IsBelow(skeleton, b, spine))
-                {
-                    _upperPose.Add((b, Quaternion.Identity));
-                }
-            }
-
-            // The hips hold the spine as well as the legs, and their sway and twist while walking
-            // would carry the whole upper body. The legs hang from the waist, which keeps walking.
-            if (skeleton.GetBoneParent(spine) is >= 0 and var hips)
-            {
-                _upperPose.Add((hips, Quaternion.Identity));
-            }
-        }
     }
 
     public override void _Process(double delta)
@@ -212,17 +187,29 @@ public partial class PlayerAvatar : Node3D
         AnimateVr((float)delta);
         _body.Move(stand, _facing, false, _speed / _bodyScale, 0, delta);
         _body.Animate(delta, 0);
+        _lastPose = null;
         if (!dead)
         {
-            HoldUpperBody();
             if (_ik is not null && _playerNode is Xr.XrPlayer xr)
             {
                 var (left, right) = xr.Wrists;
                 var fingers = xr.Fingers;
-                _ik.Solve(new VrPose(_player.Eyes, left, right, fingers.LeftGrip, fingers.LeftTrigger, fingers.RightGrip, fingers.RightTrigger));
+                var pose = new VrPose(_player.Eyes, left, right, fingers.LeftGrip, fingers.LeftTrigger, fingers.RightGrip, fingers.RightTrigger);
+                _ik.Solve(pose);
+                _lastPose = (pose, feet, stand);
             }
         }
     }
+
+    private (VrPose Pose, Vector3 Feet, Vector3 Stand)? _lastPose;
+
+    /// <summary>
+    /// This frame's pose for other players to see, in the character's space at its own size, or
+    /// null when there's none, as when dead or not in VR.
+    /// </summary>
+    public Net.VrPoseMessage? CharacterPose(ushort sequence, ushort time) => _lastPose is { } last
+        ? VrPoseSpace.Encode(last.Pose, last.Feet, Formats.WowCoords.YawFromOrientation(_facing), _bodyScale, last.Stand, sequence, time)
+        : null;
 
     /// <summary>How fast the body goes, smoothed, from where it stands each frame.</summary>
     private void UpdateSpeed(Vector3 at, bool jumped, double delta)
@@ -258,7 +245,7 @@ public partial class PlayerAvatar : Node3D
 
         if (_standingEye > 0f)
         {
-            _bodyScale = Mathf.Clamp(_standingEye / (_ik.EyeHeight * _assetScale), MinBodyScale, MaxBodyScale);
+            _bodyScale = Mathf.Clamp(_standingEye / (_ik.UprightEyeHeight * _assetScale), MinBodyScale, MaxBodyScale);
             _body!.Scale = Vector3.One * _bodyScale;
         }
 
@@ -381,39 +368,5 @@ public partial class PlayerAvatar : Node3D
         }
 
         _facing = Mathf.LerpAngle(_facing, look, 1f - Mathf.Exp(-VrTurnRate * delta));
-    }
-
-    private static bool IsBelow(Skeleton3D skeleton, int bone, int ancestor)
-    {
-        for (var b = bone; b >= 0; b = skeleton.GetBoneParent(b))
-        {
-            if (b == ancestor)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>Puts the upper body back to standing after each animation step, so only the legs walk.</summary>
-    private void HoldUpperBody()
-    {
-        var skeleton = _body!.Skeleton;
-        if (!_upperCaptured)
-        {
-            for (var i = 0; i < _upperPose.Count; i++)
-            {
-                _upperPose[i] = (_upperPose[i].Bone, skeleton.GetBonePoseRotation(_upperPose[i].Bone));
-            }
-
-            _upperCaptured = _upperPose.Count > 0;
-            return;
-        }
-
-        foreach (var (bone, rotation) in _upperPose)
-        {
-            skeleton.SetBonePoseRotation(bone, rotation);
-        }
     }
 }

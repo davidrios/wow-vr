@@ -68,6 +68,12 @@ public sealed class CreatureSkeletonAsset
     /// <summary>By clip name, sorted by time. Clips with no sounds aren't listed.</summary>
     public required Dictionary<string, ClipSoundEvent[]> ClipSounds { get; init; }
 
+    /// <summary>
+    /// For attack clips that mark them, by clip name: when the swing's whoosh sounds and when the
+    /// blow lands, in seconds. Either is null when it isn't marked.
+    /// </summary>
+    public Dictionary<string, (float? Swing, float? Hit)> ClipStrikes { get; init; } = [];
+
     /// <summary>Bones that turn to the viewer, in an order safe to apply.</summary>
     public required (int Bone, M2BillboardKind Kind)[] Billboards { get; init; }
 
@@ -339,6 +345,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         FingerPose[] rightFist = [];
         FingerPose[] leftFist = [];
         var clipSounds = new Dictionary<string, ClipSoundEvent[]>();
+        var clipStrikes = new Dictionary<string, (float? Swing, float? Hit)>();
         var library = new AnimationLibrary();
         var idle = new List<IdleClip>();
         var clips = new Dictionary<int, string>();
@@ -373,6 +380,20 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             if (sounds.Count > 0)
             {
                 clipSounds[name] = sounds.OrderBy(s => s.Time).ToArray();
+            }
+
+            (float? Swing, float? Hit) strike = (null, null);
+            for (var e = 0; e < data.Events.Count; e++)
+            {
+                if (clip.EventTimes[e].Length > 0 && MeleeAnimations.IsSwingOrHit(data.Events[e].Id) is { } swing)
+                {
+                    strike = swing ? strike with { Swing = clip.EventTimes[e][0] } : strike with { Hit = strike.Hit ?? clip.EventTimes[e][0] };
+                }
+            }
+
+            if (strike != (null, null))
+            {
+                clipStrikes[name] = strike;
             }
 
             var clipBounds = new Aabb(ToGodot(sequence.BoundsMin), ToGodot(sequence.BoundsMax - sequence.BoundsMin));
@@ -428,6 +449,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             KeyBones = data.Bones.Select(b => b.KeyBone).ToArray(),
             Bounds = bounds,
             ClipSounds = clipSounds,
+            ClipStrikes = clipStrikes,
             Billboards = data.Bones
                 .Select((bone, index) => (Bone: index, Kind: bone.Billboard))
                 .Where(b => b.Kind != M2BillboardKind.None)

@@ -336,6 +336,13 @@ static int PrintAnims(MpqAssetSource source, string file)
         }
 
         Console.WriteLine($"sequence id {clip.Sequence.Id} variation {clip.Sequence.Variation}: {clip.Sequence.DurationSeconds:F2} s, flags {clip.Sequence.Flags:x}, {moving} bones with keys");
+        for (var e = 0; e < clip.EventTimes.Length && e < model.Events.Count; e++)
+        {
+            if (clip.EventTimes[e].Length > 0)
+            {
+                Console.WriteLine($"  event {model.Events[e].Id} at {string.Join(' ', clip.EventTimes[e].Select(t => t.ToString("F3")))} s");
+            }
+        }
     }
 
     foreach (var batch in model.Batches)

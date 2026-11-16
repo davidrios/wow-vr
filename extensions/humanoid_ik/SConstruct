@@ -1,0 +1,17 @@
+#!/usr/bin/env python
+# Builds the HumanoidIK3D extension into ../../godot/addons/humanoid_ik/bin, against the godot-cpp
+# submodule. Run from here with: python -m SCons api_version=4.7 [target=template_release]
+# (scripts/build-humanoid-ik.sh does that.)
+
+env = SConscript("../../third_party/godot-cpp/SConstruct")
+env.Append(CPPPATH=["src/"])
+
+output = "../../godot/addons/humanoid_ik/bin/"
+name = "libhumanoid_ik" + env["suffix"]
+sources = Glob("src/*.cpp")
+if env["platform"] == "macos":
+    library = env.SharedLibrary(output + name + ".framework/" + name, source=sources)
+else:
+    library = env.SharedLibrary(output + name + env["SHLIBSUFFIX"], source=sources)
+
+Default(library)

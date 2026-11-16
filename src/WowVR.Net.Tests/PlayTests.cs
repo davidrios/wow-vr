@@ -50,6 +50,36 @@ public class PlayTests
         Assert.Equal(info.TransportTime, read.TransportTime);
     }
 
+    /// <summary>An off-hand critical hit, partly absorbed and blocked, as AzerothCore writes it.</summary>
+    [Fact]
+    public void SwingReadsItsFlagsStateAndAmounts()
+    {
+        var hitInfo = SwingHappened.OffHandFlag | SwingHappened.CriticalFlag | SwingHappened.PartialAbsorb | SwingHappened.Blocked;
+        var w = new PacketWriter().U32(hitInfo).Packed(0xF130000000000042).Packed(7).U32(120).U32(0).U8(1)
+            .U32(1).F32(120).U32(120)
+            .U32(30)
+            .U8(1).U32(0).U32(0)
+            .U32(15);
+
+        var swing = RealmSession.ParseSwing(w.ToArray());
+
+        Assert.Equal((0xF130000000000042ul, 7ul, 120u, (byte)1), (swing.Attacker, swing.Target, swing.Damage, swing.VictimState));
+        Assert.True(swing.OffHand && swing.Critical && !swing.Missed);
+        Assert.Equal((30u, 15u), (swing.Absorbed, swing.BlockedAmount));
+    }
+
+    /// <summary>A dodge is a miss, though the server leaves the miss flag off.</summary>
+    [Fact]
+    public void DodgedSwingIsMissed()
+    {
+        var w = new PacketWriter().U32(0).Packed(1).Packed(2).U32(0).U32(0).U8(1).U32(1).F32(0).U32(0).U8(2).U32(0).U32(0);
+
+        var swing = RealmSession.ParseSwing(w.ToArray());
+
+        Assert.True(swing.Missed);
+        Assert.Equal(2, swing.VictimState);
+    }
+
     /// <summary>A button packs its id in 24 bits and its kind above: Fireball, then a Hearthstone.</summary>
     [Fact]
     public void ActionButtonsPackAsTheServerSavesThem()

@@ -91,6 +91,12 @@ public partial class ServerWorld
                     CastChanged?.Invoke();
                 }
 
+                if (!ended.Succeeded && ended.Spell == AutoRepeating)
+                {
+                    AutoRepeating = 0;
+                    ButtonsChanged?.Invoke();
+                }
+
                 // A cast that never went off gives the global cooldown back, as the client does.
                 if (!ended.Succeeded && ended.Spell == _lastCast && Spells?.Get((int)ended.Spell) is { } failed)
                 {
@@ -185,6 +191,20 @@ public partial class ServerWorld
             return;
         }
 
+        // Attack turns melee on at the target and off again, as the game's button does.
+        if (spell == AttackSpell)
+        {
+            ToggleAttack();
+            return;
+        }
+
+        // A ranged auto attack pressed again stops after its shot.
+        if (record is { IsAutoRepeat: true } && AutoRepeating == spell)
+        {
+            StopAutoRepeat();
+            return;
+        }
+
         var (left, _) = CooldownOf(spell);
         if (left > 0.05)
         {
@@ -231,6 +251,11 @@ public partial class ServerWorld
         }
 
         Sent(spell, record);
+        if (record is { IsAutoRepeat: true })
+        {
+            AutoRepeating = spell;
+            ButtonsChanged?.Invoke();
+        }
     }
 
     /// <summary>A cast went to the server: the global cooldown starts, as the client starts it.</summary>

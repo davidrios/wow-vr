@@ -108,6 +108,10 @@ public partial class PlayCheck : Node
                 Note("Play check: PASS the portal took the player to another map");
             }
         }
+        else if (arguments.Contains("--melee-check"))
+        {
+            AddMeleeSteps();
+        }
         else
         {
             Step("gm on and revive", age =>

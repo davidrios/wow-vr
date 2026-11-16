@@ -12,4 +12,21 @@
     <ProjectReference Include="..\src\WowVR.Net\WowVR.Net.csproj" />
   </ItemGroup>
 
+  <!--
+    The HumanoidIK3D GDExtension, which poses VR bodies (extensions/humanoid_ik). SCons rebuilds it
+    only when its sources change. Python's command is python on Windows, python3 elsewhere.
+    Set SkipHumanoidIk=true to build without it: the VR body then only stands.
+  -->
+  <PropertyGroup>
+    <HumanoidIkDir>$(MSBuildProjectDirectory)\..\extensions\humanoid_ik\</HumanoidIkDir>
+    <HumanoidIkPython Condition="'$(OS)' == 'Windows_NT'">python</HumanoidIkPython>
+    <HumanoidIkPython Condition="'$(OS)' != 'Windows_NT'">python3</HumanoidIkPython>
+  </PropertyGroup>
+
+  <Target Name="BuildHumanoidIk" BeforeTargets="BeforeBuild" Condition="'$(SkipHumanoidIk)' != 'true'">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\..\third_party\godot-cpp\SConstruct')"
+           Text="godot-cpp is missing: run git submodule update --init third_party/godot-cpp, or set SkipHumanoidIk=true." />
+    <Exec Command="$(HumanoidIkPython) -m SCons api_version=4.7 target=template_debug" WorkingDirectory="$(HumanoidIkDir)" />
+  </Target>
+
 </Project>

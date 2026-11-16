@@ -66,6 +66,9 @@ public sealed record SpellRecord(
     /// <summary>How far away it can be cast, in yards, at an enemy; 0 for the caster only.</summary>
     public float Range { get; init; }
 
+    /// <summary>A ranged auto attack, as Auto Shot or a wand's Shoot, which repeats until stopped.</summary>
+    public bool IsAutoRepeat => (Attributes2 & 0x20) != 0;
+
     /// <summary>Only castable in one of its forms, as AzerothCore's CheckShapeshift has it for the unshifted.</summary>
     public bool NeedsForm => Forms != 0 && (Attributes2 & 0x80000) == 0;
 

@@ -125,6 +125,7 @@ public sealed partial class CreatureDisplayTable
     private readonly record struct DisplayRow(int Model, int Sound, int Extra, float Scale, string[] Skins, int NpcSound = 0);
 
     private readonly Dictionary<int, (int Greeting, int Farewell, int Pissed)> _npcSounds = [];
+    private readonly Dictionary<int, ItemKind> _itemKinds = [];
 
     private readonly record struct ModelRow(string Path, float Scale, int Sound);
 
@@ -273,7 +274,11 @@ public sealed partial class CreatureDisplayTable
                     dbc.GetSingle(i, 32))
                 {
                     Attack = dbc.GetInt32(i, 1),
+                    AttackCritical = dbc.GetInt32(i, 2),
                     Wound = dbc.GetInt32(i, 3),
+                    WoundCritical = dbc.GetInt32(i, 4),
+                    WoundCrushing = dbc.GetInt32(i, 5),
+                    CustomAttacks = [.. Enumerable.Range(19, 4).Select(f => dbc.GetInt32(i, f)).Where(id => id != 0)],
                     Death = dbc.GetInt32(i, 6),
                     Aggro = dbc.GetInt32(i, 10),
                 };
@@ -334,6 +339,7 @@ public sealed partial class CreatureDisplayTable
             for (var i = 0; i < dbc.RecordCount; i++)
             {
                 table._itemDisplays[dbc.GetInt32(i, 0)] = (dbc.GetInt32(i, 5), dbc.GetInt32(i, 6));
+                table._itemKinds[dbc.GetInt32(i, 0)] = new ItemKind(dbc.GetInt32(i, 1), dbc.GetInt32(i, 2), dbc.GetInt32(i, 3), dbc.GetInt32(i, 4), dbc.GetInt32(i, 6));
             }
 
             return null;
@@ -372,6 +378,9 @@ public sealed partial class CreatureDisplayTable
     /// </summary>
     public string? ItemIconPath(int display) =>
         _items.TryGetValue(display, out var item) && item.Icon.Length > 0 ? $@"Interface\Icons\{item.Icon}.blp" : null;
+
+    /// <summary>What an item is and what it's made of, from Item.dbc; null for one the client doesn't know.</summary>
+    public ItemKind? ItemKindOf(int item) => _itemKinds.GetValueOrDefault(item);
 
     /// <summary>Where an item is worn, as Item.dbc's InventoryType, or 0 for an item the client doesn't know.</summary>
     public int ItemInventoryTypeOf(int item) => _itemDisplays.GetValueOrDefault(item).InventoryType;

@@ -7,7 +7,8 @@ namespace WowVR.Debug;
 
 /// <summary>
 /// <c>--creature-check</c> places sample creatures, then prints PASS or FAIL for whether they
-/// appear, animate, move, stay on the ground and keep to the frame budget, and quits.
+/// appear, animate, move, stay on the ground and keep to the frame budget, turn in place, and
+/// fight as the server's melee has them: stand ready, swing and stagger at a critical, and quits.
 /// </summary>
 public partial class CreatureCheck : Node
 {
@@ -58,8 +59,17 @@ public partial class CreatureCheck : Node
         }
 
         _watched += delta;
-        _worstFrame = Mathf.Max(_worstFrame, (float)delta * 1000f);
+        // A picture read back from the GPU stalls the frames around it, which aren't the creatures' cost.
+        if (_ignoreFrames > 0)
+        {
+            _ignoreFrames--;
+        }
+        else
+        {
+            _worstFrame = Mathf.Max(_worstFrame, (float)delta * 1000f);
+        }
         WatchTurning(delta);
+        WatchMelee();
         foreach (var (node, start) in _startPositions)
         {
             if (!GodotObject.IsInstanceValid(node))
@@ -151,6 +161,12 @@ public partial class CreatureCheck : Node
             }
         }
 
+        GD.Print($"Melee: {_melee}");
+        if (_meleeProblem is { } melee)
+        {
+            problems.Add(melee);
+        }
+
         if (_worstFrame > MaxFrameMilliseconds)
         {
             problems.Add($"a frame took {_worstFrame:F1} ms");
@@ -188,6 +204,133 @@ public partial class CreatureCheck : Node
         _sawShuffle |= _turner.Clip.StartsWith("11_") || _turner.Clip.StartsWith("12_");
         _fastestTurn = Mathf.Max(_fastestTurn, Mathf.Abs(Mathf.AngleDifference(_lastFacing, _turner.Facing)) / (float)delta);
         _lastFacing = _turner.Facing;
+    }
+
+    private int _meleeStep;
+    private CreatureNode? _fighter;
+    private CreatureNode? _walker;
+    private bool _shot;
+    private int _ignoreFrames;
+    private string _walking = "nothing walked";
+    private string _melee = "not watched";
+    private string? _meleeProblem;
+
+    /// <summary>
+    /// Once the turner has turned back: it stands ready, swings with its weapon's clip, staggers at a
+    /// critical, then stands down to its idles. A model without one of these clips skips it.
+    /// </summary>
+    private void WatchMelee()
+    {
+        // A standing creature with a ready stance, a character rather than the wolf, else any.
+        _fighter ??= _watched > 10 ? Named(SampleSpawns.StandingName).OrderBy(n => n.ClipFor(Formats.World.MeleeAnimations.ReadyUnarmed) is null ? 1 : 0).FirstOrDefault() : null;
+        if (_fighter is null || !GodotObject.IsInstanceValid(_fighter))
+        {
+            return;
+        }
+
+        static string Id(string clip) => clip.Split('_')[0];
+        var node = _fighter;
+
+        // From 12 seconds on, the first creature seen walking that has a spine swings, and keeps walking.
+        if (_walker is null && _watched > 12 && _watched < 19
+            && Creatures.Nodes.FirstOrDefault(n => n != node && n.CanLayer && Id(n.Clip) is "4" or "5") is { } walker)
+        {
+            _walker = walker;
+            walker.PlaySwing(offHand: false);
+            _walking = $"{walker.Name} swung walking: legs {walker.Clip}, arms {(walker.UpperBodyPlaying ? "swinging" : "not")}";
+            if (Id(walker.Clip) is not ("4" or "5") || !walker.UpperBodyPlaying)
+            {
+                _meleeProblem ??= "a swing on the move stopped the walk or didn't play on the arms";
+            }
+        }
+
+        switch (_meleeStep)
+        {
+            case 0 when _watched > 11:
+                node.CombatReady = true;
+                _meleeStep++;
+                break;
+            case 1 when _watched > 12:
+                var readyHas = Formats.World.MeleeAnimations.Ready(node.Weapons.Grip).Any(s => node.ClipFor(s) is not null);
+                _melee = $"{node.Name}: ready {node.Clip}";
+                if (readyHas && Id(node.Clip) is not ("25" or "26" or "27" or "28"))
+                {
+                    _meleeProblem = $"standing ready played {node.Clip}";
+                }
+
+                var timing = node.PlaySwing(offHand: false);
+                _melee += $", swing {node.Clip} (whoosh at {timing?.Swing:F2} s, blow at {timing?.Hit:F2} s)";
+                if (timing is null || Id(node.Clip) is not ("16" or "17" or "18" or "19"))
+                {
+                    _meleeProblem ??= $"the swing played {node.Clip}";
+                }
+
+                _meleeStep++;
+                break;
+            case 2 when _watched > 14:
+                _melee += $", after it {node.Clip}";
+                node.PlayReaction(Formats.World.MeleeOutcome.Critical);
+                _melee += $", critical {node.Clip}";
+                if (Formats.World.MeleeAnimations.Reaction(Formats.World.MeleeOutcome.Critical, node.Weapons).Any(s => node.ClipFor(s) is not null)
+                    && Id(node.Clip) is not ("8" or "9" or "10"))
+                {
+                    _meleeProblem ??= $"the critical played {node.Clip}";
+                }
+
+                _meleeStep++;
+                break;
+            case 3 when _watched > 16:
+                node.CombatReady = false;
+                _meleeStep++;
+                break;
+            case 4 when _watched > 17:
+                _melee += $", stood down {node.Clip}";
+                if (Id(node.Clip) is "25" or "26" or "27" or "28")
+                {
+                    _meleeProblem ??= "it stayed ready";
+                }
+
+                // Swinging standing, then walking: the rest of the swing goes on in the upper body.
+                node.PlaySwing(offHand: false);
+                _meleeStep++;
+                break;
+            case 5 when _watched > 17.3:
+                node.PlayMotion(Formats.Models.M2SequenceIds.Walk, 2f);
+                _melee += $", walked off mid-swing: legs {node.Clip}, arms {(node.UpperBodyPlaying ? "swinging" : "not")}";
+                if (Id(node.Clip) != "4" || !node.UpperBodyPlaying)
+                {
+                    _meleeProblem ??= "walking off mid-swing didn't carry the swing on in the arms";
+                }
+
+                _meleeStep++;
+                break;
+            case 6 when _watched > 17.6 && !_shot:
+                // With --shots=folder, a picture of the swing carried on over the walk, to judge the blend by eye.
+                _shot = true;
+                if (OS.GetCmdlineUserArgs().FirstOrDefault(arg => arg.StartsWith("--shots="))?["--shots=".Length..] is { } folder)
+                {
+                    var camera = GetViewport().GetCamera3D();
+                    camera.LookAt(node.GlobalPosition + (Vector3.Up * node.Height * 0.6f));
+                    GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(folder, "melee-walk-swing.png"));
+                    _ignoreFrames = 3;
+                }
+
+                break;
+            case 6 when _watched > 19:
+                _melee += $", a second later arms {(node.UpperBodyPlaying ? "still swinging" : "done")}; {_walking}";
+                if (node.UpperBodyPlaying)
+                {
+                    _meleeProblem ??= "the upper body's swing didn't end";
+                }
+
+                if (_walker is null)
+                {
+                    _meleeProblem ??= "no creature with a spine walked to swing on the move";
+                }
+
+                _meleeStep++;
+                break;
+        }
     }
 
     private IEnumerable<CreatureNode> Named(string name) =>

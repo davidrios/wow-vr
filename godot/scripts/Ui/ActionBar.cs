@@ -87,6 +87,9 @@ public partial class ActionSlot : Button
     private readonly Action _placed;
     private TextureRect _icon = null!;
     private ColorRect _cooldown = null!;
+
+    /// <summary>The edge lit while the button's attack goes on.</summary>
+    private Panel _active = null!;
     private Label _seconds = null!;
     private Label _count = null!;
     private ActionButton _shown;
@@ -119,6 +122,14 @@ public partial class ActionSlot : Button
 
         _cooldown = new ColorRect { Color = new Color(0, 0, 0, 0.65f), MouseFilter = MouseFilterEnum.Ignore, Visible = false };
         AddChild(_cooldown);
+
+        var activeBox = GlueTheme.Box(Colors.Transparent, 4, 0);
+        activeBox.SetBorderWidthAll(3);
+        activeBox.BorderColor = new Color(1f, 0.85f, 0.3f);
+        _active = new Panel { MouseFilter = MouseFilterEnum.Ignore, Visible = false };
+        _active.AddThemeStyleboxOverride("panel", activeBox);
+        _active.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        AddChild(_active);
 
         _seconds = Text(22, HorizontalAlignment.Center, VerticalAlignment.Center, Colors.White);
         _seconds.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -173,6 +184,13 @@ public partial class ActionSlot : Button
             TooltipText = action.IsEmpty ? "" : action.Kind == ActionKind.Item
                 ? _world.Session.ItemInfoOf(action.Id)?.Name ?? $"Item {action.Id}"
                 : record?.FullName ?? $"Spell {action.Id}";
+        }
+
+        _active.Visible = !action.IsEmpty && action.Kind == ActionKind.Spell && _world.IsActive(action.Id);
+        if (_active.Visible)
+        {
+            // Pulses while it goes on, as the game's attack buttons flash.
+            _active.Modulate = new Color(1, 1, 1, 0.55f + (0.45f * Mathf.Sin((float)(Time.GetTicksMsec() / 1000.0 * Mathf.Tau * 0.8))));
         }
 
         if (action.IsEmpty)

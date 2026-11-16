@@ -17,8 +17,44 @@ public enum GpuTextureFormat
 /// <summary>Pixels ready for upload. Compressed formats hold a chain down to 1 pixel.</summary>
 public sealed record GpuTexture(byte[] Pixels, GpuTextureFormat Format, int Width, int Height, int MipCount);
 
+/// <summary>How a BLP's pixels are stored.</summary>
+public enum BlpEncoding
+{
+    Jpeg = 0,
+    Palette = 1,
+    Dxt = 2,
+    Bgra = 3,
+}
+
+/// <summary>
+/// How a BLP is stored, from its header: its version (0 to 2, BLP0 to BLP2), its encoding, and
+/// for DXT which kind (1, 3 or 5, else 0).
+/// </summary>
+public sealed record BlpInfo(int Width, int Height, int Version, BlpEncoding Encoding, int Dxt, int AlphaBits, int MipCount);
+
 public static class BlpDecoder
 {
+    /// <summary>How a texture is stored, without decoding it.</summary>
+    public static unsafe BlpInfo ReadInfo(ReadOnlySpan<byte> blp)
+    {
+        fixed (byte* data = blp)
+        {
+            if (NativeMethods.BlpInfo(data, (nuint)blp.Length, out var info) != WaStatus.Ok)
+            {
+                throw new WowAlchemyException(NativeMethods.LastErrorMessage());
+            }
+
+            return new BlpInfo(
+                checked((int)info.Width),
+                checked((int)info.Height),
+                (int)info.Version,
+                (BlpEncoding)info.Encoding,
+                (int)info.Dxt,
+                (int)info.AlphaBits,
+                checked((int)info.MipCount));
+        }
+    }
+
     /// <summary>The file's own compressed mipmaps when a GPU can use them, or else RGBA8.</summary>
     public static unsafe GpuTexture ConvertToGpu(ReadOnlySpan<byte> blp)
     {

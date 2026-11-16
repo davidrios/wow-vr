@@ -78,6 +78,9 @@ public partial class ServerWorld : Node
 
     public RealmSession Session => _session;
 
+    /// <summary>WowVR's VR protocol: the server agreeing to it, and other players' poses and states.</summary>
+    public event System.Action<SessionEvent>? VrMessage;
+
     /// <summary>The player's own stats, once the server has sent them.</summary>
     public PlayerStats? Self { get; private set; }
 
@@ -132,6 +135,7 @@ public partial class ServerWorld : Node
     public void Start(RealmSession session, CreatureManager creatures, TileManager tiles, CreatureDisplayTable displays, Node3D player, Dictionary<int, FactionTemplateRecord> factions, List<AreaTriggerRecord> triggers, MpqAssetSource source)
     {
         StartSpells(session, source);
+        StartMelee(source);
         _session = session;
         _creatures = creatures;
         _tiles = tiles;
@@ -164,6 +168,7 @@ public partial class ServerWorld : Node
 
         SendMovement(delta);
         CheckAreaTriggers(delta);
+        ProcessMelee();
 
         _sinceReport += delta;
         if (_sinceReport >= ReportSeconds)
@@ -205,6 +210,7 @@ public partial class ServerWorld : Node
         }
 
         _session.Select(guid);
+        FollowTarget(guid);
         TargetChanged?.Invoke();
     }
 
@@ -321,6 +327,7 @@ public partial class ServerWorld : Node
     {
         _session.StopAttack();
         Attacking = false;
+        ButtonsChanged?.Invoke();
     }
 
     public void UseGameObject(ulong guid) => _session.UseGameObject(guid);
@@ -333,6 +340,7 @@ public partial class ServerWorld : Node
         {
             case UnitAppeared { Unit: var unit }:
                 _creatures.AddLive(ToSpawn(unit), new ServerMotion(unit.Path, _creatures.Clock - unit.PathElapsed));
+                NoteWeapons(unit.Guid, unit.Items, unit.Look);
                 Creatures++;
                 if (unit.Stats is { } stats)
                 {
@@ -341,11 +349,13 @@ public partial class ServerWorld : Node
 
                 break;
             case PlayerLookChanged changed when changed.Guid == _session.SelfGuid:
+                NoteLook(changed.Guid, changed.Look);
                 Avatar?.Redress(AppearanceOf(changed.Look));
                 SelfLookChanged?.Invoke();
                 break;
             case PlayerLookChanged changed:
                 _creatures.Redress((long)changed.Guid, AppearanceOf(changed.Look));
+                NoteLook(changed.Guid, changed.Look);
                 break;
             case UnitMoved moved:
                 _creatures.SetLiveMotion((long)moved.Guid, new ServerMotion(moved.Path, _creatures.Clock - moved.PathElapsed));
@@ -353,6 +363,7 @@ public partial class ServerWorld : Node
                 break;
             case UnitGone gone:
                 _creatures.RemoveLive((long)gone.Guid);
+                ForgetMelee(gone.Guid);
                 Units.Remove(gone.Guid);
                 Creatures--;
                 if (gone.Guid == Target)
@@ -376,6 +387,13 @@ public partial class ServerWorld : Node
                 break;
             case ChatReceived chat:
                 ChatLine?.Invoke(chat.Line);
+                break;
+            case VrReady ready:
+                GD.Print($"The server speaks WowVR's VR protocol, version {ready.Version}: poses {ready.SendRate} a second");
+                VrMessage?.Invoke(e);
+                break;
+            case VrPoseReceived or VrStateReceived:
+                VrMessage?.Invoke(e);
                 break;
             case ScreenMessage message:
                 ScreenText?.Invoke(message.Text, message.Error);
@@ -426,19 +444,17 @@ public partial class ServerWorld : Node
             case AttackChanged attack:
                 Attacking = attack.Attacking;
                 StatsChanged?.Invoke();
+                ButtonsChanged?.Invoke();
+                break;
+            case AutoRepeatStopped:
+                AutoRepeating = 0;
+                ButtonsChanged?.Invoke();
                 break;
             case SwingHappened swing:
-                if (swing.Attacker != _session.SelfGuid)
-                {
-                    _creatures.PlayAttack((long)swing.Attacker);
-                    _creatures.PlayLiveSound((long)swing.Attacker, s => s.Attack);
-                }
-
-                if (!swing.Missed && swing.Damage > 0 && swing.Target != _session.SelfGuid)
-                {
-                    _creatures.PlayLiveSound((long)swing.Target, s => s.Wound);
-                }
-
+                OnSwing(swing);
+                break;
+            case UnitAttackChanged unitAttack:
+                OnUnitAttack(unitAttack);
                 break;
             case GameObjectAppeared appeared:
                 GameObjects[appeared.Object.Guid] = appeared.Object;

@@ -57,10 +57,11 @@ public static class M2SequenceIds
     public const int ChannelCastDirected = 124;
     public const int ChannelCastOmni = 125;
 
-    /// <summary>Played once rather than looped.</summary>
+    /// <summary>Played once rather than looped: melee's swings and reactions, but not its ready stances.</summary>
     public static bool PlaysOnce(int id) => id is Stand or Death or AttackUnarmed or Attack1H or Attack2H or JumpStart or JumpEnd or Open or Close
         or CombatWound or SpellCast or SpellCastArea or NpcWelcome or NpcGoodbye or SpellCastDirected or SpellCastOmni or BattleRoar
-        or Special1H or Special2H or ShieldBash or EmoteTalk;
+        or Special1H or Special2H or ShieldBash or EmoteTalk
+        || (Array.IndexOf(World.MeleeAnimations.All, id) >= 0 && Array.IndexOf(World.MeleeAnimations.ReadyStances, id) < 0);
 
     /// <summary>The sequences this game plays beyond standing, walking and running.</summary>
     public static readonly int[] Extra =
@@ -70,6 +71,7 @@ public static class M2SequenceIds
         CombatWound, SpellPrecast, SpellCast, SpellCastArea, NpcWelcome, NpcGoodbye, ReadySpellDirected, ReadySpellOmni,
         SpellCastDirected, SpellCastOmni, BattleRoar, ReadyAbility, Special1H, Special2H, ShieldBash, EmoteTalk,
         ChannelCastDirected, ChannelCastOmni,
+        .. World.MeleeAnimations.All,
     ];
 
     /// <summary>Not played as such: its first pose is what a hand's fingers hold while it has something in it.</summary>

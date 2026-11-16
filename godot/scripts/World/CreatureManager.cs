@@ -93,6 +93,10 @@ public partial class CreatureManager : Node
         public bool Dead { get; set; }
         public bool Selected { get; set; }
 
+        /// <summary>What it fights with, and whether it's attacking something, which it stands ready for.</summary>
+        public MeleeWeapons Weapons { get; set; } = MeleeWeapons.None;
+        public bool Ready { get; set; }
+
         /// <summary>It faces the player until then, on the creatures' clock.</summary>
         public double FacePlayerUntil { get; set; }
 
@@ -188,9 +192,10 @@ public partial class CreatureManager : Node
             return;
         }
 
-        var (motion, dead, selected) = (entry.Motion, entry.Dead, entry.Selected);
+        var (motion, dead, selected, weapons, ready) = (entry.Motion, entry.Dead, entry.Selected, entry.Weapons, entry.Ready);
         AddLive(entry.Spawn with { Character = character }, motion);
         SetLiveState(guid, dead, selected);
+        SetLiveCombat(guid, weapons, ready);
         _rankTimer = 0;
     }
 
@@ -243,14 +248,24 @@ public partial class CreatureManager : Node
         }
     }
 
-    /// <summary>It swung at something.</summary>
-    public void PlayAttack(long guid)
+    /// <summary>A server unit's own sounds, once its model is built.</summary>
+    public CreatureSoundSet? LiveSounds(long guid) => _live.TryGetValue(guid, out var entry) ? entry.Sounds : null;
+
+    /// <summary>What a server unit fights with, and whether it's attacking, which it stands ready for.</summary>
+    public void SetLiveCombat(long guid, MeleeWeapons weapons, bool ready)
     {
         if (_live.TryGetValue(guid, out var entry))
         {
-            entry.Node?.PlayAttack();
+            (entry.Weapons, entry.Ready) = (weapons, ready);
+            if (entry.Node is { } node)
+            {
+                node.Weapons = weapons;
+                node.CombatReady = ready;
+            }
         }
     }
+
+    public CreatureSoundPlayer SoundPlayer => _sounds;
 
     /// <summary>Where a server unit is now, in WoW coordinates, standing on what's under it once that's known.</summary>
     public System.Numerics.Vector3? LivePosition(long guid)
@@ -528,6 +543,8 @@ public partial class CreatureManager : Node
             node.Scale = Vector3.One * Math.Max(entry.Spawn.Scale, 0.01f);
             entry.Node = node;
             node.SetState(entry.Dead, entry.Selected);
+            node.Weapons = entry.Weapons;
+            node.CombatReady = entry.Ready;
             entry.Sounds = asset.Sounds;
             entry.NextFidget = _clock + NextFidgetDelay(entry);
             node.SoundEvent += sound => PlaySound(entry, sound.Kind, sound.Index);

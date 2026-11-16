@@ -605,6 +605,51 @@ public partial class TileManager : Node3D
         return [.. Enumerable.Range(0, chunk.LayerCount).Select(i => (terrain.TextureNames[chunk.TextureIds[i]], i < chunk.EffectIds.Length ? chunk.EffectIds[i] : 0u))];
     }
 
+    /// <summary>
+    /// For the texture brush: the bounds of every loaded terrain chunk within a distance of a point
+    /// in the scene, tile by tile, so <see cref="TerrainLayersAt"/> reads each tile's file once.
+    /// The chunk's height is sampled at its corners and middle.
+    /// </summary>
+    public List<Aabb> TerrainChunksNear(Vector3 at, float radius)
+    {
+        var (wowX, wowY) = (-(at.Z + _originZ), -(at.X + _originX));
+        var size = WowCoords.ChunkSize;
+
+        // Chunks counted from the map's origin, as TerrainLayersAt counts them within a tile.
+        var (cx, cy) = ((int)Math.Floor((WowCoords.MapOrigin - wowY) / size), (int)Math.Floor((WowCoords.MapOrigin - wowX) / size));
+        var reach = (int)Math.Ceiling(radius / size);
+        var found = new List<(int Tile, Aabb Box)>();
+        for (var y = cy - reach; y <= cy + reach; y++)
+        {
+            for (var x = cx - reach; x <= cx + reach; x++)
+            {
+                var middle = new Vector3(
+                    (float)(-(WowCoords.MapOrigin - ((x + 0.5) * size)) - _originX),
+                    at.Y,
+                    (float)(-(WowCoords.MapOrigin - ((y + 0.5) * size)) - _originZ));
+                if (new Vector2(middle.X - at.X, middle.Z - at.Z).Length() > radius + size || TerrainHeightAt(middle) is not { } height)
+                {
+                    continue;
+                }
+
+                var half = (float)size / 2;
+                var (low, high) = (height, height);
+                foreach (var corner in (ReadOnlySpan<Vector3>)[new(-half, 0, -half), new(half, 0, -half), new(-half, 0, half), new(half, 0, half)])
+                {
+                    if (TerrainHeightAt(middle + (corner * 0.99f)) is { } h)
+                    {
+                        (low, high) = (Math.Min(low, h), Math.Max(high, h));
+                    }
+                }
+
+                var box = new Aabb(new Vector3(middle.X - half, low - 2f, middle.Z - half), new Vector3(2 * half, high - low + 4f, 2 * half));
+                found.Add((((y / AdtTerrain.ChunksPerSide) * WowCoords.TilesPerSide) + (x / AdtTerrain.ChunksPerSide), box));
+            }
+        }
+
+        return [.. found.OrderBy(f => f.Tile).Select(f => f.Box)];
+    }
+
     /// <summary>The terrain repeats each texture once per cell: 8 times across a chunk, both ways.</summary>
     public static double TerrainAreaPerRepeat => Math.Pow(WowCoords.ChunkSize / 8, 2);
 

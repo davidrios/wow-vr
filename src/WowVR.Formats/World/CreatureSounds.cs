@@ -9,8 +9,19 @@ public sealed record CreatureSoundSet(int Footstep, int WingFlap, int Loop, int[
     /// <summary>A grunt with a swing, CreatureSoundData's exertion.</summary>
     public int Attack { get; init; }
 
+    /// <summary>A grunt with a critical swing.</summary>
+    public int AttackCritical { get; init; }
+
     /// <summary>Being hit, its injury.</summary>
     public int Wound { get; init; }
+
+    /// <summary>Being hit critically, and by a crushing blow.</summary>
+    public int WoundCritical { get; init; }
+
+    public int WoundCrushing { get; init; }
+
+    /// <summary>A beast's own attack sounds, as a bite, one picked per swing; empty for most.</summary>
+    public int[] CustomAttacks { get; init; } = [];
 
     public int Death { get; init; }
 

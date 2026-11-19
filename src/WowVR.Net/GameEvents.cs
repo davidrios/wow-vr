@@ -211,7 +211,11 @@ public enum ChatKind : byte
     Error = 0xF2,
 }
 
-public sealed record ChatLine(ChatKind Kind, string Sender, string Text, string Channel = "");
+public sealed record ChatLine(ChatKind Kind, string Sender, string Text, string Channel = "")
+{
+    /// <summary>The text as sent, with WoW's color codes and links, which <see cref="Text"/> leaves out.</summary>
+    public string Raw { get; init; } = "";
+}
 
 public sealed record ChatReceived(ChatLine Line) : SessionEvent;
 
@@ -265,7 +269,51 @@ public sealed record VendorItem(uint Slot, uint ItemId, int Stock, uint Price, u
 public sealed record VendorShown(ulong Npc, IReadOnlyList<VendorItem> Items) : SessionEvent;
 
 /// <summary>What the server says about an item, once asked.</summary>
-public sealed record ItemInfo(uint Entry, string Name, uint Quality, uint InventoryType, uint DisplayId, uint SellPrice, uint BuyPrice, uint ContainerSlots);
+public sealed record ItemInfo(uint Entry, string Name, uint Quality, uint InventoryType, uint DisplayId, uint SellPrice, uint BuyPrice, uint ContainerSlots)
+{
+    public uint Class { get; init; }
+    public uint Subclass { get; init; }
+    public uint Flags { get; init; }
+    public uint ItemLevel { get; init; }
+    public uint RequiredLevel { get; init; }
+    public uint AllowableClass { get; init; }
+    public uint RequiredSkill { get; init; }
+    public uint RequiredSkillRank { get; init; }
+    public int MaxCount { get; init; }
+    public int Stackable { get; init; }
+
+    /// <summary>Each stat's ItemModType and value, as 7 stamina or 4 intellect.</summary>
+    public IReadOnlyList<(uint Type, int Value)> Stats { get; init; } = [];
+
+    /// <summary>Its two damages: least, most and school (0 physical).</summary>
+    public IReadOnlyList<(float Min, float Max, uint School)> Damage { get; init; } = [];
+
+    public uint Armor { get; init; }
+
+    /// <summary>Holy, fire, nature, frost, shadow and arcane resistance.</summary>
+    public uint[] Resistances { get; init; } = [];
+
+    /// <summary>A weapon's time between swings, in milliseconds.</summary>
+    public uint DelayMs { get; init; }
+
+    /// <summary>Its spells and how each triggers: 0 on use, 1 on equip, 2 chance on hit.</summary>
+    public IReadOnlyList<(uint Spell, uint Trigger)> Spells { get; init; } = [];
+
+    /// <summary>0 none, 1 on pickup, 2 on equip, 3 on use, 4 a quest item.</summary>
+    public uint Bonding { get; init; }
+
+    /// <summary>The flavor text, shown in yellow quotes.</summary>
+    public string Description { get; init; } = "";
+
+    public uint Block { get; init; }
+    public uint ItemSet { get; init; }
+    public uint MaxDurability { get; init; }
+
+    /// <summary>The colors of its sockets (1 meta, 2 red, 4 yellow, 8 blue), 0 for none.</summary>
+    public uint[] Sockets { get; init; } = [];
+
+    public uint StartQuest { get; init; }
+}
 
 public sealed record ItemInfoKnown(ItemInfo Item) : SessionEvent;
 
@@ -323,6 +371,9 @@ public sealed record BoardedTransport(ulong Transport, Vector3 Offset) : Session
 /// <summary>Where the player's corpse lies, while they're a ghost.</summary>
 public sealed record CorpseAt(Vector3 Position, uint Map) : SessionEvent;
 
+/// <summary>How long after dying or releasing the server ignores taking the corpse back, in milliseconds.</summary>
+public sealed record CorpseReclaimDelay(uint Milliseconds) : SessionEvent;
+
 /// <summary>A spirit healer offers to bring the player back at the graveyard.</summary>
 public sealed record SpiritHealerOffer(ulong Npc) : SessionEvent;
 
@@ -367,7 +418,49 @@ public sealed record SpellWent(uint Spell) : SessionEvent;
 public sealed record UnitCastBegan(ulong Caster, uint Spell, uint DurationMs, ulong Target, bool Channel) : SessionEvent;
 
 /// <summary>Any unit's spell went off, hitting these units, or landing at a place.</summary>
-public sealed record UnitSpellWent(ulong Caster, uint Spell, IReadOnlyList<ulong> Hits, Vector3? Place) : SessionEvent;
+public sealed record UnitSpellWent(ulong Caster, uint Spell, IReadOnlyList<ulong> Hits, Vector3? Place) : SessionEvent
+{
+    /// <summary>The units it missed, each with why: AzerothCore's SpellMissInfo (1 miss, 2 resist, 3 dodge, 4 parry, 5 block, 6 evade, 7 immune, 9 deflect, 10 absorb, 11 reflect).</summary>
+    public IReadOnlyList<(ulong Unit, byte Reason)> Misses { get; init; } = [];
+}
+
+/// <summary>
+/// One visible aura on a unit, from SMSG_AURA_UPDATE: its slot, spell, flags (0x10 positive,
+/// 0x80 negative), the caster's level, its stacks or charges, who cast it, and its time in
+/// milliseconds, the time left as of <see cref="ReceivedAt"/> (seconds on the session's clock).
+/// </summary>
+public sealed record AuraInfo(byte Slot, uint Spell, byte Flags, byte Level, byte Stacks, ulong Caster, int MaxDurationMs, int DurationMs, double ReceivedAt)
+{
+    public bool Harmful => (Flags & 0x80) != 0;
+
+    /// <summary>Seconds left at a time on the session's clock (<c>Environment.TickCount64 / 1000</c>); null when it doesn't run out.</summary>
+    public double? LeftAt(double now) => MaxDurationMs > 0 ? Math.Max(0, (DurationMs / 1000.0) - (now - ReceivedAt)) : null;
+}
+
+/// <summary>A unit's auras changed; the session has them in <c>AurasOf</c>.</summary>
+public sealed record AurasChanged(ulong Unit) : SessionEvent;
+
+public enum SpellEffectKind
+{
+    Damage,
+    Heal,
+    Energize,
+}
+
+/// <summary>A spell's damage, heal or power, once or a periodic aura's tick, as the server logs it.</summary>
+public sealed record SpellEffectLogged(ulong Target, ulong Caster, uint Spell, SpellEffectKind Kind, uint Amount, bool Critical) : SessionEvent
+{
+    public bool Periodic { get; init; }
+    public byte School { get; init; }
+    public uint Absorbed { get; init; }
+    public uint Resisted { get; init; }
+    public uint Blocked { get; init; }
+
+    /// <summary>Overkill or overheal.</summary>
+    public uint Over { get; init; }
+
+    public uint PowerType { get; init; }
+}
 
 /// <summary>Any unit stopped casting or channeling without its spell going off, or its channel ran out.</summary>
 public sealed record UnitCastStopped(ulong Caster, uint Spell) : SessionEvent;

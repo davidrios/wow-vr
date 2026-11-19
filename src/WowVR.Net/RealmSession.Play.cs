@@ -668,6 +668,9 @@ public sealed partial class RealmSession
             case MsgCorpseQuery:
                 ReadCorpse(p.Data);
                 break;
+            case Opcodes.SMSG_CORPSE_RECLAIM_DELAY:
+                Events.Enqueue(new CorpseReclaimDelay(new PacketReader(p.Data).U32()));
+                break;
             case 0x18F: // SMSG_QUESTGIVER_QUEST_INVALID
                 Events.Enqueue(new ScreenMessage(QuestInvalid(new PacketReader(p.Data).U32()), true));
                 break;
@@ -683,7 +686,11 @@ public sealed partial class RealmSession
                 break;
             }
             default:
-                HandleSpells(p);
+                if (!HandleCombat(p))
+                {
+                    HandleSpells(p);
+                }
+
                 break;
         }
     }
@@ -904,12 +911,12 @@ public sealed partial class RealmSession
             if (name.Length == 0 && (sender >> 48) == 0)
             {
                 // A player we haven't seen: the line waits for the name.
-                AskPlayerName(sender, n => Events.Enqueue(new ChatReceived(new ChatLine(kind, n, text, channel))));
+                AskPlayerName(sender, n => Events.Enqueue(new ChatReceived(new ChatLine(kind, n, text, channel) { Raw = raw })));
                 return;
             }
         }
 
-        Events.Enqueue(new ChatReceived(new ChatLine(kind, name, text, channel)));
+        Events.Enqueue(new ChatReceived(new ChatLine(kind, name, text, channel) { Raw = raw }));
     }
 
     /// <summary>WoW's markup: colors as |cAARRGGBB ... |r, and links as |H...|h[text]|h, shown as their text.</summary>
@@ -1017,8 +1024,22 @@ public sealed partial class RealmSession
             return;
         }
 
-        r.U32(); // class
-        r.U32(); // subclass
+        var info = ParseItem(data);
+        lock (_items)
+        {
+            _items[entry] = info;
+        }
+
+        Events.Enqueue(new ItemInfoKnown(info));
+    }
+
+    /// <summary>SMSG_ITEM_QUERY_SINGLE_RESPONSE, as AzerothCore's <c>HandleItemQuerySingleOpcode</c> writes it.</summary>
+    internal static ItemInfo ParseItem(byte[] data)
+    {
+        var r = new PacketReader(data);
+        var entry = r.U32();
+        var itemClass = r.U32();
+        var subclass = r.U32();
         r.U32(); // sound override
         var name = r.CString();
         r.CString();
@@ -1026,21 +1047,108 @@ public sealed partial class RealmSession
         r.CString();
         var display = r.U32();
         var quality = r.U32();
-        r.U32(); // flags
+        var flags = r.U32();
         r.U32(); // flags 2
         var buy = r.U32();
         var sell = r.U32();
         var inventoryType = r.U32();
-        r.Skip(4 * 12); // classes, races, level, required level, skill, rank, spell, honor, city, faction, rank, max count
-        r.U32(); // stackable
+        var classes = r.U32();
+        r.U32(); // races
+        var itemLevel = r.U32();
+        var requiredLevel = r.U32();
+        var skill = r.U32();
+        var skillRank = r.U32();
+        r.Skip(4 * 5); // spell, honor rank, city rank, reputation faction and rank
+        var maxCount = (int)r.U32();
+        var stackable = (int)r.U32();
         var slots = r.U32();
-        var info = new ItemInfo(entry, name, quality, inventoryType, display, sell, buy, slots);
-        lock (_items)
+        var statCount = r.U32();
+        var stats = new List<(uint, int)>();
+        for (var i = 0; i < statCount; i++)
         {
-            _items[entry] = info;
+            stats.Add((r.U32(), (int)r.U32()));
         }
 
-        Events.Enqueue(new ItemInfoKnown(info));
+        r.U32(); // scaling distribution
+        r.U32(); // scaling value
+        var damage = new List<(float, float, uint)>();
+        for (var i = 0; i < 2; i++)
+        {
+            var (min, max, school) = (r.F32(), r.F32(), r.U32());
+            if (max > 0)
+            {
+                damage.Add((min, max, school));
+            }
+        }
+
+        var armor = r.U32();
+        var resistances = new uint[6];
+        for (var i = 0; i < resistances.Length; i++)
+        {
+            resistances[i] = r.U32();
+        }
+
+        var delay = r.U32();
+        r.U32(); // ammo type
+        r.F32(); // ranged range
+        var spells = new List<(uint, uint)>();
+        for (var i = 0; i < 5; i++)
+        {
+            var spell = r.U32();
+            var trigger = r.U32();
+            r.Skip(4 * 4); // charges, cooldown, category, category cooldown
+            if (spell != 0)
+            {
+                spells.Add((spell, trigger));
+            }
+        }
+
+        var bonding = r.U32();
+        var description = r.CString();
+        r.Skip(4 * 3); // page text, language, page material
+        var startQuest = r.U32();
+        r.U32(); // lock
+        r.U32(); // material
+        r.U32(); // sheath
+        r.U32(); // random property
+        r.U32(); // random suffix
+        var block = r.U32();
+        var itemSet = r.U32();
+        var durability = r.U32();
+        r.Skip(4 * 4); // area, map, bag family, totem category
+        var sockets = new uint[3];
+        for (var i = 0; i < sockets.Length; i++)
+        {
+            sockets[i] = r.U32();
+            r.U32(); // content
+        }
+
+        return new ItemInfo(entry, name, quality, inventoryType, display, sell, buy, slots)
+        {
+            Class = itemClass,
+            Subclass = subclass,
+            Flags = flags,
+            ItemLevel = itemLevel,
+            RequiredLevel = requiredLevel,
+            AllowableClass = classes,
+            RequiredSkill = skill,
+            RequiredSkillRank = skillRank,
+            MaxCount = maxCount,
+            Stackable = stackable,
+            Stats = stats,
+            Damage = damage,
+            Armor = armor,
+            Resistances = resistances,
+            DelayMs = delay,
+            Spells = spells,
+            Bonding = bonding,
+            Description = description,
+            Block = block,
+            ItemSet = itemSet,
+            MaxDurability = durability,
+            Sockets = sockets,
+            StartQuest = startQuest,
+        };
     }
 
     private void ReadGameObjectTemplate(byte[] data)

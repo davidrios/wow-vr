@@ -92,7 +92,11 @@ public partial class ServerWorld
     private readonly Dictionary<ulong, MeleeWeapons> _weapons = [];
     private readonly Dictionary<ulong, ImpactSurface> _armor = [];
     private readonly Dictionary<ulong, ulong> _attacking = [];
-    private readonly List<(double At, Action Do)> _strikes = [];
+    private readonly List<Strike> _strikes = [];
+    private readonly List<Strike> _dueStrikes = [];
+
+    /// <summary>Made once, so sorting allocates nothing; a whoosh before a blow due at the same moment.</summary>
+    private static readonly Comparison<Strike> ByTime = (a, b) => a.At != b.At ? a.At.CompareTo(b.At) : a.Blow.CompareTo(b.Blow);
 
     private void StartMelee(IAssetSource source)
     {
@@ -183,86 +187,104 @@ public partial class ServerWorld
 
     private CreatureSoundSet? SoundsOf(ulong guid) => guid == _session.SelfGuid ? Avatar?.Body?.Asset.Sounds : _creatures.LiveSounds((long)guid);
 
-    /// <summary>A swing the server reports: its clip now, its whoosh and its blow when the clip marks them.</summary>
     /// <summary>Every melee swing the server reports, for checks.</summary>
     public event Action<SwingHappened>? Swung;
 
+    /// <summary>One moment of a swing to play later: its whoosh, or its blow landing. A struct in a list, so swings make no garbage.</summary>
+    private readonly record struct Strike(double At, bool Blow, SwingHappened Swing, MeleeOutcome Outcome, ItemKind? Weapon, bool Animate);
+
+    /// <summary>A swing the server reports: its clip now, its whoosh and its blow when the clip marks them.</summary>
     private void OnSwing(SwingHappened swing)
     {
         Swung?.Invoke(swing);
-        var outcome = MeleeHits.Outcome(swing.HitInfo, swing.VictimState, swing.Damage);
-        var weapons = WeaponsOf(swing.Attacker);
-        var weapon = weapons.Swinging(swing.OffHand);
-        var critical = outcome == MeleeOutcome.Critical;
         var attacker = NodeOf(swing.Attacker);
+        var victim = NodeOf(swing.Target);
+
+        // Neither drawn and not the player's: nothing to see, hear or read.
+        if (attacker is null && victim is null && swing.Attacker != _session.SelfGuid && swing.Target != _session.SelfGuid)
+        {
+            return;
+        }
+
+        var outcome = MeleeHits.Outcome(swing.HitInfo, swing.VictimState, swing.Damage);
+        var weapon = WeaponsOf(swing.Attacker).Swinging(swing.OffHand);
 
         // The VR player's arms are their own, so only the sounds play for their swings.
         var animate = (swing.HitInfo & MeleeHits.NoAnimationFlag) == 0 && !(swing.Attacker == _session.SelfGuid && Avatar?.InVr == true);
         var (swingAt, hitAt) = (animate ? attacker?.PlaySwing(swing.OffHand) : null) ?? (UndrawnSwingAt, UndrawnHitAt);
         var now = Now;
+        _strikes.Add(new Strike(now + swingAt, false, swing, outcome, weapon, animate));
+        _strikes.Add(new Strike(now + hitAt, true, swing, outcome, weapon, animate));
+    }
 
-        _strikes.Add((now + swingAt, () =>
+    /// <summary>The whoosh, and the attacker's grunt.</summary>
+    private void PlayWhoosh(in Strike strike)
+    {
+        if (NodeOf(strike.Swing.Attacker) is not { } node)
         {
-            if (NodeOf(swing.Attacker) is not { } node)
-            {
-                return;
-            }
+            return;
+        }
 
-            var sounds = SoundsOf(swing.Attacker);
-            var at = Chest(node);
+        var critical = strike.Outcome == MeleeOutcome.Critical;
+        var sounds = SoundsOf(strike.Swing.Attacker);
+        var at = Chest(node);
 
-            // A beast with its own attack sounds bites or claws; anything else whooshes its weapon or fist.
-            var whoosh = weapon is null && sounds?.CustomAttacks is { Length: > 0 } custom
-                ? custom[Random.Shared.Next(custom.Length)]
-                : _combatSounds?.Swing(weapon, critical) ?? 0;
-            _creatures.SoundPlayer.Play(whoosh, at);
-            if (sounds is not null && (critical || Random.Shared.NextDouble() < GruntChance))
-            {
-                _creatures.SoundPlayer.Play(critical && sounds.AttackCritical != 0 ? sounds.AttackCritical : sounds.Attack, at);
-            }
-        }));
-
-        _strikes.Add((now + hitAt, () =>
+        // A beast with its own attack sounds bites or claws; anything else whooshes its weapon or fist.
+        var whoosh = strike.Weapon is null && sounds?.CustomAttacks is { Length: > 0 } custom
+            ? custom[Random.Shared.Next(custom.Length)]
+            : _combatSounds?.Swing(strike.Weapon, critical) ?? 0;
+        _creatures.SoundPlayer.Play(whoosh, at);
+        if (sounds is not null && (critical || Random.Shared.NextDouble() < GruntChance))
         {
-            if (NodeOf(swing.Target) is not { } victim)
-            {
-                return;
-            }
+            _creatures.SoundPlayer.Play(critical && sounds.AttackCritical != 0 ? sounds.AttackCritical : sounds.Attack, at);
+        }
+    }
 
-            if (animate)
-            {
-                victim.PlayReaction(outcome);
-            }
+    /// <summary>The blow: the number over the victim, its flinch, the impact and its cry.</summary>
+    private void PlayBlow(in Strike strike)
+    {
+        var (swing, outcome) = (strike.Swing, strike.Outcome);
+        var critical = outcome == MeleeOutcome.Critical;
+        ShowSwingText(swing, outcome);
+        if (NodeOf(swing.Target) is not { } victim)
+        {
+            return;
+        }
 
-            var at = Chest(victim);
-            var victimWeapons = WeaponsOf(swing.Target);
-            ImpactSurface? surface = outcome switch
-            {
-                MeleeOutcome.Hit or MeleeOutcome.Critical => _armor.GetValueOrDefault(swing.Target, ImpactSurface.Flesh),
-                MeleeOutcome.Block => victimWeapons.OffHand is { IsShield: true, IsMetal: false } ? ImpactSurface.ShieldWood : ImpactSurface.ShieldMetal,
-                MeleeOutcome.Parry => victimWeapons.MainHand is { IsWeapon: true, IsMetal: false } ? ImpactSurface.ParryWood : ImpactSurface.ParryMetal,
-                _ => null,
-            };
-            if (surface is { } s && _combatSounds is { } table)
-            {
-                _creatures.SoundPlayer.Play(table.Impact(weapon, s, critical), at);
-            }
+        // A body posed from a headset and hands, the player's in VR or another VR player's, keeps its pose.
+        if (strike.Animate && !victim.NoIdle)
+        {
+            victim.PlayReaction(outcome);
+        }
 
-            if (outcome is MeleeOutcome.Hit or MeleeOutcome.Critical && SoundsOf(swing.Target) is { } sounds)
-            {
-                var crushing = (swing.HitInfo & MeleeHits.CrushingFlag) != 0;
-                var cry = crushing && sounds.WoundCrushing != 0 ? sounds.WoundCrushing
-                    : critical && sounds.WoundCritical != 0 ? sounds.WoundCritical
-                    : critical || crushing || Random.Shared.NextDouble() < GruntChance ? sounds.Wound
-                    : 0;
-                _creatures.SoundPlayer.Play(cry, at);
-            }
-        }));
+        var at = Chest(victim);
+        var victimWeapons = WeaponsOf(swing.Target);
+        ImpactSurface? surface = outcome switch
+        {
+            MeleeOutcome.Hit or MeleeOutcome.Critical => _armor.GetValueOrDefault(swing.Target, ImpactSurface.Flesh),
+            MeleeOutcome.Block => victimWeapons.OffHand is { IsShield: true, IsMetal: false } ? ImpactSurface.ShieldWood : ImpactSurface.ShieldMetal,
+            MeleeOutcome.Parry => victimWeapons.MainHand is { IsWeapon: true, IsMetal: false } ? ImpactSurface.ParryWood : ImpactSurface.ParryMetal,
+            _ => null,
+        };
+        if (surface is { } s && _combatSounds is { } table)
+        {
+            _creatures.SoundPlayer.Play(table.Impact(strike.Weapon, s, critical), at);
+        }
+
+        if (outcome is MeleeOutcome.Hit or MeleeOutcome.Critical && SoundsOf(swing.Target) is { } sounds)
+        {
+            var crushing = (swing.HitInfo & MeleeHits.CrushingFlag) != 0;
+            var cry = crushing && sounds.WoundCrushing != 0 ? sounds.WoundCrushing
+                : critical && sounds.WoundCritical != 0 ? sounds.WoundCritical
+                : critical || crushing || Random.Shared.NextDouble() < GruntChance ? sounds.Wound
+                : 0;
+            _creatures.SoundPlayer.Play(cry, at);
+        }
     }
 
     private static Vector3 Chest(CreatureNode node) => node.GlobalPosition + (Vector3.Up * node.Height * 0.6f);
 
-    /// <summary>Plays each swing's moments as they come.</summary>
+    /// <summary>Plays each swing's moments as they come; a played one is swapped with the last and dropped.</summary>
     private void ProcessMelee()
     {
         UpdateSelfMelee();
@@ -271,18 +293,33 @@ public partial class ServerWorld
             return;
         }
 
+        // The due ones come out by swapping with the last, then play in the order they fell due, a whoosh before its blow.
         var now = Now;
-        for (var i = 0; i < _strikes.Count;)
+        _dueStrikes.Clear();
+        for (var i = _strikes.Count - 1; i >= 0; i--)
         {
             if (_strikes[i].At <= now)
             {
-                var strike = _strikes[i].Do;
-                _strikes.RemoveAt(i);
-                strike();
+                _dueStrikes.Add(_strikes[i]);
+                _strikes[i] = _strikes[^1];
+                _strikes.RemoveAt(_strikes.Count - 1);
+            }
+        }
+
+        if (_dueStrikes.Count > 1)
+        {
+            _dueStrikes.Sort(ByTime);
+        }
+
+        foreach (var strike in _dueStrikes)
+        {
+            if (strike.Blow)
+            {
+                PlayBlow(strike);
             }
             else
             {
-                i++;
+                PlayWhoosh(strike);
             }
         }
     }

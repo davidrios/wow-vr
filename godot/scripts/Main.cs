@@ -608,6 +608,11 @@ public partial class Main : Node3D
                     AddChild(new SpellCheck { Server = server });
                 }
 
+                if (Array.IndexOf(arguments, "--hud-check") >= 0)
+                {
+                    AddChild(new HudCheck { Server = server });
+                }
+
                 if (arguments.Any(a => a.StartsWith("--play-check") || a.StartsWith("--ride-check")))
                 {
                     AddChild(new PlayCheck { Server = server, Tiles = tiles, Player = _player, Creatures = creatures, Transports = transports, Objects = serverObjects });
@@ -711,7 +716,7 @@ public partial class Main : Node3D
         }
         catch (Exception e)
         {
-            GD.PushError($"Could not open the client at {clientPath}: {e.Message}");
+            GD.PushError($"Could not start the world from the client at {clientPath}: {e}");
             _loading?.Dismiss();
         }
     }

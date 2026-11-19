@@ -54,6 +54,29 @@ try
             return ExportBlp(source, file, output, 0);
         case ["blp", var file, var output, var mip]:
             return ExportBlp(source, file, output, int.Parse(mip));
+        case ["spelltext", .. var ids]:
+        {
+            var spells = WowVR.Formats.Database.SpellTable.Read(source);
+            foreach (var id in ids)
+            {
+                if (spells.Get(int.Parse(id)) is not { } spell)
+                {
+                    Console.WriteLine($"{id}: no such spell");
+                    continue;
+                }
+
+                Console.WriteLine($"{id} {spell.FullName}: range {spell.MinRange}-{spell.Range} (friend {spell.FriendRange}{(spell.MeleeRange ? ", melee" : "")}), duration {spell.DurationMs} ms");
+                Console.WriteLine($"  raw:  {spell.Description}");
+                Console.WriteLine($"  text: {WowVR.Formats.Database.SpellText.Format(spell.Description, spell, spells.Get)}");
+                if (spell.AuraText.Length > 0)
+                {
+                    Console.WriteLine($"  aura raw:  {spell.AuraText}");
+                    Console.WriteLine($"  aura text: {WowVR.Formats.Database.SpellText.Format(spell.AuraText, spell, spells.Get)}");
+                }
+            }
+
+            return 0;
+        }
         case ["spellvisual", var spellId]:
             return PrintSpellVisual(source, int.Parse(spellId));
         case ["spellmodel", var text]:

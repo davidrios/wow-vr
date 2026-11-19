@@ -13,8 +13,15 @@ namespace WowVR.World;
 /// </summary>
 public partial class VrMultiplayer : Node
 {
-    /// <summary>Received poses are drawn this many send intervals late, to have one on each side.</summary>
-    private const double DrawBehindIntervals = 1.5;
+    /// <summary>
+    /// Received poses are drawn this many send intervals late, between the last two: one interval
+    /// keeps the drawing point between them as poses arrive; more would sit on the older one half
+    /// the time and then jump, with only two kept.
+    /// </summary>
+    private const double DrawBehindIntervals = 1.0;
+
+    /// <summary>A sender quiet this long may have started its sequence again, as after a reload: its next pose is taken whatever its number.</summary>
+    private const double SequenceRestartSeconds = 1.0;
 
     public required ServerWorld Server { get; init; }
     public required CreatureManager Creatures { get; init; }
@@ -69,7 +76,7 @@ public partial class VrMultiplayer : Node
                 var remote = _remotes.TryGetValue(guid, out var known) ? known : _remotes[guid] = new Remote();
 
                 // Older than the last drawn: it came late, and is dropped.
-                if (remote.Latest is { } latest && (short)(pose.Sequence - latest.Sequence) <= 0)
+                if (remote.Latest is { } latest && (short)(pose.Sequence - latest.Sequence) <= 0 && now - remote.LatestAt < SequenceRestartSeconds)
                 {
                     break;
                 }
@@ -90,7 +97,8 @@ public partial class VrMultiplayer : Node
 
     public override void _Process(double delta)
     {
-        if (Server.Session.Vr is not { } vr)
+        // The session goes to the next map's world while this one is being taken down.
+        if (Server.Released || Server.Session.Vr is not { } vr)
         {
             return;
         }
@@ -194,9 +202,12 @@ public partial class VrMultiplayer : Node
             posed++;
         }
 
-        foreach (var guid in gone ?? [])
+        if (gone is not null)
         {
-            _remotes.Remove(guid);
+            foreach (var guid in gone)
+            {
+                _remotes.Remove(guid);
+            }
         }
 
         PosedRemotes = posed;

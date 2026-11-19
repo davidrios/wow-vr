@@ -6,8 +6,9 @@ namespace WowVR.World;
 
 /// <summary>
 /// Pointing at things in the world, with the mouse or a VR controller's ray: selecting units,
-/// and using them or game objects as right-clicking does in WoW. Units are picked as upright
-/// capsules of their model's size, and game objects as spheres, since neither has collision.
+/// and using them or game objects as right-clicking does in WoW. Units are picked by their posed
+/// triangles, so only what's drawn under the pointer counts, and game objects as spheres, since
+/// neither has collision.
 /// </summary>
 public sealed class Interaction(ServerWorld world, CreatureManager creatures, TileManager tiles)
 {
@@ -36,9 +37,12 @@ public sealed class Interaction(ServerWorld world, CreatureManager creatures, Ti
         var bestT = Reach;
         foreach (var (guid, node) in creatures.LiveNodes)
         {
-            var feet = node.GlobalPosition;
-            var top = feet + (Vector3.Up * Mathf.Max(node.Height, 1f));
-            var t = RayToSegment(from, direction, feet, top, node.Radius);
+            if (!node.IsVisibleInTree())
+            {
+                continue;
+            }
+
+            var t = node.RayHit(from, direction, bestT);
             if (t is { } hit && hit < bestT)
             {
                 bestT = hit;

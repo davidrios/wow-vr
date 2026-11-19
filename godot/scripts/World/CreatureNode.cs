@@ -258,10 +258,30 @@ public partial class CreatureNode : Node3D
     /// <summary>What it was built from, for a VR player's body solver.</summary>
     public CreatureAsset Asset => _asset;
 
-    /// <summary>How wide it is, for picking it.</summary>
+    /// <summary>How wide it is, as a guess at its reach and for the texture brush.</summary>
     public float Radius => Mathf.Max(Mathf.Max(_asset.Skeleton.Bounds.Size.X, _asset.Skeleton.Bounds.Size.Z) * 0.5f * _asset.Scale * Scale.X, 0.4f);
 
     public bool IsDead => _dead;
+
+    /// <summary>
+    /// How far along a ray in world space it meets the body as posed now, or null. A sphere around
+    /// every clip's bounds rules most creatures out before the triangles are tested.
+    /// </summary>
+    public float? RayHit(Vector3 origin, Vector3 direction, float reach)
+    {
+        var bounds = _asset.Skeleton.Bounds;
+        var toWorld = Skeleton.GlobalTransform;
+        var center = toWorld * bounds.GetCenter();
+        var scale = toWorld.Basis.Scale.Abs();
+        var radius = bounds.Size.Length() * 0.5f * Mathf.Max(scale.X, Mathf.Max(scale.Y, scale.Z));
+        var along = (center - origin).Dot(direction);
+        if (along + radius < 0f || (origin + (direction * along)).DistanceTo(center) > radius || along - radius > reach)
+        {
+            return null;
+        }
+
+        return _asset.Pick?.Hit(Skeleton, origin, direction, reach);
+    }
 
     /// <summary>
     /// Dead units fall and lie still, and the selected one shows its name and a ring at its feet
@@ -367,6 +387,11 @@ public partial class CreatureNode : Node3D
             return false;
         }
 
+        // The spell's animation replaces a flinch or swing playing now, as Heroic Strike going off
+        // while the body flinches; left set, that one-shot's flag would keep the body from ever
+        // going back to standing or walking once the spell's animation ends.
+        (_oneShot, _swingWhole) = (false, false);
+        _layer?.Stop();
         _casting = true;
         _castLoops = hold;
 
@@ -386,6 +411,7 @@ public partial class CreatureNode : Node3D
         }
 
         _casting = false;
+        _oneShot = false;
         _moving = false;
         _clip = "";
         PlayNextIdle();
@@ -461,7 +487,7 @@ public partial class CreatureNode : Node3D
 
     /// <summary>The upper body's own clip, made when first needed; null for a model with no spine to divide it at.</summary>
     private UpperBodyLayer? Layer => _layer ??= _asset.Skeleton.SpineBone < 0 ? null
-        : new UpperBodyLayer(Array.ConvertAll(_asset.Skeleton.Bones, b => b.Parent), _asset.Skeleton.SpineBone, bone => $"{SkeletonName}:{Skeleton.GetBoneName(bone)}");
+        : new UpperBodyLayer(_asset.Skeleton, bone => $"{SkeletonName}:{_asset.Skeleton.Bones[bone].Name}");
 
     /// <summary>Whether the model can swing with its upper body while its legs walk: it has a spine to divide it at.</summary>
     public bool CanLayer => _asset.Skeleton.SpineBone >= 0;

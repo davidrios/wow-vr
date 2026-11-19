@@ -334,9 +334,12 @@ public sealed partial class RealmSession
     }
 
     /// <summary>A go's hit units, as full guids, then its misses, each a guid, a reason, and one more byte for a reflect.</summary>
-    internal static List<ulong> ReadHits(PacketReader r)
+    internal static List<ulong> ReadHits(PacketReader r) => ReadHits(r, out _);
+
+    internal static List<ulong> ReadHits(PacketReader r, out List<(ulong Unit, byte Reason)> missed)
     {
         var hits = new List<ulong>();
+        missed = [];
         var count = r.U8();
         for (var i = 0; i < count; i++)
         {
@@ -346,8 +349,10 @@ public sealed partial class RealmSession
         var misses = r.U8();
         for (var i = 0; i < misses; i++)
         {
-            r.U64();
-            if (r.U8() == MissReflect)
+            var unit = r.U64();
+            var reason = r.U8();
+            missed.Add((unit, reason));
+            if (reason == MissReflect)
             {
                 r.U8();
             }
@@ -403,10 +408,11 @@ public sealed partial class RealmSession
         var time = r.U32();
         try
         {
-            var hits = went ? ReadHits(r) : [];
+            List<(ulong, byte)> misses = [];
+            var hits = went ? ReadHits(r, out misses) : [];
             var (target, place) = ReadTargets(r);
             Events.Enqueue(went
-                ? new UnitSpellWent(caster, spell, hits, place)
+                ? new UnitSpellWent(caster, spell, hits, place) { Misses = misses }
                 : new UnitCastBegan(caster, spell, time, target, Channel: false));
         }
         catch (EndOfStreamException)

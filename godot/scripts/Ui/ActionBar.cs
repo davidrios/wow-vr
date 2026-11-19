@@ -180,10 +180,7 @@ public partial class ActionSlot : Button
             _icon.Texture = action.IsEmpty ? null
                 : action.Kind == ActionKind.Item ? _world.ItemIcon(action.Id)
                 : _world.SpellIcon(action.Id);
-            var record = action.Kind == ActionKind.Spell ? _world.Spells?.Get((int)action.Id) : null;
-            TooltipText = action.IsEmpty ? "" : action.Kind == ActionKind.Item
-                ? _world.Session.ItemInfoOf(action.Id)?.Name ?? $"Item {action.Id}"
-                : record?.FullName ?? $"Spell {action.Id}";
+            Tooltips.Set(this, action.IsEmpty ? null : action.Kind == ActionKind.Item ? Tooltips.ItemKey(action.Id) : Tooltips.SpellKey(action.Id));
         }
 
         _active.Visible = !action.IsEmpty && action.Kind == ActionKind.Spell && _world.IsActive(action.Id);
@@ -210,8 +207,11 @@ public partial class ActionSlot : Button
             return;
         }
 
+        // Blue without the power for it, red with the target out of reach, as the game tints them.
         var spell = _world.Spells?.Get((int)action.Id);
-        _icon.Modulate = spell is not null && !_world.HasPowerFor(spell) ? new Color(0.45f, 0.45f, 1f) : Colors.White;
+        _icon.Modulate = spell is not null && !_world.HasPowerFor(spell) ? new Color(0.45f, 0.45f, 1f)
+            : _world.InRange(action.Id) == false ? new Color(1f, 0.35f, 0.35f)
+            : Colors.White;
         var (left, total) = _world.CooldownOf(action.Id);
         _cooldown.Visible = left > 0 && total > 0;
         if (_cooldown.Visible)

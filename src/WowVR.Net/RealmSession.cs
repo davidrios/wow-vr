@@ -486,6 +486,7 @@ public sealed partial class RealmSession : IDisposable
         _objects.Objects.Clear();
         _announced.Clear();
         _waitingForName.Clear();
+        ForgetAuras(null);
         while (Events.TryDequeue(out _))
         {
         }
@@ -658,6 +659,7 @@ public sealed partial class RealmSession : IDisposable
         _waitingForName.Remove(obj.Guid);
         _waitingGameObjects.Remove(obj.Guid);
         _playerLooks.Remove(obj.Guid);
+        ForgetAuras(obj.Guid);
         if (_announced.Remove(obj.Guid))
         {
             Events.Enqueue(obj.Type switch

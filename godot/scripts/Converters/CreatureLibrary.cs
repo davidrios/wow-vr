@@ -93,6 +93,9 @@ public sealed record CreatureAsset(CreatureSkeletonAsset Skeleton, ArrayMesh Mes
 
     /// <summary>The model's attachment points by M2 id, as hands, head and chest: a bone, and where on it.</summary>
     public IReadOnlyDictionary<int, (string Bone, Vector3 Offset)> Attachments { get; init; } = new Dictionary<int, (string, Vector3)>();
+
+    /// <summary>Its visible triangles, for picking it exactly. Null if it has none.</summary>
+    public PickMesh? Pick { get; init; }
 }
 
 /// <summary>A spell effect's model: what it draws, which may be nothing, and its particles.</summary>
@@ -218,6 +221,7 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
             {
                 Animations = AnimationsHolding(model.Skeleton, held.Contains(RightPalmAttachment), held.Contains(LeftPalmAttachment)),
                 Attachments = attachments,
+                Pick = PickMesh.Build(model.Data, DrawnBatches(model.Data, look).Select(d => d.Batch)),
             };
         }
         catch (WowAlchemyException e)
@@ -674,19 +678,8 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
     private ArrayMesh? BuildMesh(M2SkinnedModel data, CreatureLook look, bool skinned, Aabb bounds, M2BoneBake? bake = null)
     {
         var byMaterial = new Dictionary<ModelMaterial, List<int[]>>();
-        foreach (var batch in data.Batches)
+        foreach (var (batch, texture) in DrawnBatches(data, look))
         {
-            if (look.Geosets?.IsVisible(batch.Geoset) == false)
-            {
-                continue;
-            }
-
-            var texture = batch.TextureType == M2TextureTypes.Named ? batch.Texture : look.Textures.GetValueOrDefault(batch.TextureType);
-            if (texture is null)
-            {
-                continue;
-            }
-
             var texture2 = batch.Effect is { HasTwoTextures: true } effect
                 ? effect.Texture2Name ?? look.Textures.GetValueOrDefault(effect.Texture2Type)
                 : null;
@@ -723,6 +716,24 @@ public sealed class CreatureLibrary(IAssetSource source, CreatureDisplayTable di
         }
 
         return mesh;
+    }
+
+    /// <summary>The batches a look shows: its geosets, and only those with a texture to draw.</summary>
+    private static IEnumerable<(M2Batch Batch, string Texture)> DrawnBatches(M2SkinnedModel data, CreatureLook look)
+    {
+        foreach (var batch in data.Batches)
+        {
+            if (look.Geosets?.IsVisible(batch.Geoset) == false)
+            {
+                continue;
+            }
+
+            var texture = batch.TextureType == M2TextureTypes.Named ? batch.Texture : look.Textures.GetValueOrDefault(batch.TextureType);
+            if (texture is not null)
+            {
+                yield return (batch, texture);
+            }
+        }
     }
 
     private static void AddSurface(ArrayMesh mesh, M2SkinnedModel data, List<int[]> parts, Material material, int[] remap, bool skinned, bool secondUv, bool billboard)

@@ -13,7 +13,7 @@ namespace WowVR.Debug;
 public partial class CreatureCheck : Node
 {
     private const double GiveUpSeconds = 120;
-    private const double WatchSeconds = 20;
+    private const double WatchSeconds = 23;
     private const double SettleSeconds = 2;
     private const float MaxFrameMilliseconds = 50f;
     private const float MinBoneMovement = 0.001f;
@@ -172,6 +172,7 @@ public partial class CreatureCheck : Node
             problems.Add($"a frame took {_worstFrame:F1} ms");
         }
 
+        CheckPicking(standing, problems);
         Finish(problems.Count == 0, string.Join(", ", problems));
     }
 
@@ -316,6 +317,16 @@ public partial class CreatureCheck : Node
                 }
 
                 break;
+            case 7 when _watched > 22.5:
+                // The spell's animation is over: back to standing, not frozen on its last frame.
+                _melee += $", then {(node.Clip.Length == 0 ? "frozen" : node.Clip)}";
+                if (node.Clip.Length == 0 || Id(node.Clip) == "17")
+                {
+                    _meleeProblem ??= $"after a flinch and a spell's animation the body stayed on {(node.Clip.Length == 0 ? "nothing" : node.Clip)}";
+                }
+
+                _meleeStep++;
+                break;
             case 6 when _watched > 19:
                 _melee += $", a second later arms {(node.UpperBodyPlaying ? "still swinging" : "done")}; {_walking}";
                 if (node.UpperBodyPlaying)
@@ -328,9 +339,49 @@ public partial class CreatureCheck : Node
                     _meleeProblem ??= "no creature with a spine walked to swing on the move";
                 }
 
+                // Hit, and a spell's animation at once, as Heroic Strike going off while the body flinches.
+                node.PlayMotion(Formats.Models.M2SequenceIds.Stand, 0);
+                node.PlayReaction(Formats.World.MeleeOutcome.Hit);
+                var flinch = node.Clip;
+                node.PlaySpellAnimation(Formats.World.MeleeAnimations.Attack1H, hold: false, _ => 0);
+                _melee += $"; hit ({flinch}) then a spell's animation ({node.Clip})";
+
                 _meleeStep++;
                 break;
         }
+    }
+
+    /// <summary>
+    /// Picking takes the body as posed, not a box around every clip: a ray from the camera through
+    /// a standing creature's spine hits it, and one passing 1.5 yards (at the model's scale) beside it doesn't.
+    /// </summary>
+    private void CheckPicking(IEnumerable<CreatureNode> standing, List<string> problems)
+    {
+        var camera = GetViewport().GetCamera3D().GlobalPosition;
+        var notes = new List<string>();
+        foreach (var node in standing.Where(GodotObject.IsInstanceValid))
+        {
+            var spine = node.Asset.Skeleton.SpineBone;
+            var middle = spine >= 0
+                ? node.Skeleton.GlobalTransform * node.Skeleton.GetBoneGlobalPose(spine).Origin
+                : node.Skeleton.GlobalTransform * node.Asset.Skeleton.Bounds.GetCenter();
+            var direction = (middle - camera).Normalized();
+            var side = direction.Cross(Vector3.Up).Normalized() * 1.5f * node.Skeleton.GlobalTransform.Basis.Scale.X;
+            var hit = node.RayHit(camera, direction, 500f);
+            var beside = node.RayHit(camera, (middle + side - camera).Normalized(), 500f);
+            notes.Add($"{node.Name} {(hit is null ? "missed" : "hit")} through the spine, {(beside is null ? "missed" : "hit")} {side.Length():F2} yd beside (old capsule radius {node.Radius:F2})");
+            if (hit is null)
+            {
+                problems.Add($"picking missed {node.Name} through its spine");
+            }
+
+            if (beside is not null)
+            {
+                problems.Add($"picking hit {node.Name} {side.Length():F2} yards beside it");
+            }
+        }
+
+        GD.Print($"Picking: {(notes.Count == 0 ? "no standing creature" : string.Join("; ", notes))}");
     }
 
     private IEnumerable<CreatureNode> Named(string name) =>

@@ -61,7 +61,15 @@ public static class TextureTags
     /// Where a texture's PNG goes: its MPQ path under the folder, in lower case with forward slashes.
     /// The client names one file in several cases, and MPQs ignore case, but not every file system does.
     /// </summary>
-    public static string PngPath(string texture) => Path.Combine(Folder, Path.ChangeExtension(texture.Replace('\\', '/').ToLowerInvariant(), ".png"));
+    public static string PngPath(string texture) => Path.Combine(Folder, Path.ChangeExtension(SafeRelative(texture), ".png"));
+
+    /// <summary>
+    /// A texture's name as a path under the folder: lower case, forward slashes, and nothing that
+    /// leaves it, since names come from game files that a patch could fill with "..", a drive or a root.
+    /// </summary>
+    private static string SafeRelative(string texture) =>
+        string.Join('/', texture.Replace('\\', '/').ToLowerInvariant().Split('/')
+            .Where(part => part.Length > 0 && part != "." && part != ".." && part.IndexOf(':') < 0));
 
     public static string NotesPath(string texture) => Path.ChangeExtension(PngPath(texture), ".json");
 

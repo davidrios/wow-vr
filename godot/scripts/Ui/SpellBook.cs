@@ -25,6 +25,9 @@ public partial class SpellBook : PanelContainer
     private Label _empty = null!;
     private string _tab = General;
 
+    /// <summary>Puts a spell's link in chat on a shift-click; true when it did.</summary>
+    public Func<ActionButton, bool>? Link { get; init; }
+
     public SpellBook(ServerWorld world, Action<ActionButton, string> pickUp)
     {
         _world = world;
@@ -156,17 +159,22 @@ public partial class SpellBook : PanelContainer
         _grid.AddChild(row);
 
         var action = new ActionButton((uint)spell.Id, ActionKind.Spell);
-        var icon = new ActionIcon(_world.Icons.Get(spell.IconPath), spell.IsPassive ? default : action, IconSize)
-        {
-            TooltipText = spell.FullName,
-        };
+        var icon = new ActionIcon(_world.Icons.Get(spell.IconPath), spell.IsPassive ? default : action, IconSize);
+        Tooltips.Set(icon, Tooltips.SpellKey((uint)spell.Id));
         if (spell.IsPassive)
         {
             icon.Modulate = new Color(0.7f, 0.7f, 0.7f);
         }
         else
         {
-            icon.Pressed += () => _world.Cast((uint)spell.Id);
+            // Shift-click puts its link in chat instead of casting it.
+            icon.Pressed += () =>
+            {
+                if (Link?.Invoke(action) != true)
+                {
+                    _world.Cast((uint)spell.Id);
+                }
+            };
         }
 
         row.AddChild(icon);
@@ -179,7 +187,7 @@ public partial class SpellBook : PanelContainer
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
             FocusMode = FocusModeEnum.None,
             Text = spell.Rank.Length > 0 || spell.IsPassive ? $"{spell.Name}\n{(spell.IsPassive ? "Passive" : spell.Rank)}" : spell.Name,
-            TooltipText = spell.IsPassive ? "Passive: always on." : "Click, then click a button on the bar to put it there.",
+            TooltipText = spell.IsPassive ? "" : "Click, then click a button on the bar to put it there.",
             Disabled = spell.IsPassive,
         };
         name.AddThemeFontSizeOverride("font_size", 15);

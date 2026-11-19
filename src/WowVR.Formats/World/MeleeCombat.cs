@@ -146,40 +146,61 @@ public static class MeleeAnimations
 
     public static readonly int[] ReadyStances = [ReadyUnarmed, Ready1H, Ready2H, Ready2HL];
 
+    // Made once: they're asked for with every swing and every fighter's stance.
+    private static readonly int[] OffUnarmedAttack = [AttackUnarmedOff, AttackOff, AttackUnarmed, Attack1H];
+    private static readonly int[] OffAttack = [AttackOff, Attack1H, AttackUnarmed];
+    private static readonly int[] OneHandAttack = [Attack1H, AttackUnarmed, Attack2H];
+    private static readonly int[] TwoHandAttack = [Attack2H, Attack1H, AttackUnarmed];
+    private static readonly int[] LooseAttack = [Attack2HL, Attack2H, Attack1H, AttackUnarmed];
+    private static readonly int[] UnarmedAttack = [AttackUnarmed, Attack1H, Attack2H];
+    private static readonly int[] OneHandReady = [Ready1H, ReadyUnarmed];
+    private static readonly int[] TwoHandReady = [Ready2H, Ready1H, ReadyUnarmed];
+    private static readonly int[] LooseReady = [Ready2HL, Ready2H, Ready1H, ReadyUnarmed];
+    private static readonly int[] UnarmedReady = [ReadyUnarmed, Ready1H];
+    private static readonly int[] HitReaction = [CombatWound, StandWound];
+    private static readonly int[] CriticalReaction = [CombatCritical, CombatWound, StandWound];
+    private static readonly int[] DodgeReaction = [Dodge];
+    private static readonly int[] OneHandParry = [Parry1H, ParryUnarmed];
+    private static readonly int[] TwoHandParry = [Parry2H, Parry1H];
+    private static readonly int[] LooseParry = [Parry2HL, Parry2H, Parry1H];
+    private static readonly int[] UnarmedParry = [ParryUnarmed, Parry1H];
+    private static readonly int[] ShieldReaction = [ShieldBlock, Block, Parry1H];
+    private static readonly int[] BlockReaction = [Block, ShieldBlock, Parry1H];
+
     /// <summary>A swing, the off hand's with <paramref name="offHand"/>, then what stands in for it.</summary>
     public static int[] Attack(WeaponGrip grip, bool offHand) => offHand
-        ? grip == WeaponGrip.Unarmed ? [AttackUnarmedOff, AttackOff, AttackUnarmed, Attack1H] : [AttackOff, Attack1H, AttackUnarmed]
+        ? grip == WeaponGrip.Unarmed ? OffUnarmedAttack : OffAttack
         : grip switch
         {
-            WeaponGrip.OneHand => [Attack1H, AttackUnarmed, Attack2H],
-            WeaponGrip.TwoHand => [Attack2H, Attack1H, AttackUnarmed],
-            WeaponGrip.TwoHandLoose => [Attack2HL, Attack2H, Attack1H, AttackUnarmed],
-            _ => [AttackUnarmed, Attack1H, Attack2H],
+            WeaponGrip.OneHand => OneHandAttack,
+            WeaponGrip.TwoHand => TwoHandAttack,
+            WeaponGrip.TwoHandLoose => LooseAttack,
+            _ => UnarmedAttack,
         };
 
     /// <summary>Standing ready between swings.</summary>
     public static int[] Ready(WeaponGrip grip) => grip switch
     {
-        WeaponGrip.OneHand => [Ready1H, ReadyUnarmed],
-        WeaponGrip.TwoHand => [Ready2H, Ready1H, ReadyUnarmed],
-        WeaponGrip.TwoHandLoose => [Ready2HL, Ready2H, Ready1H, ReadyUnarmed],
-        _ => [ReadyUnarmed, Ready1H],
+        WeaponGrip.OneHand => OneHandReady,
+        WeaponGrip.TwoHand => TwoHandReady,
+        WeaponGrip.TwoHandLoose => LooseReady,
+        _ => UnarmedReady,
     };
 
     /// <summary>How the victim takes a swing; empty when it doesn't show it.</summary>
     public static int[] Reaction(MeleeOutcome outcome, MeleeWeapons victim) => outcome switch
     {
-        MeleeOutcome.Hit => [CombatWound, StandWound],
-        MeleeOutcome.Critical => [CombatCritical, CombatWound, StandWound],
-        MeleeOutcome.Dodge => [Dodge],
+        MeleeOutcome.Hit => HitReaction,
+        MeleeOutcome.Critical => CriticalReaction,
+        MeleeOutcome.Dodge => DodgeReaction,
         MeleeOutcome.Parry => victim.Grip switch
         {
-            WeaponGrip.OneHand => [Parry1H, ParryUnarmed],
-            WeaponGrip.TwoHand => [Parry2H, Parry1H],
-            WeaponGrip.TwoHandLoose => [Parry2HL, Parry2H, Parry1H],
-            _ => [ParryUnarmed, Parry1H],
+            WeaponGrip.OneHand => OneHandParry,
+            WeaponGrip.TwoHand => TwoHandParry,
+            WeaponGrip.TwoHandLoose => LooseParry,
+            _ => UnarmedParry,
         },
-        MeleeOutcome.Block => victim.HasShield ? [ShieldBlock, Block, Parry1H] : [Block, ShieldBlock, Parry1H],
+        MeleeOutcome.Block => victim.HasShield ? ShieldReaction : BlockReaction,
         _ => [],
     };
 

@@ -97,6 +97,17 @@ public partial class ServerObjects : Node
             _tiles.TileAdded -= OnTileAdded;
             _tiles.TileRemoved -= OnTileRemoved;
         }
+
+        // Containers of tiles that never loaded aren't in the scene, so leaving it doesn't free them.
+        foreach (var container in _containers.Values)
+        {
+            if (IsInstanceValid(container) && container.GetParent() is null)
+            {
+                container.Free();
+            }
+        }
+
+        _containers.Clear();
     }
 
     /// <summary>The server shows an object, or says it changed, as a door opening.</summary>
@@ -231,7 +242,15 @@ public partial class ServerObjects : Node
             return;
         }
 
+        // On a tile not loaded, nothing is made yet: the tile's arrival builds it, and a node made now
+        // would sit outside the scene, never freed, with its meshes and collision.
         var tile = WowCoords.TileAt(info.Position.X, info.Position.Y);
+        var container = Container(tile);
+        if (container.GetParent() is null)
+        {
+            return;
+        }
+
         var node = new Node3D { Name = $"Object_{info.Guid:X}" };
         var transform = ToTransform(info, tile);
         node.Transform = new Transform3D(transform.Basis.Orthonormalized(), transform.Origin);
@@ -277,7 +296,7 @@ public partial class ServerObjects : Node
             }
         }
 
-        Container(tile).AddChild(node);
+        container.AddChild(node);
         var placed = new Placed(info, tile, node, animated, bodies);
         _placed[info.Guid] = placed;
         if (animated is not null)

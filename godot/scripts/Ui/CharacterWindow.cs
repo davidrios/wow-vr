@@ -42,6 +42,9 @@ public partial class CharacterWindow : PanelContainer
     private int _modelVersion;
     private float _turn;
 
+    /// <summary>Puts a worn item's link in chat on a shift-click.</summary>
+    public Func<ActionButton, bool>? Link { get; init; }
+
     public CharacterWindow(ServerWorld world)
     {
         _world = world;
@@ -133,7 +136,9 @@ public partial class CharacterWindow : PanelContainer
     private ActionIcon SlotIcon(int slot)
     {
         // Not flat, so an empty slot still shows its box.
-        var icon = new ActionIcon(null, default, SlotSize) { TooltipText = SlotNames[slot], Flat = false };
+        var icon = new ActionIcon(null, default, SlotSize) { Flat = false };
+        Tooltips.Set(icon, $"text:{SlotNames[slot]}");
+        icon.Pressed += () => Link?.Invoke(icon.Action);
         _slots[slot] = icon;
         return icon;
     }
@@ -218,14 +223,14 @@ public partial class CharacterWindow : PanelContainer
                 icon.Icon = _world.ItemIcon(item.Entry);
                 icon.Action = new ActionButton(item.Entry, ActionKind.Item);
                 icon.Modulate = Colors.White;
-                icon.TooltipText = $"{info?.Name ?? $"Item {item.Entry}"}\n{SlotNames[slot]}";
+                Tooltips.Set(icon, Tooltips.ItemKey(item.Entry));
                 icon.AddThemeStyleboxOverride("normal", GlueTheme.Box(new Color(0, 0, 0, 0.5f), 3, 1, GameHud.QualityColor(info?.Quality ?? 1)));
             }
             else
             {
                 icon.Icon = null;
                 icon.Action = default;
-                icon.TooltipText = SlotNames[slot];
+                Tooltips.Set(icon, $"text:{SlotNames[slot]}");
                 icon.AddThemeStyleboxOverride("normal", GlueTheme.Box(new Color(0, 0, 0, 0.5f), 3, 1, GlueTheme.Edge.Darkened(0.5f)));
             }
         }

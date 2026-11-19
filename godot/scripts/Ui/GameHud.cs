@@ -111,6 +111,7 @@ public partial class GameHud : Control
         AddChild(_screenText);
 
         BuildChat();
+        BuildTooltip();
         BuildDeathPanel();
         BuildDialog();
         BuildBags();
@@ -125,6 +126,26 @@ public partial class GameHud : Control
         world.ScreenText += ShowScreenText;
         world.StatsChanged += RefreshFrames;
         world.TargetChanged += RefreshFrames;
+        world.TargetChanged += () => _targetFrame.Auras.Show(world, world.Target);
+
+        // Also when Spell.dbc has been read, which on the first login comes after the auras.
+        world.SpellsChanged += () =>
+        {
+            _playerFrame.Auras.Show(world, world.Session.SelfGuid);
+            _targetFrame.Auras.Show(world, world.Target);
+        };
+        world.AurasUpdated += unit =>
+        {
+            if (unit == world.Session.SelfGuid)
+            {
+                _playerFrame.Auras.Show(world, unit);
+            }
+
+            if (unit == world.Target)
+            {
+                _targetFrame.Auras.Show(world, unit);
+            }
+        };
         world.Dialog += ShowDialog;
         world.InventoryUpdated += () =>
         {
@@ -153,9 +174,9 @@ public partial class GameHud : Control
             }
         };
         BuildActionBar();
-        _spellBook = new SpellBook(world, PickUp) { Visible = false };
+        _spellBook = new SpellBook(world, PickUp) { Visible = false, Link = InsertLink };
         AddChild(_spellBook);
-        _character = new CharacterWindow(world) { Visible = false };
+        _character = new CharacterWindow(world) { Visible = false, Link = InsertLink };
         AddChild(_character);
 
         // They share the left of the screen, as in the game: one opening closes the other.
@@ -232,8 +253,11 @@ public partial class GameHud : Control
             Visible = !hidden;
         }
 
+        UpdateTooltip(delta);
         if (_world is not null && !hidden)
         {
+            _playerFrame.Auras.Tick();
+            _targetFrame.Auras.Tick();
             RefreshDeath();
             foreach (var slot in _slots)
             {
@@ -353,7 +377,7 @@ public partial class GameHud : Control
     {
         if (text.Trim().Length > 0)
         {
-            _world.Say(text);
+            _world.Say(WithLinks(text));
             _history.Add(text);
         }
 
@@ -404,10 +428,11 @@ public partial class GameHud : Control
             ChatKind.Notice => ("#ffff60", ""),
             _ => ("#ffff00", ""),
         };
-        _chatLog.AppendText($"[color={color}]{Escape(prefix + line.Text)}[/color]\n");
+        _chatLog.AppendText($"[color={color}]{ChatBbcode(prefix, line)}[/color]\n");
         if (_chatLog.GetParagraphCount() > MaxChatLines)
         {
-            _chatLog.RemoveParagraph(0);
+            // Each line closes its own tags, so the others keep their layout.
+            _chatLog.RemoveParagraph(0, true);
         }
     }
 
@@ -475,15 +500,19 @@ public partial class GameHud : Control
             return;
         }
 
+        // The server measures the reach in three dimensions, so a corpse below a ledge can be out of it.
         var here = _playerPosition();
         var offset = corpse - here;
-        var distance = new System.Numerics.Vector2(offset.X, offset.Y).Length();
+        var distance = offset.Length();
         var direction = Compass(MathF.Atan2(offset.Y, offset.X));
         _deathText.Text = distance <= CorpseReach
             ? "You are near your corpse."
             : $"Your corpse is {distance:F0} yards {direction}.";
-        _deathButton.Text = "Resurrect";
-        _deathButton.Disabled = distance > CorpseReach;
+
+        // Before the reclaim delay is over, the server ignores the request without a word.
+        var wait = _world.CorpseReclaimableAt - ServerWorld.Now;
+        _deathButton.Text = wait > 0 ? $"Resurrect in {Math.Ceiling(wait):F0} sec" : "Resurrect";
+        _deathButton.Disabled = distance > CorpseReach || wait > 0;
     }
 
     /// <summary>A WoW angle, turning left from north, as a compass direction.</summary>
@@ -606,7 +635,7 @@ public partial class GameHud : Control
                     var name = info?.Name ?? $"Item {item.ItemId}";
                     var count = item.BuyCount > 1 ? $" x{item.BuyCount}" : "";
                     var stock = item.Stock >= 0 ? $" ({item.Stock} left)" : "";
-                    AddButton($"{name}{count} — {RealmSession.Money(item.Price)}{stock}", () => _world.Session.Buy(vendor.Npc, item), QualityColor(info?.Quality ?? 1), _world.ItemIcon(item.ItemId));
+                    AddButton($"{name}{count} — {RealmSession.Money(item.Price)}{stock}", () => _world.Session.Buy(vendor.Npc, item), QualityColor(info?.Quality ?? 1), _world.ItemIcon(item.ItemId), Tooltips.ItemKey(item.ItemId));
                 }
 
                 _bags.Visible = true;
@@ -687,7 +716,7 @@ public partial class GameHud : Control
                         var choice = (uint)i;
                         var item = quest.Choices[i];
                         AddButton(ItemLabel(item.ItemId, item.Count), () => _world.Session.ChooseQuestReward(quest.Npc, quest.QuestId, choice),
-                            QualityColor(_world.Session.ItemInfoOf(item.ItemId)?.Quality ?? 1), _world.ItemIcon(item.ItemId));
+                            QualityColor(_world.Session.ItemInfoOf(item.ItemId)?.Quality ?? 1), _world.ItemIcon(item.ItemId), Tooltips.ItemKey(item.ItemId));
                     }
                 }
 
@@ -705,7 +734,8 @@ public partial class GameHud : Control
         AddText(title, GlueTheme.Accent);
         foreach (var item in items)
         {
-            var row = new HBoxContainer();
+            var row = new HBoxContainer { MouseFilter = MouseFilterEnum.Stop };
+            Tooltips.Set(row, Tooltips.ItemKey(item.ItemId));
             row.AddThemeConstantOverride("separation", 8);
             _dialogBody.AddChild(row);
             row.AddChild(new TextureRect
@@ -733,9 +763,14 @@ public partial class GameHud : Control
         _dialogBody.AddChild(label);
     }
 
-    private void AddButton(string text, Action pressed, Color? color = null, Texture2D? icon = null)
+    private void AddButton(string text, Action pressed, Color? color = null, Texture2D? icon = null, string? tip = null)
     {
         var button = GlueTheme.Plain(text, 40);
+        if (tip is not null)
+        {
+            Tooltips.Set(button, tip);
+        }
+
         button.Alignment = HorizontalAlignment.Left;
         button.ClipText = true;
         if (icon is not null)
@@ -841,10 +876,9 @@ public partial class GameHud : Control
         var info = _world.Session.ItemInfoOf(item.Entry);
         var row = new HBoxContainer();
         _bagsBody.AddChild(row);
-        var icon = new ActionIcon(_world.ItemIcon(item.Entry), new ActionButton(item.Entry, ActionKind.Item), 36)
-        {
-            TooltipText = "Drag to the action bar to use it from there.",
-        };
+        var icon = new ActionIcon(_world.ItemIcon(item.Entry), new ActionButton(item.Entry, ActionKind.Item), 36);
+        Tooltips.Set(icon, Tooltips.ItemKey(item.Entry));
+        icon.Pressed += () => InsertLink(icon.Action);
         row.AddChild(icon);
         var label = new Label
         {
@@ -991,6 +1025,9 @@ public partial class UnitFrame : PanelContainer
     /// <summary>The name its place is saved under once dragged; null for a frame that stays put.</summary>
     public string? PlaceKey { get; init; }
 
+    /// <summary>Its unit's buffs and debuffs.</summary>
+    public AuraBar Auras { get; private set; } = null!;
+
     private Vector2? _grab;
 
     public override void _Ready()
@@ -1016,6 +1053,8 @@ public partial class UnitFrame : PanelContainer
         top.AddChild(_status);
         (_health, _healthText) = Bar(box, new Color(0.1f, 0.75f, 0.1f), 20);
         (_power, _powerText) = Bar(box, new Color(0.15f, 0.35f, 0.95f), 14);
+        Auras = new AuraBar { Visible = false };
+        box.AddChild(Auras);
     }
 
     /// <summary>The key its place is saved under: the desktop window and the VR panel differ in size, so each has its own.</summary>

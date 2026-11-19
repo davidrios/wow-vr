@@ -66,6 +66,46 @@ public sealed record SpellRecord(
     /// <summary>How far away it can be cast, in yards, at an enemy; 0 for the caster only.</summary>
     public float Range { get; init; }
 
+    /// <summary>The least distance it can be cast from at an enemy, in yards, as Auto Shot's 5.</summary>
+    public float MinRange { get; init; }
+
+    /// <summary>How far it reaches when cast at a friend, in yards.</summary>
+    public float FriendRange { get; init; }
+
+    /// <summary>Its range is melee's, which grows with the two units' sizes, rather than a distance.</summary>
+    public bool MeleeRange { get; init; }
+
+    /// <summary>How long its aura lasts, in milliseconds; 0 for none and -1 until cancelled.</summary>
+    public int DurationMs { get; init; }
+
+    /// <summary>Its three effects: what each does, and the numbers its description refers to.</summary>
+    public SpellEffect[] Effects { get; init; } = [];
+
+    /// <summary>The text its aura shows on a buff or debuff, with the same codes as the description.</summary>
+    public string AuraText { get; init; } = "";
+
+    /// <summary>The chance in percent that it procs, its charges, and how many times its aura stacks.</summary>
+    public int ProcChance { get; init; }
+
+    public int ProcCharges { get; init; }
+
+    public int StackAmount { get; init; }
+
+    /// <summary>A cost in percent of the caster's base mana, which replaces <see cref="SpellRecord.PowerCost"/> when not 0.</summary>
+    public int PowerCostPercent { get; init; }
+
+    /// <summary>Its description's named values, as <c>$&lt;damage&gt;</c>, from SpellDescriptionVariables: name to expression.</summary>
+    public IReadOnlyDictionary<string, string> Variables { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>Power spent each second while channeled.</summary>
+    public int PowerPerSecond { get; init; }
+
+    /// <summary>Spell.dbc's AttributesEx, of which 0x4 and 0x40 mark a channel.</summary>
+    public uint Attributes1 { get; init; }
+
+    /// <summary>Cast by channeling, as Mind Flay or Rain of Fire.</summary>
+    public bool IsChanneled => (Attributes1 & 0x44) != 0;
+
     /// <summary>A ranged auto attack, as Auto Shot or a wand's Shoot, which repeats until stopped.</summary>
     public bool IsAutoRepeat => (Attributes2 & 0x20) != 0;
 
@@ -141,6 +181,17 @@ public sealed record AreaRain(string Model, float PerSecond);
 /// <summary>A spellbook tab, as a skill line: a class's trees each get one, and everything else is General.</summary>
 public sealed record SpellTab(int SkillLine, string Name, string? IconPath);
 
+/// <summary>
+/// One of a spell's effects, as its description's codes read them: <c>$s</c> is <see cref="BasePoints"/>
+/// + 1 to + <see cref="DieSides"/>, <c>$t</c> the aura's period, <c>$a</c> the radius, <c>$x</c> the
+/// chain targets and <c>$e</c> the multiple value.
+/// </summary>
+public sealed record SpellEffect(int Type, int Aura, int BasePoints, int DieSides, int AmplitudeMs, float Radius, int ChainTargets, float MultipleValue, int TriggerSpell, int MiscValue)
+{
+    /// <summary>The least and most it rolls: base + 1 to base + die sides, or the base alone with no die sides, as the server's CalcValue.</summary>
+    public (int Min, int Max) Value => DieSides <= 0 ? (BasePoints, BasePoints) : (BasePoints + 1, BasePoints + DieSides);
+}
+
 /// <summary>Spell.dbc and the tables around it, read once, for the spellbook and casting.</summary>
 public sealed class SpellTable
 {
@@ -163,10 +214,27 @@ public sealed class SpellTable
     private const int TargetsField = 16;
     private const int FormsField = 12;
     private const int Attributes2Field = 6;
+    private const int Attributes1Field = 5;
     private const int RangeField = 46;
     private const int VisualField = 131;
     private const int SpeedField = 47;
     private const int RadiusField = 92;
+    private const int ProcChanceField = 35;
+    private const int ProcChargesField = 36;
+    private const int DurationField = 40;
+    private const int PowerPerSecondField = 44;
+    private const int StackAmountField = 49;
+    private const int DieSidesField = 74;
+    private const int BasePointsField = 80;
+    private const int AuraField = 95;
+    private const int AmplitudeField = 98;
+    private const int MultipleValueField = 101;
+    private const int ChainTargetsField = 104;
+    private const int MiscValueField = 110;
+    private const int TriggerSpellField = 116;
+    private const int AuraTextField = 187;
+    private const int PowerCostPercentField = 204;
+    private const int DescriptionVariablesField = 232;
 
     /// <summary>SkillLine.dbc's columns: its category, then its name.</summary>
     private const int SkillCategoryField = 1;
@@ -222,6 +290,23 @@ public sealed class SpellTable
     {
     }
 
+    /// <summary>"$name=expression" lines, one variable each.</summary>
+    internal static Dictionary<string, string> ParseVariables(string text)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in text.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            var equals = trimmed.IndexOf('=');
+            if (trimmed.StartsWith('$') && equals > 1)
+            {
+                result[trimmed[1..equals]] = trimmed[(equals + 1)..];
+            }
+        }
+
+        return result;
+    }
+
     public int Count => _spells.Count;
 
     public SpellRecord? Get(int id) => _spells.GetValueOrDefault(id);
@@ -250,8 +335,17 @@ public sealed class SpellTable
         // SpellRadius: an id, then the radius in yards. SpellRange: an id, the least ranges, then the most at an enemy.
         var radii = DbcTables.Read(source, @"DBFilesClient\SpellRadius.dbc", dbc =>
             Enumerable.Range(0, dbc.RecordCount).ToDictionary(i => dbc.GetInt32(i, 0), i => dbc.GetSingle(i, 1)));
+        // SpellRange: an id, the least ranges at an enemy and a friend, the most at each, then flags, of which 1 is melee range.
         var ranges = DbcTables.Read(source, @"DBFilesClient\SpellRange.dbc", dbc =>
-            Enumerable.Range(0, dbc.RecordCount).ToDictionary(i => dbc.GetInt32(i, 0), i => dbc.GetSingle(i, 3)));
+            Enumerable.Range(0, dbc.RecordCount).ToDictionary(i => dbc.GetInt32(i, 0), i => (Min: dbc.GetSingle(i, 1), Max: dbc.GetSingle(i, 3), Friend: dbc.GetSingle(i, 4), Melee: (dbc.GetInt32(i, 5) & 1) != 0)));
+
+        // SpellDuration: an id, the base, an amount per level and the most, in milliseconds; -1 lasts until cancelled.
+        var durations = DbcTables.Read(source, @"DBFilesClient\SpellDuration.dbc", dbc =>
+            Enumerable.Range(0, dbc.RecordCount).ToDictionary(i => dbc.GetInt32(i, 0), i => dbc.GetInt32(i, 3) != 0 ? dbc.GetInt32(i, 3) : dbc.GetInt32(i, 1)));
+
+        // SpellDescriptionVariables: an id, then lines of "$name=expression".
+        var variables = DbcTables.Read(source, @"DBFilesClient\SpellDescriptionVariables.dbc", dbc =>
+            Enumerable.Range(0, dbc.RecordCount).ToDictionary(i => dbc.GetInt32(i, 0), i => (IReadOnlyDictionary<string, string>)ParseVariables(dbc.GetString(i, 1))));
 
         var castTimes = DbcTables.Read(source, @"DBFilesClient\SpellCastTimes.dbc", dbc =>
             Enumerable.Range(0, dbc.RecordCount).ToDictionary(i => dbc.GetInt32(i, 0), i => dbc.GetInt32(i, 1)));
@@ -280,8 +374,31 @@ public sealed class SpellTable
                 {
                     Forms = dbc.GetUInt32(i, FormsField),
                     Attributes2 = dbc.GetUInt32(i, Attributes2Field),
+                    Attributes1 = dbc.GetUInt32(i, Attributes1Field),
                     Radius = Enumerable.Range(0, 3).Select(e => radii.GetValueOrDefault(dbc.GetInt32(i, RadiusField + e))).FirstOrDefault(r => r > 0),
-                    Range = ranges.GetValueOrDefault(dbc.GetInt32(i, RangeField)),
+                    Range = ranges.GetValueOrDefault(dbc.GetInt32(i, RangeField)).Max,
+                    MinRange = ranges.GetValueOrDefault(dbc.GetInt32(i, RangeField)).Min,
+                    FriendRange = ranges.GetValueOrDefault(dbc.GetInt32(i, RangeField)).Friend,
+                    MeleeRange = ranges.GetValueOrDefault(dbc.GetInt32(i, RangeField)).Melee,
+                    DurationMs = durations.GetValueOrDefault(dbc.GetInt32(i, DurationField)),
+                    Effects = [.. Enumerable.Range(0, 3).Select(e => new SpellEffect(
+                        dbc.GetInt32(i, EffectField + e),
+                        dbc.GetInt32(i, AuraField + e),
+                        dbc.GetInt32(i, BasePointsField + e),
+                        dbc.GetInt32(i, DieSidesField + e),
+                        dbc.GetInt32(i, AmplitudeField + e),
+                        radii.GetValueOrDefault(dbc.GetInt32(i, RadiusField + e)),
+                        dbc.GetInt32(i, ChainTargetsField + e),
+                        dbc.GetSingle(i, MultipleValueField + e),
+                        dbc.GetInt32(i, TriggerSpellField + e),
+                        dbc.GetInt32(i, MiscValueField + e)))],
+                    AuraText = dbc.GetString(i, AuraTextField + slot),
+                    ProcChance = dbc.GetInt32(i, ProcChanceField),
+                    ProcCharges = dbc.GetInt32(i, ProcChargesField),
+                    StackAmount = dbc.GetInt32(i, StackAmountField),
+                    PowerCostPercent = dbc.GetInt32(i, PowerCostPercentField),
+                    PowerPerSecond = dbc.GetInt32(i, PowerPerSecondField),
+                    Variables = variables.GetValueOrDefault(dbc.GetInt32(i, DescriptionVariablesField)) ?? new Dictionary<string, string>(),
                     Visual = dbc.GetInt32(i, VisualField),
                     Speed = dbc.GetSingle(i, SpeedField),
                 };

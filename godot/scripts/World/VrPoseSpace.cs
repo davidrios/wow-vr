@@ -57,6 +57,10 @@ public static class VrPoseSpace
         return new VrJoint(ToCharacter(local(wrist.Origin)), ToCharacter(turn));
     }
 
+    /// <summary>How far from the character's place a received pose may put its head, hands and stance, across and up, in yards.</summary>
+    private const float MaxReach = 3f;
+    private const float MaxHeight = 4f;
+
     /// <summary>
     /// A received pose, back in the scene, on a character at <paramref name="feet"/> turned by
     /// <paramref name="yaw"/>, at its own size. Null without a head; untracked hands hang from it.
@@ -69,7 +73,9 @@ public static class VrPoseSpace
         }
 
         var turn = new Basis(Vector3.Up, yaw);
-        Vector3 World(NVector3 position) => feet + (turn * FromCharacter(position));
+
+        // A play space and arms' reach: a pose from another player can't draw them far from where the server has them.
+        Vector3 World(NVector3 position) => feet + (turn * FromCharacter(NVector3.Clamp(position, new NVector3(-MaxReach, -MaxReach, -1f), new NVector3(MaxReach, MaxReach, MaxHeight))));
 
         var eyes = new Transform3D(turn * FromCharacter(head.Rotation) * ModelToCamera.Inverse(), World(head.Position));
         var restingLeft = new VrJoint(head.Position + new NVector3(0.15f, 0.25f, -0.8f), NQuaternion.CreateFromAxisAngle(NVector3.UnitY, 1.2f));

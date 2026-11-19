@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using WowVR.Converters;
 using Godot;
 
 namespace WowVR.World;
@@ -14,39 +16,44 @@ public sealed class UpperBodyLayer
 {
     private const double FadeOutSeconds = 0.2;
 
-    private readonly int[] _bones;
-    private readonly StringName[] _paths;
-    private readonly Dictionary<Animation, (int Position, int Rotation, int Scale)[]> _tracks = [];
+    /// <summary>What every creature of a model shares: its upper-body bones and their tracks in each clip, found once.</summary>
+    private sealed class Shape
+    {
+        public required int[] Bones { get; init; }
+        public required NodePath[] Paths { get; init; }
+        public Dictionary<Animation, (int Position, int Rotation, int Scale)[]> Tracks { get; } = [];
+    }
+
+    private static readonly ConditionalWeakTable<CreatureSkeletonAsset, Shape> Shapes = new();
+
+    private readonly Shape _shape;
     private Animation? _clip;
     private (int Position, int Rotation, int Scale)[] _clipTracks = [];
     private double _time;
     private double _fadeIn;
     private double _fadeInSeconds;
 
-    /// <param name="parents">Each bone's parent, or -1.</param>
-    /// <param name="spine">The lowest bone of the upper body: it and all below it in the tree are layered.</param>
+    /// <param name="skeleton">The model, whose spine and everything below it in the tree are layered.</param>
     /// <param name="pathOf">The animation track path of a bone.</param>
-    public UpperBodyLayer(IReadOnlyList<int> parents, int spine, Func<int, string> pathOf)
+    public UpperBodyLayer(CreatureSkeletonAsset skeleton, Func<int, string> pathOf)
     {
-        var upper = new List<int>();
-        for (var bone = 0; bone < parents.Count; bone++)
+        _shape = Shapes.GetValue(skeleton, s =>
         {
-            for (var b = bone; b >= 0; b = parents[b])
+            var upper = new List<int>();
+            for (var bone = 0; bone < s.Bones.Length; bone++)
             {
-                if (b == spine)
+                for (var b = bone; b >= 0; b = s.Bones[b].Parent)
                 {
-                    upper.Add(bone);
-                    break;
+                    if (b == s.SpineBone)
+                    {
+                        upper.Add(bone);
+                        break;
+                    }
                 }
             }
-        }
 
-        _bones = [.. upper];
-        _paths = new StringName[_bones.Length];
-        for (var i = 0; i < _bones.Length; i++)
-        {
-            _paths[i] = pathOf(_bones[i]);
-        }
+            return new Shape { Bones = [.. upper], Paths = [.. upper.ConvertAll(b => new NodePath(pathOf(b)))] };
+        });
     }
 
     public bool Playing => _clip is not null;
@@ -57,19 +64,19 @@ public sealed class UpperBodyLayer
     /// </summary>
     public void Start(Animation clip, double from, double fadeIn)
     {
-        if (!_tracks.TryGetValue(clip, out var tracks))
+        if (!_shape.Tracks.TryGetValue(clip, out var tracks))
         {
-            tracks = new (int, int, int)[_bones.Length];
-            for (var i = 0; i < _bones.Length; i++)
+            tracks = new (int, int, int)[_shape.Bones.Length];
+            for (var i = 0; i < tracks.Length; i++)
             {
-                var path = new NodePath(_paths[i]);
+                var path = _shape.Paths[i];
                 tracks[i] = (
                     clip.FindTrack(path, Animation.TrackType.Position3D),
                     clip.FindTrack(path, Animation.TrackType.Rotation3D),
                     clip.FindTrack(path, Animation.TrackType.Scale3D));
             }
 
-            _tracks[clip] = tracks;
+            _shape.Tracks[clip] = tracks;
         }
 
         (_clip, _clipTracks, _time, _fadeIn, _fadeInSeconds) = (clip, tracks, from, 0, fadeIn);
@@ -97,9 +104,10 @@ public sealed class UpperBodyLayer
         var weight = (float)Math.Min(
             _fadeInSeconds <= 0 ? 1 : Math.Min(_fadeIn / _fadeInSeconds, 1),
             Math.Clamp((length - _time) / FadeOutSeconds, 0, 1));
-        for (var i = 0; i < _bones.Length; i++)
+        var bones = _shape.Bones;
+        for (var i = 0; i < bones.Length; i++)
         {
-            var bone = _bones[i];
+            var bone = bones[i];
             var (position, rotation, scale) = _clipTracks[i];
             if (position >= 0)
             {

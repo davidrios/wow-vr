@@ -113,6 +113,7 @@ public static class Opcodes
     public const ushort SMSG_NOTIFICATION = 0x1CB;
     public const ushort SMSG_LOG_XPGAIN = 0x1D0;
     public const ushort CMSG_RECLAIM_CORPSE = 0x1D2;
+    public const ushort SMSG_CORPSE_RECLAIM_DELAY = 0x269;
     public const ushort SMSG_LEVELUP_INFO = 0x1D4;
     public const ushort CMSG_PING = 0x1DC;
     public const ushort SMSG_AUTH_CHALLENGE = 0x1EC;

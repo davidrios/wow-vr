@@ -78,6 +78,9 @@ public partial class ServerWorld : Node
 
     public RealmSession Session => _session;
 
+    /// <summary>The session went to the next world with <see cref="Release"/>, while this one is being taken down.</summary>
+    public bool Released => _session is null;
+
     /// <summary>WowVR's VR protocol: the server agreeing to it, and other players' poses and states.</summary>
     public event System.Action<SessionEvent>? VrMessage;
 
@@ -99,6 +102,9 @@ public partial class ServerWorld : Node
 
     /// <summary>Where the player's corpse lies while they're a ghost, in WoW coordinates.</summary>
     public System.Numerics.Vector3? Corpse { get; private set; }
+
+    /// <summary>When, in <see cref="Now"/>'s seconds, the server lets the ghost take its corpse back; it ignores the request before.</summary>
+    public double CorpseReclaimableAt { get; private set; }
 
     public PlayerSpeeds? Speeds { get; private set; }
 
@@ -145,6 +151,7 @@ public partial class ServerWorld : Node
         _factions = factions;
         _triggers = triggers.FindAll(t => t.Map == session.MapId);
         Self = session.Self;
+        StartCombat();
 
         // Arrived on a map the server moved the player to: it can put them there now.
         session.AckWorldPort();
@@ -480,6 +487,9 @@ public partial class ServerWorld : Node
                 GD.Print($"The server has the player aboard transport {boarded.Transport:X} at {boarded.Offset}");
                 Transports?.Board(boarded.Transport, boarded.Offset);
                 break;
+            case CorpseReclaimDelay delay:
+                CorpseReclaimableAt = Now + (delay.Milliseconds / 1000.0);
+                break;
             case CorpseAt corpse:
                 Corpse = corpse.Position;
                 break;
@@ -491,7 +501,11 @@ public partial class ServerWorld : Node
                 ScreenText?.Invoke($"Disconnected: {closed.Reason}", true);
                 break;
             default:
-                ApplySpells(e);
+                if (!ApplyCombat(e))
+                {
+                    ApplySpells(e);
+                }
+
                 break;
         }
     }

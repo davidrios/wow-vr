@@ -110,6 +110,11 @@ public partial class ServerWorld
                 break;
             case UnitCastBegan or UnitSpellWent or UnitCastStopped or AreaEffectAppeared or AreaEffectGone:
                 UnitCast?.Invoke(e);
+                if (e is UnitSpellWent { Misses.Count: > 0 } missed)
+                {
+                    ShowSpellMisses(missed);
+                }
+
                 break;
             case CooldownSet cooldown:
                 _spellReady[cooldown.Spell] = Now + cooldown.Milliseconds / 1000.0;
@@ -209,6 +214,13 @@ public partial class ServerWorld
         if (left > 0.05)
         {
             ScreenText?.Invoke("Spell is not ready yet", true);
+            return;
+        }
+
+        // Out of reach of the target: the game says so rather than sending it.
+        if (InRange(spell) == false)
+        {
+            ScreenText?.Invoke("Out of range.", true);
             return;
         }
 

@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3]
+[gd_scene load_steps=19 format=3]
 
 [ext_resource type="Script" path="res://scripts/Xr/XrPlayer.cs" id="1_player"]
 [ext_resource type="PackedScene" path="res://addons/godot-xr-tools/hands/scenes/lowpoly/left_hand_low.tscn" id="2_left"]
@@ -14,6 +14,17 @@
 [ext_resource type="Script" path="res://scripts/Xr/movement_fly.gd" id="12_fly"]
 [ext_resource type="Script" path="res://scripts/Xr/movement_step.gd" id="13_step"]
 [ext_resource type="Script" path="res://scripts/Xr/movement_swim.gd" id="14_swim"]
+[ext_resource type="Shader" path="res://shaders/virtual_hand.gdshader" id="15_hand"]
+[ext_resource type="Shader" path="res://shaders/virtual_hand_halo.gdshader" id="16_halo"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_halo"]
+render_priority = 1
+shader = ExtResource("16_halo")
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_hand"]
+render_priority = 2
+next_pass = SubResource("ShaderMaterial_halo")
+shader = ExtResource("15_hand")
 
 [node name="XRPlayer" type="XROrigin3D"]
 script = ExtResource("1_player")
@@ -30,6 +41,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.3, 1.1, -0.4)
 tracker = &"left_hand"
 
 [node name="LeftHand" parent="LeftController" instance=ExtResource("2_left")]
+hand_material_override = SubResource("ShaderMaterial_hand")
 
 [node name="MovementDirect" parent="LeftController" instance=ExtResource("5_direct")]
 strafe = true
@@ -50,6 +62,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3, 1.1, -0.4)
 tracker = &"right_hand"
 
 [node name="RightHand" parent="RightController" instance=ExtResource("3_right")]
+hand_material_override = SubResource("ShaderMaterial_hand")
 
 [node name="MovementTurn" parent="RightController" instance=ExtResource("6_turn")]
 step_turn_delay = 0.0

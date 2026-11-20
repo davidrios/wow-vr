@@ -366,7 +366,75 @@ public sealed class VrBodyIk
     }
 
     /// <summary>Gives the body back to its animation, as a remote player leaving VR.</summary>
-    public void Release() => _modifier.Active = false;
+    public void Release()
+    {
+        _modifier.Active = false;
+        foreach (var (mesh, _, _) in _held)
+        {
+            if (GodotObject.IsInstanceValid(mesh))
+            {
+                mesh.Basis = Basis.Identity;
+            }
+        }
+    }
+
+    private IReadOnlyList<(MeshInstance3D Mesh, int Bone, bool Left)> _held = [];
+    private Callable? _turnHeld;
+
+    /// <summary>
+    /// Turns what the hands hold, while the body is posed, by the VR alignment page's weapon grip
+    /// (<c>AppSettings.GripPitch</c>, <c>GripRoll</c> and <c>GripYaw</c>). WoW's models hold a
+    /// sword square to the forearm and, with the arm out in front, leaning 31° out; the body check
+    /// (<c>--body-check=1,0,0,862</c>) says where the blade points with them.
+    /// </summary>
+    public void TurnHeldItems(IReadOnlyList<(MeshInstance3D Mesh, int Bone, bool Left)> items)
+    {
+        _held = items;
+        var turn = _turnHeld ??= Callable.From(TurnHeld);
+        if (items.Count > 0 && !_modifier.IsConnected(ProcessedSignal, turn))
+        {
+            _modifier.Connect(ProcessedSignal, turn);
+        }
+    }
+
+    /// <summary>
+    /// Once the solver has posed the hands: the turn is about the wrist target's own axes (the
+    /// back of the hand along +Y, the fingers along -Z), carried into the item's bone's space.
+    /// </summary>
+    private void TurnHeld()
+    {
+        var skeleton = _skeleton.GlobalTransform.Basis.Orthonormalized();
+        var (pitch, roll, yaw) = (AppSettings.GripPitch, AppSettings.GripRoll, AppSettings.GripYaw);
+        foreach (var (mesh, bone, left) in _held)
+        {
+            if (bone < 0 || !GodotObject.IsInstanceValid(mesh))
+            {
+                continue;
+            }
+
+            var hand = skeleton * _skeleton.GetBoneGlobalPose(bone).Basis.Orthonormalized();
+            mesh.Basis = GripTurn(hand, WristTarget(left), left, pitch, roll, yaw);
+        }
+    }
+
+    /// <summary>Where the solver was told a wrist is, in the world, with the back of the hand along +Y and the fingers along -Z.</summary>
+    public Basis WristTarget(bool left) => (left ? _leftHand : _rightHand).GlobalBasis.Orthonormalized();
+
+    /// <summary>
+    /// An item's turn in its bone's space (the hand at <paramref name="hand"/> in the world), about
+    /// the wrist target's axes: tipped forward, turned and rolled toward the body's middle.
+    /// </summary>
+    public static Basis GripTurn(Basis hand, Basis wrist, bool left, float pitchDegrees, float rollDegrees, float yawDegrees = 0f)
+    {
+        // The back of the hand (+Y) faces out on both sides, so tipping forward is about -Y on the
+        // right and +Y on the left, and rolling about the fingers mirrors the same way. +X runs
+        // down the right hand and up the left, so turning about -X is toward the middle on both.
+        var side = left ? -1f : 1f;
+        var inWrist = new Basis(Vector3.Down * side, Mathf.DegToRad(pitchDegrees))
+            * new Basis(Vector3.Left, Mathf.DegToRad(yawDegrees))
+            * new Basis(Vector3.Back * side, Mathf.DegToRad(rollDegrees));
+        return hand.Inverse() * wrist * inWrist * wrist.Inverse() * hand;
+    }
 
     /// <summary>
     /// A bone's pose in the skeleton's space as last solved, with <see cref="KeepSolvedPose"/> on;

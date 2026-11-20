@@ -119,7 +119,8 @@ public partial class BodyCheck : Node
             Measure(pose, ik, body.Skeleton, ground.Y);
             MeasureMirror(pose, ik, body.Skeleton);
             var fingers = ik.FingerBones(left: false).Select(b => body.Skeleton.GetBonePoseRotation(b)).ToArray();
-            if (pose.Grip > 0 && openFingers is not null)
+            // A hand holding something is already a fist, from its animations.
+            if (pose.Grip > 0 && openFingers is not null && !body.HandItems.Any(h => !h.Left))
             {
                 var closed = fingers.Zip(openFingers).Count(f => f.First.AngleTo(f.Second) > 0.2f);
                 Check("Grip closes the fingers", closed == fingers.Length && closed > 0, $"{closed} of {fingers.Length} turned");
@@ -129,12 +130,122 @@ public partial class BodyCheck : Node
             await Shoot(pose.Name, body);
         }
 
+        await MeasureGrip(ik, body);
+        await CheckCalibration();
+
         // As the player has it: the head and the shoulder pieces hidden.
         Avatar.ShowHead = false;
         await Seconds(0.2);
         await Shoot("head hidden", body);
 
         Finish();
+    }
+
+    /// <summary>
+    /// With a weapon in the right hand (a fourth number): the arm straight out in front, the
+    /// controller level and upright, as a sword is held up. Prints which way the blade points,
+    /// as the model holds it and as turned in the hand, leaning right and tipped forward in degrees.
+    /// </summary>
+    private async Task MeasureGrip(VrBodyIk ik, CreatureNode body)
+    {
+        if (body.HandItems.FirstOrDefault(h => !h.Left) is not { Mesh: { } mesh, Bone: >= 0 and var bone })
+        {
+            return;
+        }
+
+        var pose = new Pose("sword held up", new(0, EyeHeight, 0), Level, new(-0.22f, 1.0f, -0.25f), new(-40, 0, 0), new(0.2f, 1.35f, -0.55f), Level);
+        Apply(pose);
+        await Seconds(1.0);
+
+        // The blade is the mesh's longest side, from the grip toward its far end.
+        var box = mesh.GetAabb();
+        var axis = box.GetLongestAxisIndex();
+        var blade = Vector3.Zero;
+        blade[(int)axis] = Mathf.Abs(box.End[(int)axis]) > Mathf.Abs(box.Position[(int)axis]) ? 1f : -1f;
+
+        var hand = body.Skeleton.GlobalTransform * ik.Pose(bone);
+        var space = Player.GlobalBasis.Orthonormalized().Inverse();
+        string Describe(Basis turn)
+        {
+            var b = (space * (hand.Basis * turn * blade)).Normalized();
+            return $"leans {Mathf.RadToDeg(Mathf.Atan2(b.X, b.Y)):F0}° right, tipped {Mathf.RadToDeg(Mathf.Atan2(-b.Z, b.Y)):F0}° forward";
+        }
+
+        GD.Print($"Grip: as the model holds it the blade {Describe(Basis.Identity)}; turned in the hand {Describe(mesh.Basis)}");
+
+        // Which roll, at the pitch used, stands the blade upright here, for tuning the constants.
+        var wrist = ik.WristTarget(left: false);
+        var best = Enumerable.Range(-90, 181).MinBy(roll =>
+        {
+            var b = space * (hand.Basis * VrBodyIk.GripTurn(hand.Basis.Orthonormalized(), wrist, false, AppSettings.GripPitch, roll) * blade);
+            return Mathf.Abs(Mathf.Atan2(b.X, b.Y));
+        });
+        GD.Print($"Grip: at {AppSettings.GripPitch:F0}° pitch, a roll of {best}° stands it upright: it "
+            + Describe(VrBodyIk.GripTurn(hand.Basis.Orthonormalized(), wrist, false, AppSettings.GripPitch, best)));
+        await Shoot(pose.Name, body);
+    }
+
+    /// <summary>
+    /// Calibrating the hands: they hold still while the controllers move and turn, as a player lines
+    /// their hands up with them; squeezing both grips keeps them where they were, and they then
+    /// follow the controllers from there. The player's own calibration is put back after.
+    /// </summary>
+    private async Task CheckCalibration()
+    {
+        var saved = (AppSettings.HandOffset(left: true), AppSettings.HandOffset(left: false));
+        try
+        {
+            var standing = Poses[0];
+            Apply(standing);
+            await Seconds(0.5);
+            var (left, right) = Player.Wrists;
+            Player.StartHandCalibration();
+            await Seconds(0.2);
+
+            // Lined up differently: moved and turned, the grips still open.
+            var moved = standing with
+            {
+                Left = standing.Left + new Vector3(0.03f, -0.02f, 0.04f),
+                LeftTurn = standing.LeftTurn + new Vector3(10, 20, -15),
+                Right = standing.Right + new Vector3(-0.02f, 0.03f, 0.05f),
+                RightTurn = standing.RightTurn + new Vector3(-25, -30, 10),
+            };
+            Apply(moved);
+            await Seconds(0.3);
+            var (heldLeft, heldRight) = Player.Wrists;
+            Check("Calibrating holds the hands still", Near(heldLeft, left) && Near(heldRight, right), Gap(heldLeft, left) + ", " + Gap(heldRight, right));
+            var items = Avatar.Body?.HandItems ?? [];
+            if (items.Count > 0)
+            {
+                Check("Calibrating empties the hands", items.All(i => !i.Mesh.Visible), $"{items.Count(i => i.Mesh.Visible)} of {items.Count} still shown");
+            }
+
+            Apply(moved with { Grip = 1 });
+            await Seconds(0.3);
+            var (keptLeft, keptRight) = Player.Wrists;
+            Check("Squeezing both grips keeps the hands there", !Player.CalibratingHands && Near(keptLeft, left) && Near(keptRight, right),
+                $"{(Player.CalibratingHands ? "still calibrating" : "done")}, {Gap(keptLeft, left)}, {Gap(keptRight, right)}");
+            if (items.Count > 0)
+            {
+                Check("After calibrating the hands hold their things again", items.All(i => i.Mesh.Visible), $"{items.Count(i => !i.Mesh.Visible)} of {items.Count} still hidden");
+            }
+
+            // From there they follow the controllers: back where they started, the hands move by as much.
+            Apply(standing);
+            await Seconds(0.3);
+            var (afterLeft, _) = Player.Wrists;
+            Check("Calibrated hands follow the controllers", !Near(afterLeft, left), Gap(afterLeft, left));
+        }
+        finally
+        {
+            AppSettings.SetHandOffsets(saved.Item1, saved.Item2);
+        }
+
+        static bool Near(Transform3D a, Transform3D b) =>
+            a.Origin.DistanceTo(b.Origin) < 0.002f && a.Basis.GetRotationQuaternion().AngleTo(b.Basis.GetRotationQuaternion()) < Mathf.DegToRad(0.5f);
+
+        static string Gap(Transform3D a, Transform3D b) =>
+            $"{a.Origin.DistanceTo(b.Origin) * 100:F1} cm and {Mathf.RadToDeg(a.Basis.GetRotationQuaternion().AngleTo(b.Basis.GetRotationQuaternion())):F1}° apart";
     }
 
     /// <summary>

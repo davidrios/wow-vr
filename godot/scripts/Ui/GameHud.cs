@@ -259,6 +259,7 @@ public partial class GameHud : Control
             _playerFrame.Auras.Tick();
             _targetFrame.Auras.Tick();
             RefreshDeath();
+            CloseDialogOutOfReach();
             foreach (var slot in _slots)
             {
                 slot.Refresh();
@@ -586,6 +587,34 @@ public partial class GameHud : Control
         _dialog.Visible = false;
         _shownDialog = null;
         _vendor = 0;
+    }
+
+    /// <summary>Walking away from an NPC closes its window, as in the game; the server wouldn't act on it from there.</summary>
+    private void CloseDialogOutOfReach()
+    {
+        if (!_dialog.Visible)
+        {
+            return;
+        }
+
+        var npc = _shownDialog switch
+        {
+            GossipShown gossip => gossip.Npc,
+            QuestShown quest => quest.Npc,
+            VendorShown vendor => vendor.Npc,
+            SpiritHealerOffer healer => healer.Npc,
+            _ => 0ul,
+        };
+        if (_world.OutOfTalkReach(npc))
+        {
+            // The bags a vendor opened, to sell from, close with it.
+            var vendor = npc == _vendor;
+            CloseDialog();
+            if (vendor)
+            {
+                _bags.Visible = false;
+            }
+        }
     }
 
     private void ShowDialog(SessionEvent e)

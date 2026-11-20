@@ -78,6 +78,12 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     private GameHud? _hud;
     private Interaction? _interaction;
 
+    /// <summary>The wrist HUD's width, in meters.</summary>
+    private const float HudPanelWidth = 0.48f;
+
+    /// <summary>How far the laser moves across the HUD with the trigger held before it drags rather than clicks, in meters.</summary>
+    private const float HudDragThresholdMeters = 0.018f;
+
     /// <summary>The panels' layer, which the laser pointer collides with.</summary>
     private const uint PointerLayer = 5242880;
 
@@ -100,14 +106,135 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     {
         get
         {
-            // XR Tools places its two hands differently, and its right one sits bent back. So the
-            // right wrist is the left's, mirrored, which looks right in the headset.
+            if (_calibrating)
+            {
+                return (GlobalTransform * _frozenLeft, GlobalTransform * _frozenRight);
+            }
+
+            var scale = AppSettings.WorldScale;
+            var (left, right) = DefaultWrists;
+            return (
+                _leftOffset is { } l ? _leftController.GlobalTransform * Scaled(l, scale) : left,
+                _rightOffset is { } r ? _rightController.GlobalTransform * Scaled(r, scale) : right);
+        }
+    }
+
+    /// <summary>
+    /// The wrists without a calibration: XR Tools places its two hands differently, and its right
+    /// one sits bent back, so the right wrist is the left's, mirrored, which looked right in the headset.
+    /// </summary>
+    private (Transform3D Left, Transform3D Right) DefaultWrists
+    {
+        get
+        {
             var left = WristOf(_leftController, _leftWrist, -1f);
             var inController = _leftController.GlobalTransform.AffineInverse() * left;
             var mirror = new Basis(new Vector3(-1, 0, 0), Vector3.Up, Vector3.Back);
             var mirrored = new Transform3D(mirror * inController.Basis * mirror, inController.Origin * new Vector3(-1, 1, 1));
             return (left, _rightController.GlobalTransform * mirrored);
         }
+    }
+
+    private static Transform3D Scaled(Transform3D offset, float scale) => new(offset.Basis, offset.Origin * scale);
+
+    /// <summary>Each hand's calibrated wrist on its controller, position in real meters; read from the settings when they change.</summary>
+    private Transform3D? _leftOffset;
+    private Transform3D? _rightOffset;
+
+    private bool _calibrating;
+    private bool _calibrationArmed;
+    private Transform3D _frozenLeft;
+    private Transform3D _frozenRight;
+    private Label3D? _calibrationNote;
+
+    /// <summary>Squeezed this far, both grips confirm a calibration; they must first be let go below the other.</summary>
+    private const float CalibrationSqueeze = 0.85f;
+    private const float CalibrationRelease = 0.3f;
+
+    /// <summary>Whether the hands are held still for the player to line their own up with.</summary>
+    public bool CalibratingHands => _calibrating;
+
+    /// <summary>
+    /// Holds the body's hands where they are, in the play space, for the player to put their own
+    /// hands in the same place and turn; squeezing both grips then keeps where the wrists are on
+    /// the controllers. Left X cancels.
+    /// </summary>
+    public void StartHandCalibration()
+    {
+        var (left, right) = Wrists;
+        var toSpace = GlobalTransform.AffineInverse();
+        (_frozenLeft, _frozenRight) = (toSpace * left, toSpace * right);
+        _calibrating = true;
+        _calibrationArmed = false;
+        SetMenuOpen(false);
+
+        _calibrationNote ??= new Label3D
+        {
+            Text = "Put your hands where the body's hands are, turned the same way,\nthen squeeze both grips. Left X cancels.",
+            FontSize = 40,
+            PixelSize = 0.0007f,
+            OutlineSize = 8,
+            Modulate = new Color(1f, 0.85f, 0.3f),
+            Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+            NoDepthTest = true,
+        };
+        if (!_calibrationNote.IsInsideTree())
+        {
+            AddChild(_calibrationNote);
+        }
+
+        // Above the hands, where it's read while lining them up.
+        var eyes = Eyes;
+        var middle = (left.Origin + right.Origin) / 2;
+        _calibrationNote.GlobalPosition = middle.Lerp(eyes.Origin, 0.3f) + (Vector3.Up * 0.2f * AppSettings.WorldScale);
+        _calibrationNote.Scale = Vector3.One * AppSettings.WorldScale;
+        _calibrationNote.Visible = true;
+    }
+
+    /// <summary>Back to the hands as they were, without keeping anything.</summary>
+    public void CancelHandCalibration()
+    {
+        _calibrating = false;
+        if (_calibrationNote is not null)
+        {
+            _calibrationNote.Visible = false;
+        }
+    }
+
+    /// <summary>Forgets the calibration, for the default hold.</summary>
+    public static void ResetHandCalibration() => AppSettings.SetHandOffsets(null, null);
+
+    /// <summary>Once both grips have been let go and squeezed again, keeps each wrist's place on its controller.</summary>
+    private void UpdateCalibration()
+    {
+        if (!_calibrating)
+        {
+            return;
+        }
+
+        var (leftGrip, _, rightGrip, _) = Fingers;
+        if (!_calibrationArmed)
+        {
+            _calibrationArmed = leftGrip < CalibrationRelease && rightGrip < CalibrationRelease;
+            return;
+        }
+
+        if (leftGrip < CalibrationSqueeze || rightGrip < CalibrationSqueeze)
+        {
+            return;
+        }
+
+        var scale = AppSettings.WorldScale;
+        Transform3D Offset(XRController3D controller, Transform3D frozen)
+        {
+            var on = controller.GlobalTransform.AffineInverse() * (GlobalTransform * frozen);
+            return new Transform3D(on.Basis.Orthonormalized(), on.Origin / scale);
+        }
+
+        var (left, right) = (Offset(_leftController, _frozenLeft), Offset(_rightController, _frozenRight));
+        CancelHandCalibration();
+        AppSettings.SetHandOffsets(left, right);
+        GD.Print($"Hands calibrated: left wrist at {left.Origin} m on its controller, right at {right.Origin} m");
     }
 
     /// <summary>How far each grip and trigger is pressed, from 0 to 1.</summary>
@@ -280,6 +407,8 @@ public partial class XrPlayer : XROrigin3D, IPlayer
 
         _wristMenu.Visible = open;
         _wristMenu.Set(Enabled, open);
+        UpdateHudShown();
+
         _pointer.Set(Enabled, open || _uiMode || _hud is not null || AppSettings.TextureBrush);
         _teleport.Set(Enabled, !open && !_held);
     }
@@ -291,6 +420,16 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         {
             _pointer.Set(Enabled, _wristMenu.Visible || _uiMode || _hud is not null || AppSettings.TextureBrush);
         }
+
+        // Turned on the controller, so it points where the controller does on runtimes whose aim pose
+        // is off: up for pitch, right for yaw, clockwise for roll (Godot's order is yaw, pitch, roll).
+        _pointer.Rotation = new Vector3(
+            Mathf.DegToRad(AppSettings.PointerPitch),
+            -Mathf.DegToRad(AppSettings.PointerYaw),
+            -Mathf.DegToRad(AppSettings.PointerRoll));
+
+        // Read here rather than each frame: a Transform3D out of a Variant makes garbage.
+        (_leftOffset, _rightOffset) = (AppSettings.HandOffset(left: true), AppSettings.HandOffset(left: false));
 
         var scale = AppSettings.WorldScale;
         XRServer.WorldScale = scale;
@@ -325,6 +464,58 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         var target = moving ? Mathf.Lerp(VignetteWidestRadius, VignetteNarrowestRadius, _lastVignetteSize) : 1f;
         _vignetteRadius = !moving && _vignetteRadius > 0.99f ? 1f : Mathf.Lerp(_vignetteRadius, target, weight);
         _vignette.Set(Radius, _vignetteRadius);
+        UpdateHudShown();
+        UpdateCalibration();
+    }
+
+    /// <summary>
+    /// The wrist HUD shows only when the wrist is raised to look at it, as a watch: the panel faces
+    /// the eyes and is near the middle of the view. Looser limits keep it while it's being read.
+    /// </summary>
+    private const float HudShowFacing = 0.55f;
+    private const float HudHideFacing = 0.3f;
+    private const float HudShowGaze = 0.8f;
+    private const float HudHideGaze = 0.6f;
+
+    /// <summary>Checks drive the HUD with simulated trackers, which never raise a wrist.</summary>
+    private static readonly bool s_checkRun = System.Linq.Enumerable.Any(OS.GetCmdlineUserArgs(), a => a.Contains("-check"));
+
+    private void UpdateHudShown()
+    {
+        if (_hudPanel is null)
+        {
+            return;
+        }
+
+        var shown = _hudPanel.Visible;
+        bool want;
+        if (_wristMenu.Visible)
+        {
+            // It floats in front of the menu on the same wrist and would take the laser's clicks.
+            want = false;
+        }
+        else if (s_checkRun || _keyboard is { Visible: true })
+        {
+            // Typing, the chat line is on it.
+            want = true;
+        }
+        else
+        {
+            var eyes = Eyes;
+            var at = _hudPanel.GlobalPosition;
+            var toEyes = (eyes.Origin - at).Normalized();
+            var facing = _hudPanel.GlobalBasis.Z.Normalized().Dot(toEyes);
+            var gaze = (-eyes.Basis.Z).Normalized().Dot(-toEyes);
+            want = shown
+                ? (facing > HudHideFacing && gaze > HudHideGaze) || PointingAtPanel
+                : facing > HudShowFacing && gaze > HudShowGaze;
+        }
+
+        if (want != shown)
+        {
+            _hudPanel.Visible = want;
+            _hudPanel.Set(Enabled, want);
+        }
     }
 
     /// <summary>
@@ -336,7 +527,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         (_hud, _interaction) = (hud, interaction);
         var panel = GD.Load<PackedScene>("res://addons/godot-xr-tools/objects/viewport_2d_in_3d.tscn").Instantiate<Node3D>();
         panel.Name = "HudPanel";
-        panel.Set("screen_size", new Vector2(0.48f, 0.48f * GameHud.PanelSize.Y / GameHud.PanelSize.X));
+        panel.Set("screen_size", new Vector2(HudPanelWidth, HudPanelWidth * GameHud.PanelSize.Y / GameHud.PanelSize.X));
         panel.Set("viewport_size", (Vector2)GameHud.PanelSize);
         panel.Set("collision_layer", PointerLayer);
         _leftController.AddChild(panel);
@@ -345,8 +536,13 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         panel.Position = new Vector3(0.05f, 0.22f, -0.1f);
         panel.RotationDegrees = new Vector3(-35f, 0f, 0f);
         panel.Scale = Vector3.One * AppSettings.WorldScale;
-        panel.GetNode<SubViewport>("Viewport").TransparentBg = true;
-        panel.GetNode<SubViewport>("Viewport").AddChild(hud);
+        var viewport = panel.GetNode<SubViewport>("Viewport");
+        viewport.TransparentBg = true;
+
+        // Godot starts a drag past 10 pixels, which on this panel is under 4 mm of the laser's
+        // travel: a hand's natural jerk turned clicks on the bar and the spellbook into drags.
+        viewport.GuiDragThreshold = Mathf.RoundToInt(HudDragThresholdMeters * GameHud.PanelSize.X / HudPanelWidth);
+        viewport.AddChild(hud);
         _hudPanel = panel;
 
         _keyboard = GD.Load<PackedScene>("res://addons/godot-xr-tools/objects/virtual_keyboard.tscn").Instantiate<Node3D>();
@@ -395,10 +591,13 @@ public partial class XrPlayer : XROrigin3D, IPlayer
                 return null;
             }
 
-            var aim = _rightController.GlobalTransform;
+            var aim = Aim;
             return (aim.Origin, -aim.Basis.Z);
         }
     }
+
+    /// <summary>Where the laser starts and which way it points (-Z): the controller's aim, turned by the laser aim setting.</summary>
+    private Transform3D Aim => _pointer.GlobalTransform;
 
     /// <summary>Whether the laser is on a panel or the keyboard, which takes its clicks.</summary>
     private bool PointingAtPanel => _pointer.Get("target").AsGodotObject() is CollisionObject3D target && (target.CollisionLayer & PointerLayer) != 0;
@@ -410,7 +609,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
             return;
         }
 
-        var aim = _rightController.GlobalTransform;
+        var aim = Aim;
         switch (name)
         {
             // Aiming a ground spell: the trigger casts it where the laser meets the ground, B puts it away.
@@ -444,6 +643,9 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         {
             case "by_button":
                 Flying = !Flying;
+                break;
+            case "ax_button" when _calibrating:
+                CancelHandCalibration();
                 break;
             case "ax_button":
                 // It's in the world's layer, so it can't be seen behind the loading screen.

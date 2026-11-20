@@ -237,5 +237,40 @@ public partial class ServerWorld
         return _measure;
     }
 
+    /// <summary>The server's reach for talking, buying and handing in, from its INTERACTION_DISTANCE.</summary>
+    private const float InteractionDistance = 5.5f;
+
+    /// <summary>Past the server's reach by this much, an NPC's window closes, so standing at the edge doesn't flicker it shut.</summary>
+    private const float InteractionSlack = 1.5f;
+
+    /// <summary>
+    /// Whether the player is too far from the unit or object a window was opened on for the server
+    /// to act on it, as walking away does in the game. False when it can't be told, as for a quest
+    /// from an item, so such windows stay.
+    /// </summary>
+    public bool OutOfTalkReach(ulong guid)
+    {
+        if (guid == 0 || guid == _session.SelfGuid)
+        {
+            return false;
+        }
+
+        if (_creatures.LiveNode((long)guid) is { } node)
+        {
+            var reach = InteractionDistance + DefaultCombatReach + node.Radius + InteractionSlack;
+            return (node.GlobalPosition - _iplayer.Feet).Length() > reach;
+        }
+
+        if (GameObjects.TryGetValue(guid, out var obj))
+        {
+            var godot = Formats.WowCoords.ToGodot(obj.Position);
+            var at = _tiles.WorldToLocal(godot.X, godot.Y, godot.Z);
+            return (at - _iplayer.Feet).Length() > InteractionDistance + DefaultCombatReach + InteractionSlack;
+        }
+
+        // A unit the server has destroyed has gone out of sight, so it's out of reach too.
+        return Units.ContainsKey(guid) is false && (guid >> 48) is 0xF130 or 0xF150;
+    }
+
     private static float MeleeReach(float targetReach) => Mathf.Max(NominalMeleeRange, DefaultCombatReach + targetReach + MeleeExtra);
 }

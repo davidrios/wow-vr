@@ -100,6 +100,109 @@ public static class AppSettings
         set => WriteMovement("vignette_size", Mathf.Clamp(value, 0f, 1f));
     }
 
+    /// <summary>
+    /// VR: how much a hand holding a weapon is smoothed, so a hand's tremor doesn't shake the
+    /// blade, from 0 (off, the hand as tracked) to 1 (heaviest). Quick swings stay quick.
+    /// </summary>
+    public static float HeldItemWeight
+    {
+        get => Read(MovementSection, "held_item_weight", 0.5f).AsSingle();
+        set => WriteMovement("held_item_weight", Mathf.Clamp(value, 0f, 1f));
+    }
+
+    /// <summary>
+    /// VR: degrees the laser turns to the right of the controller's aim (negative turns it left),
+    /// for runtimes whose aim pose doesn't point where the controller does, as SteamVR's for Oculus
+    /// Touch did by 45° to the right on one setup.
+    /// </summary>
+    public static float PointerYaw
+    {
+        get => Read(MovementSection, "pointer_yaw", 0f).AsSingle();
+        set => WriteMovement("pointer_yaw", Mathf.Clamp(value, -MaxAlignment, MaxAlignment));
+    }
+
+    /// <summary>VR: degrees the laser tips up from the controller's aim (negative tips it down).</summary>
+    public static float PointerPitch
+    {
+        get => Read(MovementSection, "pointer_pitch", 0f).AsSingle();
+        set => WriteMovement("pointer_pitch", Mathf.Clamp(value, -MaxAlignment, MaxAlignment));
+    }
+
+    /// <summary>VR: degrees the laser rolls clockwise about its own line, which only shows with pitch or yaw.</summary>
+    public static float PointerRoll
+    {
+        get => Read(MovementSection, "pointer_roll", 0f).AsSingle();
+        set => WriteMovement("pointer_roll", Mathf.Clamp(value, -MaxAlignment, MaxAlignment));
+    }
+
+    /// <summary>
+    /// VR: where a hand's wrist is on its controller, as calibrated by lining the real hand up with
+    /// the body's (with the fingers along +Y and the thumb's side along +Z, the position in real
+    /// meters), or null for the default hold.
+    /// </summary>
+    public static Transform3D? HandOffset(bool left)
+    {
+        // A null fallback counts as none, which ConfigFile reports as an error, so it's asked first.
+        var key = left ? "left_hand_offset" : "right_hand_offset";
+        if (!Config.HasSectionKey(MovementSection, key))
+        {
+            return null;
+        }
+
+        var value = Config.GetValue(MovementSection, key);
+        return value.VariantType == Variant.Type.Transform3D ? value.AsTransform3D() : null;
+    }
+
+    /// <summary>Keeps both hands' calibration, or forgets it with null.</summary>
+    public static void SetHandOffsets(Transform3D? left, Transform3D? right)
+    {
+        foreach (var (key, offset) in new[] { ("left_hand_offset", left), ("right_hand_offset", right) })
+        {
+            if (offset is { } value)
+            {
+                Config.SetValue(MovementSection, key, value);
+            }
+            else if (Config.HasSectionKey(MovementSection, key))
+            {
+                Config.EraseSectionKey(MovementSection, key);
+            }
+        }
+
+        Save();
+        Changed?.Invoke();
+    }
+
+    /// <summary>The most any of the VR alignments turns, either way, in degrees.</summary>
+    public const float MaxAlignment = 90f;
+
+    /// <summary>
+    /// A held weapon sits as the model holds it unless turned. 45° forward and 36° of roll were
+    /// tried before the hands could be calibrated, and the user wanted the model's own grip back.
+    /// </summary>
+    public const float DefaultGripPitch = 0f;
+    public const float DefaultGripRoll = 0f;
+
+    /// <summary>VR: degrees a held weapon tips forward in the hand from the model's grip.</summary>
+    public static float GripPitch
+    {
+        get => Read(MovementSection, "grip_pitch", DefaultGripPitch).AsSingle();
+        set => WriteMovement("grip_pitch", Mathf.Clamp(value, -MaxAlignment, MaxAlignment));
+    }
+
+    /// <summary>VR: degrees a held weapon rolls toward the body's middle, mirrored for the left hand.</summary>
+    public static float GripRoll
+    {
+        get => Read(MovementSection, "grip_roll", DefaultGripRoll).AsSingle();
+        set => WriteMovement("grip_roll", Mathf.Clamp(value, -MaxAlignment, MaxAlignment));
+    }
+
+    /// <summary>VR: degrees a held weapon's tip turns toward the body's middle, mirrored for the left hand.</summary>
+    public static float GripYaw
+    {
+        get => Read(MovementSection, "grip_yaw", 0f).AsSingle();
+        set => WriteMovement("grip_yaw", Mathf.Clamp(value, -MaxAlignment, MaxAlignment));
+    }
+
     public static bool Shadows
     {
         get => Read(MovementSection, "shadows", true).AsBool();

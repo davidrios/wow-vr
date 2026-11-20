@@ -148,6 +148,7 @@ public partial class PlayerAvatar : Node3D
     {
         var skeleton = _body!.Skeleton;
         _ik = VrBodyIk.Create(skeleton, asset);
+        _ik?.TurnHeldItems(_body.HandItems);
         GD.Print(_ik is null ? "VR body: no spine, arms or fingers found, so it only stands" : $"VR body: {_ik.Description}");
         if (_playerNode is Xr.XrPlayer xr)
         {
@@ -188,11 +189,19 @@ public partial class PlayerAvatar : Node3D
         _body.Move(stand, _facing, false, _speed / _bodyScale, 0, delta);
         _body.Animate(delta, 0);
         _lastPose = null;
+
+        // Calibrating, the hands are empty and open, which are easier to line up with than a weapon in a fist.
+        if (_playerNode is Xr.XrPlayer calibrating)
+        {
+            _body.HoldingShown = !calibrating.CalibratingHands;
+        }
+
         if (!dead)
         {
             if (_ik is not null && _playerNode is Xr.XrPlayer xr)
             {
                 var (left, right) = xr.Wrists;
+                (left, right) = Weigh(left, right, xr, (float)delta);
                 var fingers = xr.Fingers;
                 var pose = new VrPose(_player.Eyes, left, right, fingers.LeftGrip, fingers.LeftTrigger, fingers.RightGrip, fingers.RightTrigger);
                 _ik.Solve(pose);
@@ -202,6 +211,39 @@ public partial class PlayerAvatar : Node3D
     }
 
     private (VrPose Pose, Vector3 Feet, Vector3 Stand)? _lastPose;
+
+    private readonly HandSmoothing _leftWeight = new();
+    private readonly HandSmoothing _rightWeight = new();
+
+    /// <summary>
+    /// A hand holding something moves with some weight, so the tremor of a real hand doesn't shake
+    /// the blade; an empty hand follows as tracked. Other players see the same, since it's sent.
+    /// </summary>
+    private (Transform3D Left, Transform3D Right) Weigh(Transform3D left, Transform3D right, Node3D space, float delta)
+    {
+        var (holdsLeft, holdsRight) = (false, false);
+        foreach (var (_, _, isLeft) in _body!.HandItems)
+        {
+            holdsLeft |= isLeft;
+            holdsRight |= !isLeft;
+        }
+
+        var weight = AppSettings.HeldItemWeight;
+        var scale = AppSettings.WorldScale;
+        var origin = space.GlobalTransform;
+        return (Smooth(_leftWeight, holdsLeft, left), Smooth(_rightWeight, holdsRight, right));
+
+        Transform3D Smooth(HandSmoothing smoothing, bool holds, Transform3D wrist)
+        {
+            if (!holds)
+            {
+                smoothing.Reset();
+                return wrist;
+            }
+
+            return smoothing.Filter(wrist, origin, weight, scale, delta);
+        }
+    }
 
     /// <summary>
     /// This frame's pose for other players to see, in the character's space at its own size, or

@@ -172,7 +172,12 @@ public partial class VrMultiplayer : Node
                 continue;
             }
 
-            remote.Ik ??= VrBodyIk.Create(node.Skeleton, node.Asset);
+            if (remote.Ik is null)
+            {
+                remote.Ik = VrBodyIk.Create(node.Skeleton, node.Asset);
+                remote.Ik?.TurnHeldItems(node.HandItems);
+            }
+
             if (remote.Ik is null)
             {
                 continue;

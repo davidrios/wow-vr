@@ -26,6 +26,7 @@ public partial class WorldMenu : PanelContainer
     private Label _gameStatus = null!;
     private VBoxContainer _mainPage = null!;
     private VBoxContainer _videoPage = null!;
+    private VBoxContainer _vrPage = null!;
     private readonly List<Action> _refreshVideo = [];
 
     public IPlayer? Player { get; set; }
@@ -50,12 +51,16 @@ public partial class WorldMenu : PanelContainer
         _mainPage.Visible = false;
         _videoPage = Page();
         _videoPage.Visible = false;
+        _vrPage = Page();
+        _vrPage.Visible = false;
         _gamePage = Page();
         pages.AddChild(_gamePage);
         pages.AddChild(rows);
         pages.AddChild(_videoPage);
+        pages.AddChild(_vrPage);
         BuildGamePage(_gamePage);
         BuildVideoPage(_videoPage);
+        BuildVrPage(_vrPage);
         AppSettings.Changed += RefreshVideoPage;
 
         _continents = new HBoxContainer();
@@ -201,6 +206,9 @@ public partial class WorldMenu : PanelContainer
         var video = Big("Video");
         video.Pressed += () => ShowPage(_videoPage);
         page.AddChild(video);
+        var vr = Big("VR alignment");
+        vr.Pressed += () => ShowPage(_vrPage);
+        page.AddChild(vr);
 
         _gameStatus = new Label
         {
@@ -239,11 +247,107 @@ public partial class WorldMenu : PanelContainer
     /// <summary>Opening the menu starts at the game menu.</summary>
     public void ShowGamePage() => ShowPage(_gamePage);
 
+    /// <summary>The VR alignment page: the weapon's grip and weight, and the laser's aim.</summary>
+    public void ShowVrPage() => ShowPage(_vrPage);
+
     private void ShowPage(VBoxContainer page)
     {
         _gamePage.Visible = page == _gamePage;
         _mainPage.Visible = page == _mainPage;
         _videoPage.Visible = page == _videoPage;
+        _vrPage.Visible = page == _vrPage;
+    }
+
+    /// <summary>
+    /// How a held weapon sits in the hand and where the laser points, for headsets and controllers
+    /// whose poses differ: three turns each, with the weapon's weight, set by eye in the headset.
+    /// </summary>
+    private void BuildVrPage(VBoxContainer rows)
+    {
+        // The hands first: the weapon and the laser hang on them.
+        rows.AddChild(Heading("Hands"));
+        var hands = new HBoxContainer();
+        var calibrate = new Button { Text = "Calibrate", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        calibrate.Pressed += () => (Player as Xr.XrPlayer)?.StartHandCalibration();
+        hands.AddChild(calibrate);
+        var resetHands = new Button { Text = "Reset the hands", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        resetHands.Pressed += Xr.XrPlayer.ResetHandCalibration;
+        hands.AddChild(resetHands);
+        rows.AddChild(hands);
+        rows.AddChild(new HSeparator());
+
+        rows.AddChild(Heading("Weapon in the hand"));
+        var weight = new List<HSlider>();
+        rows.AddChild(SliderRow("Weight", 0, 1, 0.05, () => AppSettings.HeldItemWeight, v => AppSettings.HeldItemWeight = v, v => $"{v:F2}", weight));
+        var grip = new List<HSlider>();
+        rows.AddChild(SliderRow("Tip forward", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.GripPitch, v => AppSettings.GripPitch = v, Degrees, grip));
+        rows.AddChild(SliderRow("Roll inward", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.GripRoll, v => AppSettings.GripRoll = v, Degrees, grip));
+        rows.AddChild(SliderRow("Turn inward", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.GripYaw, v => AppSettings.GripYaw = v, Degrees, grip));
+        var resetGrip = new Button { Text = "Reset the weapon" };
+        resetGrip.Pressed += () => Reset(grip, AppSettings.DefaultGripPitch, AppSettings.DefaultGripRoll, 0f);
+        rows.AddChild(resetGrip);
+
+        rows.AddChild(new HSeparator());
+        rows.AddChild(Heading("Laser"));
+        var laser = new List<HSlider>();
+        rows.AddChild(SliderRow("Up", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.PointerPitch, v => AppSettings.PointerPitch = v, Degrees, laser));
+        rows.AddChild(SliderRow("Right", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.PointerYaw, v => AppSettings.PointerYaw = v, Degrees, laser));
+        rows.AddChild(SliderRow("Roll", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.PointerRoll, v => AppSettings.PointerRoll = v, Degrees, laser));
+        var resetLaser = new Button { Text = "Reset the laser" };
+        resetLaser.Pressed += () => Reset(laser, 0f, 0f, 0f);
+        rows.AddChild(resetLaser);
+
+        var bottom = new HBoxContainer { SizeFlagsVertical = SizeFlags.ShrinkEnd | SizeFlags.Expand };
+        var back = new Button { Text = "Game menu", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        back.Pressed += ShowGamePage;
+        var close = new Button { Text = "Close", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        close.Pressed += () => CloseRequested?.Invoke();
+        bottom.AddChild(back);
+        bottom.AddChild(close);
+        rows.AddChild(bottom);
+
+        static string Degrees(float v) => $"{v:+0;-0;0}°";
+
+        // Setting a slider's value saves it through its own handler, and its label follows.
+        static void Reset(List<HSlider> sliders, params float[] values)
+        {
+            for (var i = 0; i < sliders.Count && i < values.Length; i++)
+            {
+                sliders[i].Value = values[i];
+            }
+        }
+    }
+
+    private static Label Heading(string text) => new()
+    {
+        Text = text,
+        LabelSettings = new LabelSettings { FontSize = 22, FontColor = GlueTheme.Accent, OutlineSize = 3, OutlineColor = Colors.Black },
+    };
+
+    /// <summary>A label with the value, then a slider, on one row, since the wrist menu is short of room.</summary>
+    private static HBoxContainer SliderRow(string name, double min, double max, double step, Func<float> read, Action<float> write, Func<float, string> show, List<HSlider> group)
+    {
+        var row = new HBoxContainer();
+        var label = new Label { Text = $"{name} {show(read())}", CustomMinimumSize = new Vector2(170, 0) };
+        row.AddChild(label);
+        var slider = new HSlider
+        {
+            Name = name.Replace(" ", ""),
+            MinValue = min,
+            MaxValue = max,
+            Step = step,
+            Value = read(),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ShrinkCenter,
+        };
+        slider.ValueChanged += value =>
+        {
+            write((float)value);
+            label.Text = $"{name} {show((float)value)}";
+        };
+        row.AddChild(slider);
+        group.Add(slider);
+        return row;
     }
 
     public override void _ExitTree() => AppSettings.Changed -= RefreshVideoPage;

@@ -106,6 +106,10 @@ public partial class CreatureNode : Node3D
             {
                 _shoulders.Add(itemMesh);
             }
+            else if (item.Attachment is RightPalmAttachment or LeftPalmAttachment)
+            {
+                _handItems.Add((itemMesh, Skeleton.FindBone(item.BoneName), item.Attachment == LeftPalmAttachment));
+            }
             foreach (var particle in item.Particles)
             {
                 itemMesh.AddChild(particle.NewNode(particle.Position));
@@ -876,6 +880,54 @@ public partial class CreatureNode : Node3D
 
     private const int RightShoulderAttachment = 5;
     private const int LeftShoulderAttachment = 6;
+    private const int RightPalmAttachment = 1;
+    private const int LeftPalmAttachment = 2;
+
+    private readonly List<(MeshInstance3D Mesh, int Bone, bool Left)> _handItems = [];
+
+    /// <summary>What it holds in its palms, as weapons: each item's mesh, the bone it hangs on, and whether it's the left hand.</summary>
+    public IReadOnlyList<(MeshInstance3D Mesh, int Bone, bool Left)> HandItems => _handItems;
+
+    private bool _holdingShown = true;
+
+    /// <summary>
+    /// Off, the hands are empty and open, as if holding nothing: what they hold hides, and the
+    /// animations without the fists baked in play instead, from the same place in the clip.
+    /// </summary>
+    public bool HoldingShown
+    {
+        get => _holdingShown;
+        set
+        {
+            if (value == _holdingShown)
+            {
+                return;
+            }
+
+            _holdingShown = value;
+            foreach (var (mesh, _, _) in _handItems)
+            {
+                mesh.Visible = value;
+            }
+
+            var library = value ? _asset.Animations : _asset.Skeleton.Animations;
+            if (ReferenceEquals(library, _player.GetAnimationLibrary("")))
+            {
+                return;
+            }
+
+            var playing = _player.IsPlaying() ? _player.CurrentAnimation : null;
+            var at = playing is null ? 0 : _player.CurrentAnimationPosition;
+            var rate = _player.GetPlayingSpeed();
+            _player.RemoveAnimationLibrary("");
+            _player.AddAnimationLibrary("", library);
+            if (playing is not null && _player.HasAnimation(playing))
+            {
+                _player.Play(playing, 0, rate);
+                _player.Seek(at, true);
+            }
+        }
+    }
 
     /// <summary>Shoulder pieces, hidden with the head: WoW's are big enough to fill the view from inside the body.</summary>
     private readonly List<MeshInstance3D> _shoulders = [];

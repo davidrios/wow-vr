@@ -480,6 +480,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         WeighHands();
         _aim.GlobalTransform = _rightWeighed;
         _wristAnchor.GlobalTransform = _leftWeighed;
+        ScrollPanelUnderLaser((float)delta);
 
         // Not XR Tools' automatic mode: it watches the origin, so re-centering would trigger it.
         // Snap turns are instant, so there's no motion to soften.
@@ -766,8 +767,80 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _previewLaser.Visible = true;
     }
 
+    private static readonly StringName Target = "target";
+    private static readonly StringName LastTarget = "last_target";
+    private static readonly StringName Primary = "primary";
+
+    /// <summary>Below this the right stick doesn't scroll, as it doesn't turn.</summary>
+    private const float ScrollDeadzone = 0.2f;
+
+    /// <summary>
+    /// Wheel clicks a second with the stick pushed all the way. A list moves an eighth of what it
+    /// shows per click, so this is about a page and a half a second; chat moves half as far.
+    /// </summary>
+    private const float ScrollClicksPerSecond = 12f;
+
+    /// <summary>Whether the laser is on a panel, as the HUD or the wrist menu, for checks.</summary>
+    public bool LaserOnPanel => PanelUnderLaser is not null;
+
+    /// <summary>The panel the laser is on, as the HUD or the wrist menu, whose viewport takes its input; else null.</summary>
+    private SubViewport? PanelUnderLaser =>
+        PanelBodyUnderLaser is { } body ? body.GetParent()?.GetNodeOrNull<SubViewport>("Viewport") : null;
+
+    /// <summary>
+    /// The panel's or keyboard's body the laser is on, or null. XR Tools' pointer keeps what its ray
+    /// is on in <c>last_target</c>, and in <c>target</c> only while the trigger holds it, as in a drag.
+    /// </summary>
+    private CollisionObject3D? PanelBodyUnderLaser
+    {
+        get
+        {
+            var on = _pointer.Get(Target).AsGodotObject() as CollisionObject3D ?? _pointer.Get(LastTarget).AsGodotObject() as CollisionObject3D;
+            return on is not null && GodotObject.IsInstanceValid(on) && (on.CollisionLayer & PointerLayer) != 0 ? on : null;
+        }
+    }
+
+    /// <summary>
+    /// With the laser on a panel, the right stick scrolls what's under it, as the chat or a vendor's
+    /// list, by the mouse wheel where the laser is, and doesn't turn the player meanwhile.
+    /// </summary>
+    private void ScrollPanelUnderLaser(float delta)
+    {
+        var panel = PanelUnderLaser;
+        var turning = panel is null;
+        if (_turn.Get(Enabled).AsBool() != turning)
+        {
+            _turn.Set(Enabled, turning);
+        }
+
+        var push = _rightController.GetVector2(Primary).Y;
+        if (panel is null || Mathf.Abs(push) < ScrollDeadzone)
+        {
+            return;
+        }
+
+        var amount = (Mathf.Abs(push) - ScrollDeadzone) / (1f - ScrollDeadzone);
+        ScrollAt(panel, Mathf.Sign(push) * amount * ScrollClicksPerSecond * delta);
+    }
+
+    /// <summary>Scrolls what's under the viewport's pointer by this many wheel clicks, up when positive, as a wheel would.</summary>
+    public static void ScrollAt(Viewport viewport, float clicks)
+    {
+        if (clicks == 0f)
+        {
+            return;
+        }
+
+        // As a wheel sends it: pressed, then released, where the pointer last was in that viewport.
+        var at = viewport.GetMousePosition();
+        var button = clicks > 0 ? MouseButton.WheelUp : MouseButton.WheelDown;
+        var factor = Mathf.Abs(clicks);
+        viewport.PushInput(new InputEventMouseButton { ButtonIndex = button, Pressed = true, Factor = factor, Position = at, GlobalPosition = at }, true);
+        viewport.PushInput(new InputEventMouseButton { ButtonIndex = button, Pressed = false, Factor = factor, Position = at, GlobalPosition = at }, true);
+    }
+
     /// <summary>Whether the laser is on a panel or the keyboard, which takes its clicks.</summary>
-    private bool PointingAtPanel => _pointer.Get("target").AsGodotObject() is CollisionObject3D target && (target.CollisionLayer & PointerLayer) != 0;
+    private bool PointingAtPanel => PanelBodyUnderLaser is not null;
 
     private void OnRightButtonPressed(string name)
     {

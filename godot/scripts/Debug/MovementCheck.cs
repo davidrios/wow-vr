@@ -182,7 +182,8 @@ public partial class MovementCheck : Node
         var east = Player.Feet.X - goldshire.X;
         Check("VR walks into the inn", east > innWallEast && Player.OnGround, $"{east:F1} yards east of the center, wall at {innWallEast}");
 
-        // Clicking in the menu isn't covered: the simulated pointer's ray doesn't reach it.
+        // Clicking in the menu isn't covered. The simulated laser does reach it (StickScrollsPanels
+        // aims it there); it only seemed not to because XR Tools keeps what the ray is on in last_target.
         left.SetInput("ax_button", true);
         left.SetInput("ax_button", false);
         await Seconds(0.2);
@@ -196,6 +197,7 @@ public partial class MovementCheck : Node
         await LaserHasWeight(xr, right);
         await WristMenuHasWeight(xr, left);
         await LeftRollIsMeasured(xr, left);
+        await StickScrollsPanels(xr, left, right);
 
         XRServer.RemoveTracker(left);
         XRServer.RemoveTracker(right);
@@ -295,6 +297,63 @@ public partial class MovementCheck : Node
 
         Check("The left hand's roll reads clockwise as positive", right, string.Join(", ", read));
         SetPose(left, at, -25f);
+        await Seconds(0.3);
+    }
+
+    /// <summary>
+    /// The right stick scrolls a panel the laser is on, and doesn't turn the player meanwhile. The
+    /// scrolling is the mouse wheel where the laser is, checked on a list of its own; the turning by
+    /// aiming the laser at the open wrist menu, which has nothing to scroll.
+    /// </summary>
+    private async Task StickScrollsPanels(Xr.XrPlayer xr, XRControllerTracker left, XRControllerTracker right)
+    {
+        var viewport = new SubViewport { Size = new Vector2I(400, 300), GuiDisableInput = false };
+        var list = new ScrollContainer { Size = new Vector2(400, 300) };
+        list.AddChild(new Control { CustomMinimumSize = new Vector2(380, 3000) });
+        viewport.AddChild(list);
+        AddChild(viewport);
+        await Seconds(0.2);
+        var middle = new Vector2(200, 150);
+        viewport.PushInput(new InputEventMouseMotion { Position = middle, GlobalPosition = middle }, true);
+        for (var frame = 0; frame < 30; frame++)
+        {
+            Xr.XrPlayer.ScrollAt(viewport, -12f / 60f);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+
+        var down = list.ScrollVertical;
+        Xr.XrPlayer.ScrollAt(viewport, 3f);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        var back = list.ScrollVertical;
+        Check("Scrolling by the wheel under the laser moves a list", down > 0 && back < down, $"down to {down} px in half a second at full push, back up to {back}");
+        viewport.QueueFree();
+
+        // The laser on the open wrist menu: the stick doesn't turn.
+        xr.SetMenuOpen(true);
+        SetPose(left, new Vector3(-0.2f, 1.1f, -0.3f), -25f);
+        await Seconds(0.6);
+        var scale = AppSettings.WorldScale;
+        var menu = xr.WristMenuPanel;
+        var toSpace = xr.GlobalTransform.AffineInverse();
+        var aimAt = toSpace * menu.GlobalPosition;
+        var normal = (toSpace.Basis * menu.GlobalBasis.Z).Normalized();
+        var from = aimAt + (normal * 0.3f * scale);
+        right.SetPose(
+            "default",
+            new Transform3D(Basis.LookingAt(aimAt - from, Vector3.Up), from / scale),
+            Vector3.Zero,
+            Vector3.Zero,
+            XRPose.TrackingConfidenceEnum.High);
+        await Seconds(0.5);
+        var basis = xr.GlobalBasis;
+        right.SetInput("primary", new Vector2(1, 0));
+        await Seconds(0.5);
+        right.SetInput("primary", Vector2.Zero);
+        await Seconds(0.2);
+        Check("The right stick doesn't turn with the laser on a panel", xr.LaserOnPanel && xr.GlobalBasis.IsEqualApprox(basis),
+            $"laser {(xr.LaserOnPanel ? "on the menu" : "not on the menu")}, {(xr.GlobalBasis.IsEqualApprox(basis) ? "didn't turn" : "turned")}");
+        xr.SetMenuOpen(false);
+        SetPose(right, new Vector3(0.2f, 1.1f, -0.3f), 0f);
         await Seconds(0.3);
     }
 

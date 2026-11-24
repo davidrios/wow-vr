@@ -111,11 +111,13 @@ public partial class XrPlayer : XROrigin3D, IPlayer
                 return (GlobalTransform * _frozenLeft, GlobalTransform * _frozenRight);
             }
 
+            // Each wrist where it is on its controller, carried by the controller with its hand's weight.
+            WeighHands();
             var scale = AppSettings.WorldScale;
             var (left, right) = DefaultWrists;
             return (
-                _leftOffset is { } l ? _leftController.GlobalTransform * Scaled(l, scale) : left,
-                _rightOffset is { } r ? _rightController.GlobalTransform * Scaled(r, scale) : right);
+                _leftWeighed * (_leftOffset is { } l ? Scaled(l, scale) : _leftController.GlobalTransform.AffineInverse() * left),
+                _rightWeighed * (_rightOffset is { } r ? Scaled(r, scale) : _rightController.GlobalTransform.AffineInverse() * right));
         }
     }
 
@@ -151,6 +153,10 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     private const float CalibrationSqueeze = 0.85f;
     private const float CalibrationRelease = 0.3f;
 
+    /// <summary>Where the calibration's note floats: this far ahead of the eyes and this far below them, in meters.</summary>
+    private const float CalibrationNoteDistance = 0.9f;
+    private const float CalibrationNoteDrop = 0.1f;
+
     /// <summary>Whether the hands are held still for the player to line their own up with.</summary>
     public bool CalibratingHands => _calibrating;
 
@@ -183,10 +189,12 @@ public partial class XrPlayer : XROrigin3D, IPlayer
             AddChild(_calibrationNote);
         }
 
-        // Above the hands, where it's read while lining them up.
+        // Out in front, a little below the eyes, where it's read comfortably beyond the hands.
         var eyes = Eyes;
-        var middle = (left.Origin + right.Origin) / 2;
-        _calibrationNote.GlobalPosition = middle.Lerp(eyes.Origin, 0.3f) + (Vector3.Up * 0.2f * AppSettings.WorldScale);
+        var scale = AppSettings.WorldScale;
+        var ahead = -eyes.Basis.Z with { Y = 0 };
+        ahead = ahead.LengthSquared() < 1e-4f ? Vector3.Forward : ahead.Normalized();
+        _calibrationNote.GlobalPosition = eyes.Origin + (ahead * CalibrationNoteDistance * scale) + (Vector3.Down * CalibrationNoteDrop * scale);
         _calibrationNote.Scale = Vector3.One * AppSettings.WorldScale;
         _calibrationNote.Visible = true;
     }
@@ -330,6 +338,13 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _walk = GetNode<Node3D>("LeftController/MovementDirect");
         _teleport = GetNode<Node3D>("LeftController/FunctionTeleport");
         _wristMenu = GetNode<Node3D>("LeftController/WristMenu");
+
+        // The wrist menu, and the HUD once there is one, hang from a node that follows the left
+        // controller with some weight, as the laser does the right, so they don't shake with the hand.
+        _wristAnchor = new Node3D { Name = "WristAnchor", TopLevel = true };
+        _leftController.AddChild(_wristAnchor);
+        _leftController.RemoveChild(_wristMenu);
+        _wristAnchor.AddChild(_wristMenu);
         _turn = GetNode<Node3D>("RightController/MovementTurn");
         _pointer = GetNode<Node3D>("RightController/FunctionPointer");
         _fly = GetNode<Node3D>("MovementFly");
@@ -353,6 +368,16 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         _leftController.ButtonPressed += OnLeftButtonPressed;
         _rightController = GetNode<XRController3D>("RightController");
         _rightController.ButtonPressed += OnRightButtonPressed;
+
+        // The laser hangs from a node that follows the controller with some weight, as a held
+        // weapon does. It stays under the controller, where XR Tools' pointer finds it, but is
+        // placed on its own. XR Tools' own offset is off: with the "default" pose it took the
+        // controller for a palm and reset the pointer's transform, which held the laser's turn.
+        _aim = new Node3D { Name = "Aim", TopLevel = true };
+        _rightController.AddChild(_aim);
+        _pointer.Set(HandOffsetMode, HandOffsetDisabled);
+        _rightController.RemoveChild(_pointer);
+        _aim.AddChild(_pointer);
         _leftHand = GetNode<Node3D>("LeftController/LeftHand");
         _rightHand = GetNode<Node3D>("RightController/RightHand");
         _leftWrist = FindWrist(_leftHand, "Wrist_L");
@@ -422,11 +447,8 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         }
 
         // Turned on the controller, so it points where the controller does on runtimes whose aim pose
-        // is off: up for pitch, right for yaw, clockwise for roll (Godot's order is yaw, pitch, roll).
-        _pointer.Rotation = new Vector3(
-            Mathf.DegToRad(AppSettings.PointerPitch),
-            -Mathf.DegToRad(AppSettings.PointerYaw),
-            -Mathf.DegToRad(AppSettings.PointerRoll));
+        // is off: up for pitch, right for yaw, clockwise for roll.
+        _pointer.Rotation = LaserTurn(AppSettings.PointerPitch, AppSettings.PointerYaw, AppSettings.PointerRoll);
 
         // Read here rather than each frame: a Transform3D out of a Variant makes garbage.
         (_leftOffset, _rightOffset) = (AppSettings.HandOffset(left: true), AppSettings.HandOffset(left: false));
@@ -453,6 +475,12 @@ public partial class XrPlayer : XROrigin3D, IPlayer
 
     public override void _Process(double delta)
     {
+        // First, so the laser and what reads it this frame aim from the weighted controller. The
+        // parent processes before XR Tools' pointer under it.
+        WeighHands();
+        _aim.GlobalTransform = _rightWeighed;
+        _wristAnchor.GlobalTransform = _leftWeighed;
+
         // Not XR Tools' automatic mode: it watches the origin, so re-centering would trigger it.
         // Snap turns are instant, so there's no motion to soften.
         var turning = AppSettings.SmoothTurn && !GlobalBasis.IsEqualApprox(_lastBasis);
@@ -476,6 +504,37 @@ public partial class XrPlayer : XROrigin3D, IPlayer
     private const float HudHideFacing = 0.3f;
     private const float HudShowGaze = 0.8f;
     private const float HudHideGaze = 0.6f;
+
+    /// <summary>
+    /// Rolled clockwise further than this from upright, in degrees, the left hand puts the HUD away,
+    /// and it comes back under the second.
+    /// </summary>
+    private const float HudHideRoll = 45f;
+    private const float HudShowRoll = 40f;
+
+    /// <summary>
+    /// How far the left controller (with its weight) is rolled clockwise from upright, as the player
+    /// sees it looking along it, in degrees; negative is anticlockwise. Pointing straight up or down,
+    /// upright means nothing, so it counts as 0.
+    /// </summary>
+    public float LeftRollDegrees
+    {
+        get
+        {
+            var basis = _wristAnchor.GlobalBasis.Orthonormalized();
+            var forward = -basis.Z;
+            var upright = Vector3.Up - (forward * Vector3.Up.Dot(forward));
+            if (upright.LengthSquared() < 0.01f)
+            {
+                return 0f;
+            }
+
+            // About the way it points, by the right hand's rule: clockwise seen from behind.
+            upright = upright.Normalized();
+            var up = basis.Y;
+            return Mathf.RadToDeg(Mathf.Atan2(forward.Dot(upright.Cross(up)), upright.Dot(up)));
+        }
+    }
 
     /// <summary>Checks drive the HUD with simulated trackers, which never raise a wrist.</summary>
     private static readonly bool s_checkRun = System.Linq.Enumerable.Any(OS.GetCmdlineUserArgs(), a => a.Contains("-check"));
@@ -506,9 +565,10 @@ public partial class XrPlayer : XROrigin3D, IPlayer
             var toEyes = (eyes.Origin - at).Normalized();
             var facing = _hudPanel.GlobalBasis.Z.Normalized().Dot(toEyes);
             var gaze = (-eyes.Basis.Z).Normalized().Dot(-toEyes);
+            var roll = LeftRollDegrees;
             want = shown
-                ? (facing > HudHideFacing && gaze > HudHideGaze) || PointingAtPanel
-                : facing > HudShowFacing && gaze > HudShowGaze;
+                ? ((facing > HudHideFacing && gaze > HudHideGaze) || PointingAtPanel) && roll <= HudHideRoll
+                : facing > HudShowFacing && gaze > HudShowGaze && roll <= HudShowRoll;
         }
 
         if (want != shown)
@@ -530,7 +590,7 @@ public partial class XrPlayer : XROrigin3D, IPlayer
         panel.Set("screen_size", new Vector2(HudPanelWidth, HudPanelWidth * GameHud.PanelSize.Y / GameHud.PanelSize.X));
         panel.Set("viewport_size", (Vector2)GameHud.PanelSize);
         panel.Set("collision_layer", PointerLayer);
-        _leftController.AddChild(panel);
+        _wristAnchor.AddChild(panel);
         panel.Set("transparent", 1);
         panel.Set("unshaded", true);
         panel.Position = new Vector3(0.05f, 0.22f, -0.1f);
@@ -598,6 +658,113 @@ public partial class XrPlayer : XROrigin3D, IPlayer
 
     /// <summary>Where the laser starts and which way it points (-Z): the controller's aim, turned by the laser aim setting.</summary>
     private Transform3D Aim => _pointer.GlobalTransform;
+
+    /// <summary>The laser's turn on its controller, from degrees up, right and clockwise, in Godot's yaw, pitch, roll order.</summary>
+    private static Vector3 LaserTurn(float up, float right, float roll) =>
+        new(Mathf.DegToRad(up), -Mathf.DegToRad(right), -Mathf.DegToRad(roll));
+
+    private static readonly StringName HandOffsetMode = "hand_offset_mode";
+
+    /// <summary>XR Tools' <c>hand_offset_mode</c> that leaves the pointer's transform alone.</summary>
+    private const int HandOffsetDisabled = 4;
+
+    /// <summary>The right controller with its hand's weight, which the laser hangs from.</summary>
+    private Node3D _aim = null!;
+
+    /// <summary>The left controller with its hand's weight, which the wrist menu and HUD hang from.</summary>
+    private Node3D _wristAnchor = null!;
+
+    private readonly World.HandSmoothing _leftWeight = new();
+    private readonly World.HandSmoothing _rightWeight = new();
+    private Transform3D _leftWeighed = Transform3D.Identity;
+    private Transform3D _rightWeighed = Transform3D.Identity;
+    private ulong _weighedFrame = ulong.MaxValue;
+    private ulong _weighedAt;
+
+    /// <summary>
+    /// Each controller with its hand's weight (<c>AppSettings.LeftHandWeight</c>, <c>RightHandWeight</c>),
+    /// which everything in that hand follows: the body's hand and what it holds, the laser, the wrist
+    /// menu and HUD. Worked out once a frame, by whichever asks first, so the body reading the wrists
+    /// before this node's own process doesn't get last frame's.
+    /// </summary>
+    private void WeighHands()
+    {
+        var frame = Engine.GetProcessFrames();
+        if (frame == _weighedFrame)
+        {
+            return;
+        }
+
+        var now = Time.GetTicksUsec();
+        var delta = _weighedFrame == ulong.MaxValue ? 0f : (now - _weighedAt) / 1e6f;
+        (_weighedFrame, _weighedAt) = (frame, now);
+        var (space, scale) = (GlobalTransform, AppSettings.WorldScale);
+        _leftWeighed = _leftWeight.Filter(_leftController.GlobalTransform, space, AppSettings.LeftHandWeight, scale, delta);
+        _rightWeighed = _rightWeight.Filter(_rightController.GlobalTransform, space, AppSettings.RightHandWeight, scale, delta);
+    }
+
+    /// <summary>The wrist menu's panel, for checks.</summary>
+    public Node3D WristMenuPanel => _wristMenu;
+
+    /// <summary>How long the preview laser is, in meters.</summary>
+    private const float PreviewLaserLength = 3f;
+
+    /// <summary>XR Tools draws its laser this far below the controller's aim, in meters.</summary>
+    private const float LaserDrop = -0.013f;
+
+    private MeshInstance3D? _previewLaser;
+
+    /// <summary>Whether the preview laser shows, for checks.</summary>
+    public bool LaserPreviewShown => _previewLaser is { Visible: true };
+
+    /// <summary>Which way the preview laser points, and the real one, in the world, for checks.</summary>
+    public (Vector3 Preview, Vector3 Laser) LaserDirections =>
+        (_previewLaser is null ? Vector3.Zero : -_previewLaser.GlobalBasis.Z.Normalized(), -Aim.Basis.Z.Normalized());
+
+    /// <summary>
+    /// Shows a second laser where the laser would point with these turns (degrees up, right and
+    /// clockwise), while its sliders are being set; the real one keeps its aim to drag them with.
+    /// Null puts it away.
+    /// </summary>
+    public void PreviewLaser(Vector3? degrees)
+    {
+        if (degrees is not { } turn)
+        {
+            if (_previewLaser is not null)
+            {
+                _previewLaser.Visible = false;
+            }
+
+            return;
+        }
+
+        if (_previewLaser is null)
+        {
+            _previewLaser = new MeshInstance3D
+            {
+                Name = "PreviewLaser",
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D
+                {
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                    Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                    AlbedoColor = new Color(0.3f, 0.9f, 1f, 0.7f),
+                },
+            };
+            _aim.AddChild(_previewLaser);
+        }
+
+        // Beside the real laser on the weighted aim, along -Z, so the turn is about the controller like the real laser's.
+        var scale = AppSettings.WorldScale;
+        if (_previewLaser.Mesh is not BoxMesh box || box.Size.Z != PreviewLaserLength * scale)
+        {
+            _previewLaser.Mesh = new BoxMesh { Size = new Vector3(0.002f, 0.002f, PreviewLaserLength) * scale };
+        }
+
+        var basis = Basis.FromEuler(LaserTurn(turn.X, turn.Y, turn.Z));
+        _previewLaser.Transform = new Transform3D(basis, (Vector3.Up * LaserDrop * scale) + (basis * (Vector3.Forward * PreviewLaserLength * 0.5f * scale)));
+        _previewLaser.Visible = true;
+    }
 
     /// <summary>Whether the laser is on a panel or the keyboard, which takes its clicks.</summary>
     private bool PointingAtPanel => _pointer.Get("target").AsGodotObject() is CollisionObject3D target && (target.CollisionLayer & PointerLayer) != 0;

@@ -78,6 +78,7 @@ public partial class MovementCheck : Node
         Check("Off the map goes back to solid ground", Player.Feet.DistanceTo(ground) < 5f, $"at {Player.Feet}");
 
         await VignetteClosesWhenMoving();
+        await LaserWaitsForTheSlider();
         if (Player is Xr.XrPlayer xrPlayer)
         {
             await ControllersWork(xrPlayer);
@@ -185,15 +186,116 @@ public partial class MovementCheck : Node
         left.SetInput("ax_button", true);
         left.SetInput("ax_button", false);
         await Seconds(0.2);
-        var menu = xr.GetNode<Node3D>("LeftController/WristMenu");
+        var menu = xr.WristMenuPanel;
         Check("X opens the menu", menu.Visible, "");
         left.SetInput("ax_button", true);
         left.SetInput("ax_button", false);
         await Seconds(0.2);
         Check("X closes the menu", !menu.Visible, "");
 
+        await LaserHasWeight(xr, right);
+        await WristMenuHasWeight(xr, left);
+        await LeftRollIsMeasured(xr, left);
+
         XRServer.RemoveTracker(left);
         XRServer.RemoveTracker(right);
+    }
+
+    /// <summary>
+    /// The laser has weight, as a held weapon does: a controller shaking 3° up and down each frame
+    /// moves it much less, and a real turn of the controller still brings it along.
+    /// </summary>
+    private async Task LaserHasWeight(Xr.XrPlayer xr, XRControllerTracker right)
+    {
+        var at = new Vector3(0.2f, 1.1f, -0.3f);
+        static float Pitch(Vector3 direction) => Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(direction.Y, -1f, 1f)));
+
+        SetPose(right, at, 0f);
+        await Seconds(0.5);
+        var (low, high) = (float.MaxValue, float.MinValue);
+        for (var frame = 0; frame < 60; frame++)
+        {
+            SetPose(right, at, frame % 2 == 0 ? 3f : 0f);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            if (frame >= 20)
+            {
+                var pitch = Pitch(xr.LaserDirections.Laser);
+                (low, high) = (Mathf.Min(low, pitch), Mathf.Max(high, pitch));
+            }
+        }
+
+        Check("The laser swings less than a shaking controller", high - low < 3f * 0.6f, $"{high - low:F2}° for the controller's 3°, at weight {AppSettings.RightHandWeight:F2}");
+
+        SetPose(right, at, 20f);
+        await Seconds(0.5);
+        var followed = Pitch(xr.LaserDirections.Laser);
+        Check("The laser follows a real turn of the controller", Mathf.Abs(followed - 20f) < 1f, $"{followed:F1}° half a second after the controller tipped 20°");
+        SetPose(right, at, 0f);
+    }
+
+    /// <summary>The wrist menu has weight too: with the left controller shaking, the open menu shakes less, and it follows a real turn.</summary>
+    private async Task WristMenuHasWeight(Xr.XrPlayer xr, XRControllerTracker left)
+    {
+        var at = new Vector3(-0.2f, 1.1f, -0.3f);
+        var menu = xr.WristMenuPanel;
+        static float Pitch(Node3D node) => Mathf.RadToDeg(Mathf.Asin(Mathf.Clamp(-node.GlobalBasis.Z.Normalized().Y, -1f, 1f)));
+
+        xr.SetMenuOpen(true);
+        SetPose(left, at, -25f);
+        await Seconds(0.5);
+        var rest = Pitch(menu);
+        var (low, high) = (float.MaxValue, float.MinValue);
+        for (var frame = 0; frame < 60; frame++)
+        {
+            SetPose(left, at, frame % 2 == 0 ? -22f : -25f);
+            await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            if (frame >= 20)
+            {
+                var pitch = Pitch(menu);
+                (low, high) = (Mathf.Min(low, pitch), Mathf.Max(high, pitch));
+            }
+        }
+
+        Check("The wrist menu swings less than a shaking controller", high - low < 3f * 0.6f, $"{high - low:F2}° for the controller's 3°, at weight {AppSettings.LeftHandWeight:F2}");
+
+        SetPose(left, at, -5f);
+        await Seconds(0.5);
+        var turned = Pitch(menu) - rest;
+        Check("The wrist menu follows a real turn of the controller", Mathf.Abs(turned - 20f) < 1f, $"turned {turned:F1}° half a second after the controller turned 20°");
+        SetPose(left, at, -25f);
+        xr.SetMenuOpen(false);
+        await Seconds(0.3);
+    }
+
+    /// <summary>
+    /// The left hand's roll, which puts the HUD away past 45° clockwise: rolled each way, it reads
+    /// as much, clockwise positive as the player sees it. Checks always show the HUD, so only the
+    /// measure is checked here.
+    /// </summary>
+    private async Task LeftRollIsMeasured(Xr.XrPlayer xr, XRControllerTracker left)
+    {
+        var at = new Vector3(-0.2f, 1.1f, -0.3f);
+        void Roll(float degrees) => left.SetPose(
+            "default",
+            new Transform3D(Basis.Identity.Rotated(Vector3.Forward, Mathf.DegToRad(degrees)), at),
+            Vector3.Zero,
+            Vector3.Zero,
+            XRPose.TrackingConfidenceEnum.High);
+
+        var read = new System.Collections.Generic.List<string>();
+        var right = true;
+        foreach (var degrees in new[] { 0f, 30f, 60f, -60f })
+        {
+            Roll(degrees);
+            await Seconds(0.6);
+            var measured = xr.LeftRollDegrees;
+            read.Add($"{degrees}° as {measured:F1}°");
+            right &= Mathf.Abs(measured - degrees) < 1f;
+        }
+
+        Check("The left hand's roll reads clockwise as positive", right, string.Join(", ", read));
+        SetPose(left, at, -25f);
+        await Seconds(0.3);
     }
 
     private static XRControllerTracker AddTracker(string name, XRPositionalTracker.TrackerHand hand)
@@ -250,6 +352,42 @@ public partial class MovementCheck : Node
         await Seconds(2.5);
 
         slider.Value = saved;
+    }
+
+    /// <summary>
+    /// The laser's aim sliders are dragged by the laser itself, so a change shows on a second,
+    /// preview laser at once and reaches the real one only a moment later; the player's own value
+    /// is put back after.
+    /// </summary>
+    private async Task LaserWaitsForTheSlider()
+    {
+        if (Player is not Xr.XrPlayer xr)
+        {
+            return;
+        }
+
+        var saved = AppSettings.PointerYaw;
+        if (Player.Menu.FindChild("Right", true, false) is not HSlider slider)
+        {
+            Check("Menu has the laser's Right slider", false, "");
+            return;
+        }
+
+        var to = saved == 20f ? 25f : 20f;
+        slider.Value = to;
+        await Seconds(0.2);
+        var (early, previewed) = (AppSettings.PointerYaw, xr.LaserPreviewShown);
+        var preview = xr.LaserDirections.Preview;
+        await Seconds(1.0);
+        var (late, stillPreviewed) = (AppSettings.PointerYaw, xr.LaserPreviewShown);
+        var landed = xr.LaserDirections.Laser;
+        Check("The real laser points where the preview did", preview.AngleTo(landed) < Mathf.DegToRad(0.5f), $"{Mathf.RadToDeg(preview.AngleTo(landed)):F2}° apart");
+        Check("A laser slider previews on a second laser", previewed && early == saved, $"preview {(previewed ? "shown" : "not shown")}, the laser at {early}°");
+        Check("The real laser takes it a moment later", late == to && !stillPreviewed, $"the laser at {late}° after 1.2 s, set to {to}°, preview {(stillPreviewed ? "still shown" : "gone")}");
+
+        slider.Value = saved;
+        await Seconds(1.0);
+        AppSettings.PointerYaw = saved;
     }
 
     private const float MinTeleportMeters = 1.3f;

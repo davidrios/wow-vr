@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using WowVR.Formats.World;
 using WowVR.World;
 using Godot;
@@ -274,11 +275,14 @@ public partial class WorldMenu : PanelContainer
         resetHands.Pressed += Xr.XrPlayer.ResetHandCalibration;
         hands.AddChild(resetHands);
         rows.AddChild(hands);
+
+        // Each hand's weight, for everything in it: the body's hand and what it holds, the laser on
+        // the right, this menu and the HUD on the left. It doesn't move where the laser points.
+        rows.AddChild(SliderRow("Left weight", 0, 1, 0.05, () => AppSettings.LeftHandWeight, v => AppSettings.LeftHandWeight = v, v => $"{v:F2}", []));
+        rows.AddChild(SliderRow("Right weight", 0, 1, 0.05, () => AppSettings.RightHandWeight, v => AppSettings.RightHandWeight = v, v => $"{v:F2}", []));
         rows.AddChild(new HSeparator());
 
         rows.AddChild(Heading("Weapon in the hand"));
-        var weight = new List<HSlider>();
-        rows.AddChild(SliderRow("Weight", 0, 1, 0.05, () => AppSettings.HeldItemWeight, v => AppSettings.HeldItemWeight = v, v => $"{v:F2}", weight));
         var grip = new List<HSlider>();
         rows.AddChild(SliderRow("Tip forward", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.GripPitch, v => AppSettings.GripPitch = v, Degrees, grip));
         rows.AddChild(SliderRow("Roll inward", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.GripRoll, v => AppSettings.GripRoll = v, Degrees, grip));
@@ -290,9 +294,24 @@ public partial class WorldMenu : PanelContainer
         rows.AddChild(new HSeparator());
         rows.AddChild(Heading("Laser"));
         var laser = new List<HSlider>();
-        rows.AddChild(SliderRow("Up", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.PointerPitch, v => AppSettings.PointerPitch = v, Degrees, laser));
-        rows.AddChild(SliderRow("Right", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.PointerYaw, v => AppSettings.PointerYaw = v, Degrees, laser));
-        rows.AddChild(SliderRow("Roll", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.PointerRoll, v => AppSettings.PointerRoll = v, Degrees, laser));
+
+        // The laser drags these, so a second laser previews the new aim while one is being set,
+        // and the real one takes it a moment after the slider is let go.
+        var laserPending = new List<Func<bool>>();
+        void PreviewLaser()
+        {
+            if (Player is Xr.XrPlayer xr && laser.Count == 3)
+            {
+                xr.PreviewLaser(laserPending.Any(p => p())
+                    ? new Vector3((float)laser[0].Value, (float)laser[1].Value, (float)laser[2].Value)
+                    : null);
+            }
+        }
+
+        var deferred = new Deferred(LaserApplyDelay, laserPending, PreviewLaser);
+        rows.AddChild(SliderRow("Up", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.PointerPitch, v => AppSettings.PointerPitch = v, Degrees, laser, deferred));
+        rows.AddChild(SliderRow("Right", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.PointerYaw, v => AppSettings.PointerYaw = v, Degrees, laser, deferred));
+        rows.AddChild(SliderRow("Roll", -AppSettings.MaxAlignment, AppSettings.MaxAlignment, 1, () => AppSettings.PointerRoll, v => AppSettings.PointerRoll = v, Degrees, laser, deferred));
         var resetLaser = new Button { Text = "Reset the laser" };
         resetLaser.Pressed += () => Reset(laser, 0f, 0f, 0f);
         rows.AddChild(resetLaser);
@@ -324,31 +343,95 @@ public partial class WorldMenu : PanelContainer
         LabelSettings = new LabelSettings { FontSize = 22, FontColor = GlueTheme.Accent, OutlineSize = 3, OutlineColor = Colors.Black },
     };
 
-    /// <summary>A label with the value, then a slider, on one row, since the wrist menu is short of room.</summary>
-    private static HBoxContainer SliderRow(string name, double min, double max, double step, Func<float> read, Action<float> write, Func<float, string> show, List<HSlider> group)
+    /// <summary>
+    /// How long after letting go of a laser slider the real laser takes its value, in seconds: long
+    /// enough for the trigger's release to land on the slider, aimed as it was.
+    /// </summary>
+    private const double LaserApplyDelay = 0.5;
+
+    /// <summary>A slider whose value waits: whether it has a change not yet kept, and a call for each change of that.</summary>
+    private sealed record Deferred(double After, List<Func<bool>> Pending, Action Changed);
+
+    /// <summary>
+    /// A label with the value, then a slider, on one row, since the wrist menu is short of room.
+    /// <paramref name="deferred"/> keeps the value only a moment after the slider is let go, as for
+    /// the laser, which can't drag its own slider while it turns; until then it's pending.
+    /// </summary>
+    private static HBoxContainer SliderRow(string name, double min, double max, double step, Func<float> read, Action<float> write, Func<float, string> show, List<HSlider> group, Deferred? deferred = null)
     {
         var row = new HBoxContainer();
         var label = new Label { Text = $"{name} {show(read())}", CustomMinimumSize = new Vector2(170, 0) };
         row.AddChild(label);
-        var slider = new HSlider
+        if (deferred is { } wait)
         {
-            Name = name.Replace(" ", ""),
-            MinValue = min,
-            MaxValue = max,
-            Step = step,
-            Value = read(),
-            SizeFlagsHorizontal = SizeFlags.ExpandFill,
-            SizeFlagsVertical = SizeFlags.ShrinkCenter,
-        };
-        slider.ValueChanged += value =>
+            var slider = NewSlider(name, min, max, step, read());
+            var timer = new Timer { OneShot = true, WaitTime = wait.After };
+            row.AddChild(timer);
+            var dragging = false;
+            var pending = read();
+            bool Pending() => dragging || !timer.IsStopped();
+            wait.Pending.Add(Pending);
+
+            void Update()
+            {
+                label.Text = $"{name} {show(pending)}{(Pending() ? " (preview)" : "")}";
+                wait.Changed();
+            }
+
+            slider.ValueChanged += value =>
+            {
+                pending = (float)value;
+                if (!dragging)
+                {
+                    timer.Start();
+                }
+
+                Update();
+            };
+            slider.DragStarted += () =>
+            {
+                dragging = true;
+                timer.Stop();
+                Update();
+            };
+            slider.DragEnded += _ =>
+            {
+                dragging = false;
+                timer.Start();
+                Update();
+            };
+            timer.Timeout += () =>
+            {
+                write(pending);
+                Update();
+            };
+
+            row.AddChild(slider);
+            group.Add(slider);
+            return row;
+        }
+
+        var immediate = NewSlider(name, min, max, step, read());
+        immediate.ValueChanged += value =>
         {
             write((float)value);
             label.Text = $"{name} {show((float)value)}";
         };
-        row.AddChild(slider);
-        group.Add(slider);
+        row.AddChild(immediate);
+        group.Add(immediate);
         return row;
     }
+
+    private static HSlider NewSlider(string name, double min, double max, double step, float value) => new()
+    {
+        Name = name.Replace(" ", ""),
+        MinValue = min,
+        MaxValue = max,
+        Step = step,
+        Value = value,
+        SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        SizeFlagsVertical = SizeFlags.ShrinkCenter,
+    };
 
     public override void _ExitTree() => AppSettings.Changed -= RefreshVideoPage;
 

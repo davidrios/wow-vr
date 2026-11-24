@@ -101,13 +101,21 @@ public static class AppSettings
     }
 
     /// <summary>
-    /// VR: how much a hand holding a weapon is smoothed, so a hand's tremor doesn't shake the
-    /// blade, from 0 (off, the hand as tracked) to 1 (heaviest). Quick swings stay quick.
+    /// VR: how much the left hand's controller is smoothed, for everything on it (the body's hand
+    /// and what it holds, the wrist menu and HUD), so a hand's tremor doesn't shake them, from 0
+    /// (off, as tracked) to 1 (heaviest). Quick movements stay quick.
     /// </summary>
-    public static float HeldItemWeight
+    public static float LeftHandWeight
     {
-        get => Read(MovementSection, "held_item_weight", 0.5f).AsSingle();
-        set => WriteMovement("held_item_weight", Mathf.Clamp(value, 0f, 1f));
+        get => Read(MovementSection, "left_hand_weight", 0.5f).AsSingle();
+        set => WriteMovement("left_hand_weight", Mathf.Clamp(value, 0f, 1f));
+    }
+
+    /// <summary>VR: the same for the right hand: the body's hand and what it holds, and the laser.</summary>
+    public static float RightHandWeight
+    {
+        get => Read(MovementSection, "right_hand_weight", 0.5f).AsSingle();
+        set => WriteMovement("right_hand_weight", Mathf.Clamp(value, 0f, 1f));
     }
 
     /// <summary>

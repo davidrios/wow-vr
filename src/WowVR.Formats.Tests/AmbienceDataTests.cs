@@ -16,6 +16,10 @@ public class AmbienceDataTests(ClientFixture client) : IClassFixture<ClientFixtu
     private static readonly (float X, float Y) CrystalLake = (-9409f, -328f);
     private static readonly (float X, float Y) Goldshire = (-9464f, 62f);
 
+    /// <summary>Zangarmarsh's lake by the Lagoon and Shadowmoon Valley's magma, kept only in MCLQ.</summary>
+    private static readonly (float X, float Y) ZangarmarshLagoon = (540f, 7470f);
+    private static readonly (float X, float Y) ShadowmoonMagma = (-3300f, 2033f);
+
     private MpqAssetSource Source
     {
         get
@@ -49,9 +53,46 @@ public class AmbienceDataTests(ClientFixture client) : IClassFixture<ClientFixtu
     }
 
     [Fact]
-    public void CrystalLakeWaterLiesAboveItsLakebedOnlyWithColumnsEastAndRowsSouth()
+    public void CrystalLakeWaterLiesAboveItsLakebedOnlyWithColumnsEastAndRowsSouth() =>
+        AssertWaterAboveGround(ReadTile("Azeroth", CrystalLake.X, CrystalLake.Y));
+
+    [Fact]
+    public void OutlandsOlderMclqWaterLiesAboveItsLakebed()
     {
-        var terrain = ReadTile("Azeroth", CrystalLake.X, CrystalLake.Y);
+        var terrain = ReadTile("Expansion01", ZangarmarshLagoon.X, ZangarmarshLagoon.Y);
+        Assert.Contains(terrain.Liquids, l => l.LiquidType == 1);
+        AssertWaterAboveGround(terrain, orderShown: false);
+
+        // The lake is deep throughout, so its shores tell the grid's order: wet cells have ground
+        // below the surface, and dry ones above it.
+        double correct = 0, swapped = 0, total = 0;
+        foreach (var layer in terrain.Liquids.Where(l => l.Cells != ulong.MaxValue))
+        {
+            var surface = layer.Heights.Max();
+            for (var row = 0; row < 8; row++)
+            {
+                for (var column = 0; column < 8; column++)
+                {
+                    total++;
+                    correct += layer.HasCell(column, row) == TerrainUnder(terrain, layer, column, row, swapped: false) < surface ? 1 : 0;
+                    swapped += layer.HasCell(column, row) == TerrainUnder(terrain, layer, column, row, swapped: true) < surface ? 1 : 0;
+                }
+            }
+        }
+
+        Assert.True(total > 500, $"Only {total} shore cells.");
+        Assert.True(correct / total > swapped / total + 0.2, $"Correct {correct / total:P1}, swapped {swapped / total:P1}");
+    }
+
+    [Fact]
+    public void OutlandsOlderMclqMagmaIsMagma()
+    {
+        var terrain = ReadTile("Expansion01", ShadowmoonMagma.X, ShadowmoonMagma.Y);
+        Assert.Contains(terrain.Liquids, l => l.LiquidType == 3);
+    }
+
+    private static void AssertWaterAboveGround(AdtTerrain terrain, bool orderShown = true)
+    {
         Assert.NotEmpty(terrain.Liquids);
 
         double correct = 0, swapped = 0, total = 0;
@@ -77,7 +118,10 @@ public class AmbienceDataTests(ClientFixture client) : IClassFixture<ClientFixtu
 
         Assert.True(total > 100, $"Only {total} deep vertices.");
         Assert.True(correct / total > 0.95, $"Correct order: {correct / total:P1}");
-        Assert.True(correct / total > swapped / total + 0.1, $"Correct {correct / total:P1}, swapped {swapped / total:P1}");
+        if (orderShown)
+        {
+            Assert.True(correct / total > swapped / total + 0.1, $"Correct {correct / total:P1}, swapped {swapped / total:P1}");
+        }
     }
 
     [Fact]

@@ -56,10 +56,14 @@ Reached through `wa_adt_open`, which gives `AdtTerrain`. `TerrainMeshData` turns
 
 ## Liquids
 
-`AdtTerrain.Liquids` comes from `MH2O` through `wa_adt_liquid`, and `WmoGroup.Liquid` from `MLIQ` through `wa_wmo_group_liquid`. `LiquidSurface` turns either into mesh data. See `decisions/0006-liquids-sky-zones.md`.
+`AdtTerrain.Liquids` comes from `MH2O`, or a chunk's `MCLQ` where `MH2O` has nothing for it, through `wa_adt_liquid`, and `WmoGroup.Liquid` from `MLIQ` through `wa_wmo_group_liquid`. `LiquidSurface` turns either into mesh data. See `decisions/0006-liquids-sky-zones.md`.
 
 - **MH2O offsets** count from the start of the chunk's data, and instances are 24 bytes.
-- **MCLQ, the older liquid:** 636 tiles have water only in each chunk's `MCLQ` and none in `MH2O`, 386 of them in Outland (`Expansion01`), and also Valgarde70, Sunwell and several instances. wow-alchemy-adt reads it (`McnkChunk.liquid`), but nothing turns it into liquid layers yet, so that water isn't drawn.
+- **MCLQ, the older liquid:** 636 tiles have water only in each chunk's `MCLQ` and none in `MH2O`, 386 of them in Outland (`Expansion01`), and also Valgarde70, Sunwell and several instances. No chunk of the client has liquid in both. wow-alchemy-adt's `Adt::liquid_layers` turns a chunk's MCLQ layers into the same 9x9 layers as MH2O's when MH2O has none for that chunk (`McnkChunk::mclq_liquid_layers`), as AzerothCore's map extractor reads them:
+  - There is one 804-byte layer per liquid flag set on the chunk (`0x4` river, `0x8` ocean, `0x10` magma, `0x20` slime), in that order, drawn as LiquidType rows 1 to 4. Only 16 chunks have two layers.
+  - A cell has liquid unless its tile byte's low 4 bits are `0xF`; in the client it's always exactly `0x0F`. The low bits otherwise repeat the type (`4` river, `1` ocean, `6` magma, and always agree with the chunk's flags), and the high bits are `0x40` and `0x80` (TrinityCore takes `0x80` for dark water).
+  - Water vertices hold a depth byte first; magma's hold texture coordinates, so its depths read as full. Heights are absolute, and all those on cells with liquid lie inside the layer's stated range.
+  - The grid's order is the same as MH2O's: on Zangarmarsh's shores, cells with water have ground below the surface 86% of the time in this order, 52% swapped.
 - **Grid:** columns run east and rows run south, like terrain. A test finds water above its lakebed at Crystal Lake only with this order.
 - **Vertex formats:** 0 is heights and depths, 1 heights and texture coordinates, 2 depths, 3 all three. With no vertex data, or format 2, the layer sits flat at its minimum height, as in Noggit. The wiki says format 2 is always at height 0, which this code doesn't check.
 - **Exists bits** run through the layer's area with no padding between rows.

@@ -344,7 +344,7 @@ public partial class TileManager : Node3D
         (float Surface, int Type)? best = null;
         foreach (var objects in _objects.Values)
         {
-            if (objects.WmoLiquidAt(point) is { } wmo && wmo.Surface >= point.Y - WmoLiquidReach && (best is null || wmo.Surface > best.Value.Surface))
+            if (objects.WmoLiquidAt(point, WmoLiquidReach) is { } wmo && (best is null || wmo.Surface > best.Value.Surface))
             {
                 best = wmo;
             }

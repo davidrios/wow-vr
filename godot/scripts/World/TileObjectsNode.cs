@@ -108,17 +108,27 @@ public partial class TileObjectsNode : Node3D
     public bool CollisionSettled => _collisionChecked && !_collisionWaiting
         && ToLocal(Player.Feet).DistanceTo(_collisionCheckedAt) < CollisionCheckDistance;
 
-    /// <summary>The highest WMO liquid over a point in the scene, within the group's bounds. Null where there's none.</summary>
-    public (float Surface, int Type)? WmoLiquidAt(Vector3 point)
+    /// <summary>How far outside a group's bounds a point can be and still be in its liquid, in yards.</summary>
+    private const float LiquidBoundsMargin = 1f;
+
+    /// <summary>
+    /// The highest WMO liquid over a point in the scene whose group holds the point and whose surface
+    /// is no more than <paramref name="reach"/> under it. A group's bounds reach <paramref name="reach"/>
+    /// higher, for a swimmer's head over a canal at the top of its group. Without the bounds, Undercity's
+    /// pools 116 yards up counted as the surface of the canals under them. Null where there's none.
+    /// </summary>
+    public (float Surface, int Type)? WmoLiquidAt(Vector3 point, float reach)
     {
         (float Surface, int Type)? best = null;
         foreach (var (wmo, group) in _liquidGroups)
         {
             var local = wmo.ToLocal(point);
-            if (group.LiquidHeights!.HeightAt(local.X, local.Z) is { } height)
+            var bounds = group.Bounds.Grow(LiquidBoundsMargin);
+            bounds.Size += new Vector3(0f, reach, 0f);
+            if (bounds.HasPoint(local) && group.LiquidHeights!.HeightAt(local.X, local.Z) is { } height)
             {
                 var surface = wmo.ToGlobal(new Vector3(local.X, height, local.Z)).Y;
-                if (best is null || surface > best.Value.Surface)
+                if (surface >= point.Y - reach && (best is null || surface > best.Value.Surface))
                 {
                     best = (surface, group.LiquidType);
                 }

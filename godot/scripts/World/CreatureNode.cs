@@ -16,6 +16,9 @@ public partial class CreatureNode : Node3D
     /// <summary>A name only shows this close, in yards.</summary>
     private const float NameRange = 35f;
     private const float NamePixelSize = 0.008f;
+
+    /// <summary>Names in the headset, which look bigger there: 20% smaller, by eye.</summary>
+    private const float VrNamePixelSize = 0.0064f;
     private const int NameFontSize = 48;
     private const float NameClearance = 0.4f;
     private const float TurnRate = 8f;
@@ -140,7 +143,7 @@ public partial class CreatureNode : Node3D
             {
                 Text = name,
                 Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-                PixelSize = NamePixelSize,
+                PixelSize = XRServer.PrimaryInterface?.IsInitialized() == true ? VrNamePixelSize : NamePixelSize,
                 FontSize = NameFontSize,
                 Modulate = new Color(1f, 0.9f, 0.3f),
                 OutlineSize = 8,

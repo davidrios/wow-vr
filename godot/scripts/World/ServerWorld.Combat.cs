@@ -37,9 +37,19 @@ public partial class ServerWorld
     /// <summary>A unit's auras changed: the frames show them again.</summary>
     public event Action<ulong>? AurasUpdated;
 
+    /// <summary>How much bigger floating combat text is in VR than on the desktop.</summary>
+    private const float VrCombatTextScale = 2f;
+
     private void StartCombat()
     {
         _combatText = new CombatText { Name = "CombatText" };
+
+        // In the headset the numbers read small: twice the size, by eye.
+        if (XRServer.PrimaryInterface?.IsInitialized() == true)
+        {
+            _combatText.PixelSize *= VrCombatTextScale;
+        }
+
         AddChild(_combatText);
         _session.SpellName = id => Spells?.Get((int)id)?.Name ?? "";
     }

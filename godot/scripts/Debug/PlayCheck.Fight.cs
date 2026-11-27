@@ -49,15 +49,22 @@ public partial class PlayCheck
 
             return age > 2 ? Server.Self is { } self && !self.IsGhost && !self.Unit.IsDead : null;
         });
-        GoTo("go hunting on Tirisfal's coast", new System.Numerics.Vector3(2520, 1470, 2));
+        GoTo("go hunting on Tirisfal's coast", HuntingSpot);
         Step("a missile flies to a creature and strikes it", MissileAtFoe);
         Step("a creature's cast shows on its frame and its missile flies at the player", FoeCasts);
         Step("a channel cut short shows as interrupted on the frame", InterruptedOnFrame);
         Step("Blizzard's ice falls on a creature", BlizzardOnFoe);
     }
 
-    /// <summary>Stands <see cref="CastingYards"/> from a creature and, once there, faces it.</summary>
-    private bool StandOffFrom(ulong guid, bool first, double age)
+    /// <summary>Where the check hunts, on land by Tirisfal's coast.</summary>
+    private static readonly System.Numerics.Vector3 HuntingSpot = new(2520, 1470, 2);
+
+    /// <summary>
+    /// Stands <see cref="CastingYards"/> from a creature, toward the hunting spot on land, which keeps
+    /// out of the sea a creature by the shore stands in (swimming would cut a channel short), and
+    /// faces it until <paramref name="face"/> stops, as turning during a cast sends movement.
+    /// </summary>
+    private bool StandOffFrom(ulong guid, bool first, double age, bool face = true)
     {
         if (Creatures.LiveNode((long)guid) is not { } node)
         {
@@ -67,9 +74,12 @@ public partial class PlayCheck
         if (first)
         {
             var at = Tiles.LocalToWow(node.GlobalPosition);
-            Server.Say(FormattableString.Invariant($".go xyz {at.X + CastingYards:F1} {at.Y:F1} {at.Z + 1f:F1}"));
+            var from = HuntingSpot;
+            var toward = new System.Numerics.Vector2(from.X - at.X, from.Y - at.Y);
+            toward = toward.LengthSquared() > 0.01f ? System.Numerics.Vector2.Normalize(toward) : System.Numerics.Vector2.UnitX;
+            Server.Say(FormattableString.Invariant($".go xyz {at.X + (toward.X * CastingYards):F1} {at.Y + (toward.Y * CastingYards):F1} {Math.Max(at.Z, from.Z) + 1f:F1}"));
         }
-        else if (age > 2.5 && Player is DesktopPlayer desktop)
+        else if (face && age > 2.5 && Player is DesktopPlayer desktop)
         {
             var away = node.GlobalPosition - desktop.GlobalPosition;
             desktop.Rotation = new Vector3(0, Mathf.Atan2(-away.X, -away.Z), 0);
@@ -85,7 +95,7 @@ public partial class PlayCheck
             (_phase, _phaseAt, _seenAt, _fightShot) = (0, 0, -1, false);
             if (NearestFoe() is not { } foe)
             {
-                Note("  nothing hostile in view");
+                Note("  nothing to fight in view");
                 return false;
             }
 
@@ -94,7 +104,7 @@ public partial class PlayCheck
             Note($"  target {Server.Units[_castAt].Name}");
         }
 
-        if (!StandOffFrom(_castAt, First, age) && _phase == 0)
+        if (!StandOffFrom(_castAt, First, age, face: _phase == 0) && _phase == 0)
         {
             Note("  the creature went");
             return false;
@@ -156,31 +166,72 @@ public partial class PlayCheck
         return null;
     }
 
+    /// <summary>
+    /// With GM mode on the character is friendly to everything, which can't be a Frostbolt's target,
+    /// so it goes off here: the strongest hostile creature near casts at the player, then GM mode
+    /// comes back on.
+    /// </summary>
     private bool? FoeCasts(double age)
     {
         if (First)
         {
             (_phase, _phaseAt, _seenAt, _fightShot) = (0, 0, -1, false);
-            if (NearestFoe() is not { } foe)
-            {
-                Note("  nothing hostile left in view");
-                return false;
-            }
-
-            _castAt = (ulong)foe.Guid;
-            Server.SetTarget(_castAt);
-            Note($"  target {Server.Units[_castAt].Name}");
+            Server.Say(".gm off");
         }
 
-        StandOffFrom(_castAt, First, age);
+        bool? Done(bool passed)
+        {
+            Server.Say(".gm on");
+            return passed;
+        }
+
         switch (_phase)
         {
-            case 0 when age > 4:
+            case 0 when age > 2:
+            {
+                var feet = ((IPlayer)Player).Feet;
+                var foe = Creatures.LiveNodes
+                    .Where(n => Server.Units.TryGetValue((ulong)n.Guid, out var u) && !u.IsDead && u.Type == ObjectType.Unit && !u.IsNpc && !u.NotAttackable
+                        && Server.ReactionTo(u) == Reaction.Hostile && n.Node.GlobalPosition.DistanceTo(feet) < 100f)
+                    .OrderByDescending(n => Server.Units[(ulong)n.Guid].Level)
+                    .Select(n => (ulong?)n.Guid)
+                    .FirstOrDefault();
+                if (foe is not { } guid)
+                {
+                    Note("  nothing hostile near, even with GM mode off");
+                    return Done(false);
+                }
+
+                _castAt = guid;
+                Server.SetTarget(_castAt);
+                Note($"  target {Server.Units[_castAt].Name}, level {Server.Units[_castAt].Level}");
+                StandOffFrom(_castAt, true, 0);
+                NextPhase(age);
+                break;
+            }
+            case 1 when age - _phaseAt > 4:
+            {
+                StandOffFrom(_castAt, false, 3);
                 _countsBefore = Effects?.MissileCounts ?? default;
+                var caster = _castAt;
+                Server.UnitCast += e =>
+                {
+                    switch (e)
+                    {
+                        case UnitSpellWent went when went.Caster == caster:
+                            Note($"  it went: {went.Spell}, hits [{string.Join(", ", went.Hits.Select(h => h == Server.Session.SelfGuid ? "the player" : h.ToString("X")))}], misses {went.Misses.Count}");
+                            break;
+                        case UnitCastStopped stopped when stopped.Caster == caster:
+                            Note($"  it stopped: {stopped.Spell}");
+                            break;
+                    }
+                };
                 Server.Say($".cast back {FrostboltSpell}");
                 NextPhase(age);
                 break;
-            case 1:
+            }
+            case 2:
+            {
                 if (Server.CastOf(_castAt) is { } cast && _seenAt < 0)
                 {
                     _seenAt = age;
@@ -197,16 +248,17 @@ public partial class PlayCheck
                 if (_seenAt >= 0 && Server.CastOf(_castAt) is null && counts.Arrived > _countsBefore.Arrived)
                 {
                     Note($"  the bar went when it went off; its missile arrived ({counts.Arrived - _countsBefore.Arrived})");
-                    return true;
+                    return Done(true);
                 }
 
                 if (age - _phaseAt > 8)
                 {
                     Note($"  cast seen: {_seenAt >= 0}, missiles launched {counts.Launched - _countsBefore.Launched}, arrived {counts.Arrived - _countsBefore.Arrived}");
-                    return false;
+                    return Done(false);
                 }
 
                 break;
+            }
         }
 
         return null;
@@ -241,13 +293,17 @@ public partial class PlayCheck
                 break;
             case 3 when Server.CastOf(self) is { InterruptedAt: not null }:
                 Note($"  interrupted after {age - _phaseAt:F2} s");
-                Shot("interrupted");
                 NextPhase(age);
                 break;
             case 3 when age - _phaseAt > 2:
                 Note($"  after cancelling: {(Server.CastOf(self) is { } left ? $"still {left}" : "no bar")}");
                 return false;
-            case 4 when age - _phaseAt > InterruptedSecondsAndABit:
+            case 4 when age - _phaseAt > 0.3:
+                // Once the frame has drawn it.
+                Shot("interrupted");
+                NextPhase(age);
+                break;
+            case 5 when age - _phaseAt > InterruptedSecondsAndABit - 0.3:
                 var gone = Server.CastOf(self) is null;
                 Note($"  the bar {(gone ? "went" : "stayed")} after a second");
                 Server.SetTarget(0);
@@ -255,6 +311,13 @@ public partial class PlayCheck
         }
 
         return null;
+    }
+
+    /// <summary>Forgets Blizzard again: the command wants the player selected, not the creature.</summary>
+    private void Unlearn()
+    {
+        Server.SetTarget(Server.Session.SelfGuid);
+        Server.Say($".unlearn {BlizzardSpell}");
     }
 
     private const double InterruptedSecondsAndABit = ServerWorld.InterruptedSeconds + 0.3;
@@ -267,8 +330,8 @@ public partial class PlayCheck
             Server.Say($".learn {BlizzardSpell}");
             if (NearestFoe() is not { } foe)
             {
-                Note("  nothing hostile left in view");
-                Server.Say($".unlearn {BlizzardSpell}");
+                Note("  nothing left to fight in view");
+                Unlearn();
                 return false;
             }
 
@@ -277,14 +340,14 @@ public partial class PlayCheck
             Note($"  target {Server.Units[_castAt].Name}");
         }
 
-        StandOffFrom(_castAt, First, age);
+        StandOffFrom(_castAt, First, age, face: _phase == 0);
         switch (_phase)
         {
             case 0 when age > 4:
                 if (Creatures.LiveNode((long)_castAt) is not { } node)
                 {
                     Note("  the creature went");
-                    Server.Say($".unlearn {BlizzardSpell}");
+                    Unlearn();
                     return false;
                 }
 
@@ -292,7 +355,7 @@ public partial class PlayCheck
                 if (Server.Aiming?.Id != (int)BlizzardSpell)
                 {
                     Note("  Blizzard didn't aim");
-                    Server.Say($".unlearn {BlizzardSpell}");
+                    Unlearn();
                     return false;
                 }
 
@@ -307,7 +370,7 @@ public partial class PlayCheck
             case 1 when age - _phaseAt > 3:
                 var shards = Effects?.ShowingShards ?? 0;
                 Server.Session.CancelChannel(BlizzardSpell);
-                Server.Say($".unlearn {BlizzardSpell}");
+                Unlearn();
                 Note($"  {shards} pieces of ice falling");
                 return shards > 0;
         }

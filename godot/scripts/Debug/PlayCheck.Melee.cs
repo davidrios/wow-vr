@@ -71,6 +71,11 @@ public partial class PlayCheck
     private void Approach(Node3D node)
     {
         GoNextTo(node);
+        Face(node);
+    }
+
+    private void Face(Node3D node)
+    {
         if (Player is DesktopPlayer desktop)
         {
             var away = node.GlobalPosition - desktop.GlobalPosition;
@@ -78,8 +83,13 @@ public partial class PlayCheck
         }
     }
 
-    private (long Guid, Node3D Node)? NearestFoe(ulong except = 0) =>
-        Nearest(u => u.Guid != except && !u.IsDead && u.Type == ObjectType.Unit && !u.IsNpc && !u.NotAttackable && Server.ReactionTo(u) == Reaction.Hostile);
+    /// <summary>
+    /// The nearest creature to fight. With GM mode on the character is friendly to everything, so
+    /// any that isn't friendly will do; <paramref name="hostile"/> wants one that fights back.
+    /// </summary>
+    private (long Guid, Node3D Node)? NearestFoe(ulong except = 0, bool hostile = false) =>
+        Nearest(u => u.Guid != except && !u.IsDead && u.Type == ObjectType.Unit && !u.IsNpc && !u.NotAttackable
+            && (hostile ? Server.ReactionTo(u) == Reaction.Hostile : Server.ReactionTo(u) != Reaction.Friendly));
 
     /// <summary>The Attack button with a target turns melee on, lights, and again turns it off; changing target while on follows it.</summary>
     private bool? AttackButton(double age)
@@ -136,11 +146,14 @@ public partial class PlayCheck
     }
 
     /// <summary>Swings at a creature: the body stands ready and swings, the creature takes the blow, and sounds play.</summary>
+    private bool _closedIn;
+    private bool _faced;
+
     private bool? Swing(double age)
     {
         if (First)
         {
-            (_phase, _phaseAt) = (0, 0);
+            (_phase, _phaseAt, _closedIn, _faced) = (0, 0, false, false);
             _swings.Clear();
             _selfClips.Clear();
             _foeClips.Clear();
@@ -159,7 +172,25 @@ public partial class PlayCheck
         Sample();
         switch (_phase)
         {
-            case 0 when age > 3:
+            // The teleport lands after the facing was set, and the creature may have wandered:
+            // next to it again, then facing it once there.
+            case 0 when age > 2 && !_closedIn:
+                _closedIn = true;
+                if (Creatures.LiveNode((long)_foe) is { } again)
+                {
+                    GoNextTo(again);
+                }
+
+                break;
+            case 0 when age > 3.5 && !_faced:
+                _faced = true;
+                if (Creatures.LiveNode((long)_foe) is { } there)
+                {
+                    Face(there);
+                }
+
+                break;
+            case 0 when age > 4:
                 _soundsBefore = Creatures.SoundPlayer.PlayedCount;
                 Server.Cast(ServerWorld.AttackSpell);
                 NextPhase(age);
@@ -193,7 +224,18 @@ public partial class PlayCheck
             _selfClips.Clear();
             _foeClips.Clear();
             Server.Say(".gm off");
-            if (NearestFoe() is not { } foe)
+            _foe = 0;
+        }
+
+        // GM mode going off takes a moment to change the character's faction, which says who's hostile.
+        if (_foe == 0)
+        {
+            if (age < 2)
+            {
+                return null;
+            }
+
+            if (NearestFoe(hostile: true) is not { } foe)
             {
                 Note("  nothing hostile in view");
                 return false;
@@ -203,12 +245,13 @@ public partial class PlayCheck
             Server.SetTarget(_foe);
             Approach(foe.Node);
             Note($"  provoking {Server.Units[_foe].Name}");
+            _phaseAt = age;
         }
 
         Sample();
         switch (_phase)
         {
-            case 0 when age > 3:
+            case 0 when age - _phaseAt > 3:
                 // One swing starts the fight; then the player stops and lets it hit back.
                 Server.Cast(ServerWorld.AttackSpell);
                 NextPhase(age);

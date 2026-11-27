@@ -249,6 +249,9 @@ public partial class ServerWorld : Node
         // The old target's ring goes and the new one's comes now, not when their stats next change.
         var old = Target;
         Target = guid;
+
+        // Ranges measured this frame were the old target's.
+        _measuredFrame = ulong.MaxValue;
         foreach (var changed in new[] { old, guid })
         {
             if (changed != 0 && Units.TryGetValue(changed, out var unit))
@@ -262,7 +265,12 @@ public partial class ServerWorld : Node
         TargetChanged?.Invoke();
     }
 
-    public UnitStats? TargetStats => Target != 0 && Units.TryGetValue(Target, out var stats) ? stats : null;
+    /// <summary>The selected unit's stats: the player's own when they've selected themselves, as the game's target frame shows them.</summary>
+    public UnitStats? TargetStats =>
+        Target == 0 ? null
+        : Units.TryGetValue(Target, out var stats) ? stats
+        : Target == _session.SelfGuid ? Self?.Unit
+        : null;
 
     /// <summary>How the unit stands toward the player, from their factions.</summary>
     public Reaction ReactionTo(UnitStats unit)

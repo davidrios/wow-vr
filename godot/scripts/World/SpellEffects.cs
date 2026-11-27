@@ -459,6 +459,18 @@ public partial class SpellEffects : Node3D
                 Impact(target, impact);
             }
         }
+
+        // A missile flies to a unit it missed too, as the game's do, and strikes nothing there.
+        if (visual.Missile is { } missed && spell.Speed > 0 && caster is not null)
+        {
+            foreach (var (miss, _) in went.Misses.Where(m => m.Item1 != went.Caster).Take(MaxMissiles))
+            {
+                if (NodeOf(miss) is not null)
+                {
+                    Launch(caster, miss, missed, spell.Speed, null);
+                }
+            }
+        }
     }
 
     /// <summary>The cast ended without going off, or its channel ran out: the caster lets go.</summary>

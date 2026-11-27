@@ -244,8 +244,14 @@ public partial class CreatureNode : Node3D
     private Color _nameColor = new(1f, 0.9f, 0.3f);
     private MeshInstance3D? _ring;
 
-    /// <summary>Set by the player's body, which chooses its own clips with <see cref="PlayMotion"/>.</summary>
+    /// <summary>Set by the player's body, which chooses its own clips with <see cref="PlayMotion"/>, and another player swimming or in the air.</summary>
     private bool _motionChosen;
+
+    /// <summary>Its clips are chosen with <see cref="PlayMotion"/> rather than from how it moves.</summary>
+    public bool MotionChosen => _motionChosen;
+
+    /// <summary>Goes back to choosing its own clips from how it moves, which it does at the next <see cref="Move"/>.</summary>
+    public void ReleaseMotion() => _motionChosen = false;
 
     /// <summary>The unit's height, for picking it and placing what floats over it.</summary>
     public float Height => _asset.Skeleton.Bounds.End.Y * _asset.Scale * Scale.Y;

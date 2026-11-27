@@ -112,6 +112,10 @@ public partial class PlayCheck : Node
         {
             AddMeleeSteps();
         }
+        else if (arguments.Contains("--fight-check"))
+        {
+            AddFightSteps();
+        }
         else
         {
             Step("gm on and revive", age =>

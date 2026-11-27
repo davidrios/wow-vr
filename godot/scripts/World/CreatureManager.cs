@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using WowVR.Converters;
 using WowVR.Formats;
+using WowVR.Formats.Models;
 using WowVR.Formats.Terrain;
 using WowVR.Formats.World;
 using Godot;
@@ -134,6 +135,9 @@ public partial class CreatureManager : Node
     public int SpawnCount => _tiles.Values.Sum(t => t.Entries.Count);
 
     public IEnumerable<CreatureNode> Nodes => _nodes.Select(e => e.Node!);
+
+    /// <summary>What a creature in the scene was placed from.</summary>
+    public CreatureSpawn? SpawnOf(CreatureNode node) => _nodes.FirstOrDefault(e => e.Node == node)?.Spawn;
 
     public int NodeCount => _nodes.Count;
 
@@ -688,7 +692,18 @@ public partial class CreatureManager : Node
             facing = (float)Math.Atan2(y - motion.Y, x - motion.X);
         }
 
-        entry.Node!.Move(new Vector3(position.X, position.Y, position.Z), facing, motion.Moving, entry.Motion.MoveSpeed, entry.Distance, delta);
+        // Another player swimming or in the air plays the clip their flags call for, and goes back to walking and idling after.
+        if (motion.Sequence is { } sequence)
+        {
+            var jumping = sequence is M2SequenceIds.Jump or M2SequenceIds.Fall;
+            entry.Node!.PlayMotion(sequence, motion.Moving ? entry.Motion.MoveSpeed : 0f, jumping ? 1f : null);
+        }
+        else if (entry.Node!.MotionChosen)
+        {
+            entry.Node.ReleaseMotion();
+        }
+
+        entry.Node.Move(new Vector3(position.X, position.Y, position.Z), facing, motion.Moving, entry.Motion.MoveSpeed, entry.Distance, delta);
         UpdateLight(entry, state, motion, new Vector3(position.X, position.Y, position.Z));
         entry.Node.FadeLight(delta);
     }
@@ -743,6 +758,15 @@ public partial class CreatureManager : Node
     {
         if (motion.Z is { } exact)
         {
+            // A jump or fall is worked out from the last packet, which can't know where the ground
+            // is: the landing's packet comes a moment after the body would sink into it.
+            // From the height it had, which a late packet's guess may have gone far under.
+            if (motion.Airborne && entry.Distance < RayRange && RayHeight(entry, state, motion, entry.HasHeight ? Mathf.Max(exact, entry.Height) : exact) is { } floor && floor > exact)
+            {
+                exact = floor;
+            }
+
+            entry.HasHeight = true;
             return entry.Height = exact;
         }
 

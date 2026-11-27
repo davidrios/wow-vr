@@ -258,6 +258,7 @@ public partial class GameHud : Control
         {
             _playerFrame.Auras.Tick();
             _targetFrame.Auras.Tick();
+            _targetFrame.ShowCast(_world.Target != 0 ? _world.CastOf(_world.Target) : null, _world.Spells);
             RefreshDeath();
             CloseDialogOutOfReach();
             foreach (var slot in _slots)
@@ -1084,6 +1085,49 @@ public partial class UnitFrame : PanelContainer
         (_power, _powerText) = Bar(box, new Color(0.15f, 0.35f, 0.95f), 14);
         Auras = new AuraBar { Visible = false };
         box.AddChild(Auras);
+
+        _cast = new Control { Visible = false, CustomMinimumSize = new Vector2(0, 18), MouseFilter = MouseFilterEnum.Ignore };
+        box.AddChild(_cast);
+        var back = new ColorRect { Color = new Color(0, 0, 0, 0.6f), MouseFilter = MouseFilterEnum.Ignore };
+        back.SetAnchorsPreset(LayoutPreset.FullRect);
+        _cast.AddChild(back);
+        _castFill = new ColorRect { MouseFilter = MouseFilterEnum.Ignore };
+        _cast.AddChild(_castFill);
+        _castText = new Label { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, ClipText = true };
+        _castText.AddThemeFontSizeOverride("font_size", 13);
+        _castText.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _castText.AddThemeConstantOverride("outline_size", 3);
+        _castText.SetAnchorsPreset(LayoutPreset.FullRect);
+        _cast.AddChild(_castText);
+    }
+
+    private Control _cast = null!;
+    private ColorRect _castFill = null!;
+    private Label _castText = null!;
+
+    /// <summary>The cast colors: gold filling for a cast, green emptying for a channel, red when cut short.</summary>
+    private static readonly Color CastColor = new(0.85f, 0.6f, 0f);
+    private static readonly Color ChannelColor = new(0.2f, 0.75f, 0.2f);
+    private static readonly Color InterruptedColor = new(0.8f, 0.1f, 0.1f);
+
+    /// <summary>
+    /// Under the bars, the unit's cast as the target frame shows it: filling as it's cast, emptying as
+    /// it's channeled, and red saying "Interrupted" for a moment when cut short. Hidden without one.
+    /// </summary>
+    public void ShowCast(CastInfo? cast, Formats.Database.SpellTable? spells)
+    {
+        if (cast is null)
+        {
+            _cast.Visible = false;
+            return;
+        }
+
+        _cast.Visible = true;
+        var interrupted = cast.InterruptedAt is not null;
+        var done = interrupted ? 1 : Math.Clamp((ServerWorld.Now - cast.Start) / cast.Duration, 0, 1);
+        _castFill.Color = interrupted ? InterruptedColor : cast.Channel ? ChannelColor : CastColor;
+        _castFill.Size = new Vector2((float)(_cast.Size.X * (cast.Channel && !interrupted ? 1 - done : done)), _cast.Size.Y);
+        _castText.Text = interrupted ? "Interrupted" : spells?.Get((int)cast.Spell)?.Name ?? $"Spell {cast.Spell}";
     }
 
     /// <summary>The key its place is saved under: the desktop window and the VR panel differ in size, so each has its own.</summary>

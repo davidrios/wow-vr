@@ -195,4 +195,72 @@ public class PlayTests
     [InlineData(21u, "You don't have the items that quest needs.")]
     public void QuestRefusalsReadAsTheGameSays(uint code, string text) =>
         Assert.Equal(text, RealmSession.QuestInvalid(code));
+
+    [Fact]
+    public void AJumpRisesAndComesBackDownInTheGameTime()
+    {
+        // The client jumps at 7.96 yards a second, which packets give as negative.
+        var move = PlayerMove.From(new MovementInfo { Flags = MoveFlags.Falling, Position = new Vector3(0, 0, 10), JumpVerticalSpeed = -7.96f });
+        var top = 7.96f / PlayerMove.Gravity;
+
+        Assert.True(move.Jumped);
+        Assert.Equal(10f, move.HeightAt(0), 3);
+        Assert.Equal(10f + (7.96f * top / 2f), move.HeightAt(top), 3);
+        Assert.Equal(10f, move.HeightAt(2 * top), 3);
+        Assert.True(move.HeightAt(3 * top) < 10f);
+    }
+
+    [Fact]
+    public void AFallCarriesOnFromHowLongItHadFallen()
+    {
+        var move = PlayerMove.From(new MovementInfo { Flags = MoveFlags.Falling, Position = new Vector3(0, 0, 50), FallTime = 1000 });
+
+        Assert.False(move.Jumped);
+        // A second in, it falls at g, and gathers more.
+        Assert.Equal(50f - (PlayerMove.Gravity * 0.5f) - (PlayerMove.Gravity * 0.5f * 0.5f / 2f), move.HeightAt(0.5), 3);
+    }
+
+    [Fact]
+    public void AFallNeverGoesPastTheFastestSpeed()
+    {
+        var move = PlayerMove.From(new MovementInfo { Flags = MoveFlags.Falling, Position = new Vector3(0, 0, 0), FallTime = 10000 });
+
+        Assert.Equal(-PlayerMove.TerminalSpeed, move.HeightAt(1), 2);
+    }
+
+    [Fact]
+    public void OnTheGroundTheHeightIsThePackets()
+    {
+        var move = PlayerMove.From(new MovementInfo { Flags = MoveFlags.Forward, Position = new Vector3(0, 0, 5), JumpVerticalSpeed = -7f });
+
+        Assert.False(move.Airborne);
+        Assert.Equal(5f, move.HeightAt(1));
+    }
+
+    [Fact]
+    public void AnotherPlayerSwimmingForwardFollowsTheirPitch()
+    {
+        var tracker = new ObjectTracker();
+        tracker.Objects[7] = new TrackedObject(7, ObjectType.Player) { SwimSpeed = 4f };
+        tracker.ApplyMovement(7, new MovementInfo { Flags = MoveFlags.Forward | MoveFlags.Swimming, Position = new Vector3(0, 0, 0), Pitch = -MathF.PI / 6f });
+
+        var obj = tracker.Objects[7];
+        var (position, _, moving) = obj.Path!.At(1);
+        Assert.True(moving);
+        Assert.Equal(4f * MathF.Cos(MathF.PI / 6f), position.X, 3);
+        Assert.Equal(-4f * MathF.Sin(MathF.PI / 6f), position.Z, 3);
+        Assert.True(obj.PlayerMove!.Value.Swimming);
+    }
+
+    [Fact]
+    public void AnotherPlayerRisingInWaterGoesStraightUp()
+    {
+        var tracker = new ObjectTracker();
+        tracker.Objects[7] = new TrackedObject(7, ObjectType.Player) { SwimSpeed = 4f };
+        tracker.ApplyMovement(7, new MovementInfo { Flags = MoveFlags.Ascending | MoveFlags.Swimming, Position = new Vector3(1, 2, 3) });
+
+        var (position, _, moving) = tracker.Objects[7].Path!.At(1);
+        Assert.True(moving);
+        Assert.Equal(new Vector3(1, 2, 7), position);
+    }
 }

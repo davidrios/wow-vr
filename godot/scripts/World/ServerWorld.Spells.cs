@@ -10,8 +10,9 @@ using Godot;
 
 namespace WowVR.World;
 
-/// <summary>The player's cast or channel under way: what, since when on the game's clock, and for how long, in seconds.</summary>
-public sealed record CastInfo(uint Spell, double Start, double Duration, bool Channel);
+/// <summary>A cast or channel under way: what, since when on the game's clock, and for how long, in seconds.</summary>
+/// <param name="InterruptedAt">When it was cut short, for the bar to say so for a moment; null while it goes on.</param>
+public sealed record CastInfo(uint Spell, double Start, double Duration, bool Channel, double? InterruptedAt = null);
 
 /// <summary>
 /// Spells on a server: what the player knows and has on their buttons, casting from a button at
@@ -38,6 +39,74 @@ public partial class ServerWorld
     public IReadOnlyList<ActionButton> ActionButtons { get; private set; } = new ActionButton[RealmSession.ActionButtonCount];
 
     public CastInfo? Casting { get; private set; }
+
+    /// <summary>How long a cast bar says "Interrupted" after a cast is cut short, in seconds.</summary>
+    public const double InterruptedSeconds = 1;
+
+    private readonly Dictionary<ulong, CastInfo> _unitCasts = [];
+
+    /// <summary>Channels that just ended, for a failure that follows to mark as cut short: the server ends a channel first.</summary>
+    private readonly Dictionary<ulong, (CastInfo Cast, double At)> _endedChannels = [];
+
+    /// <summary>How long after a channel ends a failure still counts as having cut it short, in seconds.</summary>
+    private const double EndedChannelGrace = 0.5;
+
+    /// <summary>
+    /// Another unit's cast or channel under way, or one cut short in the last <see cref="InterruptedSeconds"/>,
+    /// for the target's cast bar. Instant spells have none.
+    /// </summary>
+    public CastInfo? CastOf(ulong guid)
+    {
+        if (!_unitCasts.TryGetValue(guid, out var cast))
+        {
+            return null;
+        }
+
+        // One whose end never came is let go a moment after it should have ended, as the player's own.
+        var now = Now;
+        if (cast.InterruptedAt is { } cut ? now > cut + InterruptedSeconds : now > cast.Start + cast.Duration + 1)
+        {
+            _unitCasts.Remove(guid);
+            return null;
+        }
+
+        return cast;
+    }
+
+    /// <summary>
+    /// Keeps each unit's cast: begun with a cast time or as a channel, gone when it goes off or a
+    /// channel ends, and cut short when the server says it failed, which is how it tells of an interrupt.
+    /// </summary>
+    private void TrackUnitCast(SessionEvent e)
+    {
+        switch (e)
+        {
+            case UnitCastBegan began when began.DurationMs > 0:
+                _endedChannels.Remove(began.Caster);
+                _unitCasts[began.Caster] = new CastInfo(began.Spell, Now, began.DurationMs / 1000.0, began.Channel);
+                break;
+            case UnitSpellWent went when _unitCasts.TryGetValue(went.Caster, out var cast) && !cast.Channel && cast.Spell == went.Spell:
+                _unitCasts.Remove(went.Caster);
+                break;
+            case UnitCastStopped stopped when _unitCasts.TryGetValue(stopped.Caster, out var cast) && cast.InterruptedAt is null:
+                // A channel ending is a stop with no spell; a failure names the spell.
+                if (stopped.Spell == 0)
+                {
+                    _unitCasts.Remove(stopped.Caster);
+                    _endedChannels[stopped.Caster] = (cast, Now);
+                }
+                else if (stopped.Spell == cast.Spell)
+                {
+                    _unitCasts[stopped.Caster] = cast with { InterruptedAt = Now };
+                }
+
+                break;
+            case UnitCastStopped stopped when stopped.Spell != 0 && _endedChannels.Remove(stopped.Caster, out var ended)
+                && ended.Cast.Spell == stopped.Spell && Now - ended.At < EndedChannelGrace:
+                _unitCasts[stopped.Caster] = ended.Cast with { InterruptedAt = Now };
+                break;
+        }
+    }
 
     /// <summary>Seconds since the game started, the clock cooldowns and casts are measured on.</summary>
     public static double Now => Time.GetTicksMsec() / 1000.0;
@@ -109,6 +178,7 @@ public partial class ServerWorld
                 StartCooldown(went.Spell);
                 break;
             case UnitCastBegan or UnitSpellWent or UnitCastStopped or AreaEffectAppeared or AreaEffectGone:
+                TrackUnitCast(e);
                 UnitCast?.Invoke(e);
                 if (e is UnitSpellWent { Misses.Count: > 0 } missed)
                 {

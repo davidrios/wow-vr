@@ -90,7 +90,8 @@ public sealed record UnitAppeared(UnitInfo Unit) : SessionEvent;
 public sealed record PlayerLookChanged(ulong Guid, PlayerLook Look) : SessionEvent;
 
 /// <summary>A unit set off on a new path, or stopped, which is a path of one point.</summary>
-public sealed record UnitMoved(ulong Guid, MovePath Path, double PathElapsed) : SessionEvent;
+/// <param name="Player">Another player's flags and jump, when their own movement packet moved them.</param>
+public sealed record UnitMoved(ulong Guid, MovePath Path, double PathElapsed, PlayerMove? Player = null) : SessionEvent;
 
 public sealed record UnitGone(ulong Guid) : SessionEvent;
 
@@ -650,7 +651,7 @@ public sealed partial class RealmSession : IDisposable
     {
         if (_announced.Contains(obj.Guid) && obj.Path is { } path)
         {
-            Events.Enqueue(new UnitMoved(obj.Guid, path, obj.PathElapsed));
+            Events.Enqueue(new UnitMoved(obj.Guid, path, obj.PathElapsed, obj.PlayerMove));
         }
     }
 

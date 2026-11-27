@@ -51,6 +51,9 @@ public sealed class TrackedObject(ulong guid, ObjectType type)
     /// <summary>How far along <see cref="Path"/> it already was when the server said, in seconds.</summary>
     public double PathElapsed { get; set; }
 
+    /// <summary>Another player's flags and jump from their last movement packet; null for a path the server set.</summary>
+    public PlayerMove? PlayerMove { get; set; }
+
     public uint Field(int index) => Fields.GetValueOrDefault(index);
 
     public uint Entry => Field(UpdateFields.ObjectEntry);
@@ -382,6 +385,7 @@ public sealed class ObjectTracker
         {
             obj.Path = new MovePath(points, duration / 1000.0, facing, cyclic);
             obj.PathElapsed = passed / 1000.0;
+            obj.PlayerMove = null;
         }
     }
 
@@ -404,6 +408,7 @@ public sealed class ObjectTracker
             case 1: // stop
                 obj.Path = MovePath.Standing(start, obj.Orientation);
                 obj.PathElapsed = 0;
+                obj.PlayerMove = null;
                 Moved?.Invoke(obj);
                 return;
             case 2: // facing a spot
@@ -462,6 +467,7 @@ public sealed class ObjectTracker
 
         obj.Path = new MovePath(points, duration / 1000.0, facing, cyclic);
         obj.PathElapsed = 0;
+        obj.PlayerMove = null;
         if (facing is { } f && points.Count == 1)
         {
             obj.Orientation = f;
@@ -507,9 +513,12 @@ public sealed class ObjectTracker
         obj.MoveFlags = info.Flags;
         obj.TransportGuid = info.TransportGuid;
         obj.TransportOffset = info.TransportOffset;
+        obj.PlayerMove = PlayerMove.From(info);
         var forward = (info.Flags & MoveFlags.Forward) != 0 ? 1f : (info.Flags & MoveFlags.Backward) != 0 ? -1f : 0f;
         var side = (info.Flags & MoveFlags.StrafeLeft) != 0 ? 1f : (info.Flags & MoveFlags.StrafeRight) != 0 ? -1f : 0f;
-        if (forward != 0 || side != 0)
+        var swimming = (info.Flags & (MoveFlags.Swimming | MoveFlags.Flying)) != 0;
+        var up = !swimming ? 0f : (info.Flags & MoveFlags.Ascending) != 0 ? 1f : (info.Flags & MoveFlags.Descending) != 0 ? -1f : 0f;
+        if (forward != 0 || side != 0 || up != 0)
         {
             var back = forward < 0;
             var speed = (info.Flags & MoveFlags.Swimming) != 0 ? (back ? obj.SwimBackSpeed : obj.SwimSpeed)
@@ -517,8 +526,18 @@ public sealed class ObjectTracker
                 : (info.Flags & MoveFlags.Walking) != 0 ? obj.WalkSpeed
                 : back ? obj.RunBackSpeed : obj.RunSpeed;
             const float ahead = 2f;
-            var angle = info.Orientation + MathF.Atan2(side, forward);
-            var end = info.Position + (new Vector3(MathF.Cos(angle), MathF.Sin(angle), 0f) * speed * ahead);
+
+            // Swimming or flying, going forward or back tilts the way the player looks; rising or sinking goes straight up or down.
+            var heading = Vector3.Zero;
+            if (forward != 0 || side != 0)
+            {
+                var angle = info.Orientation + MathF.Atan2(side, forward);
+                var pitch = swimming && forward != 0 ? info.Pitch * forward : 0f;
+                heading = new Vector3(MathF.Cos(angle) * MathF.Cos(pitch), MathF.Sin(angle) * MathF.Cos(pitch), MathF.Sin(pitch));
+            }
+
+            heading = Vector3.Normalize(heading + new Vector3(0f, 0f, up));
+            var end = info.Position + (heading * speed * ahead);
             obj.Path = new MovePath([info.Position, end], ahead, info.Orientation, false, holdFacing: true);
         }
         else

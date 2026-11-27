@@ -23,6 +23,40 @@ public sealed class ServerMotion(MovePath path, double startClock) : ICreatureMo
     }
 }
 
+/// <summary>
+/// Another player moving by their own movement packets: their path, the height of a jump or fall,
+/// and the clips their flags call for, as the player's own body plays them. Swimming and flying
+/// swim; in the air they jump, or fall if they didn't jump; backwards they walk backwards; and
+/// strafing turns the body toward the way it goes, up to a quarter turn, backwards the other way.
+/// </summary>
+public sealed class PlayerMotion(MovePath path, double startClock, PlayerMove move) : ICreatureMotion
+{
+    public float MoveSpeed => path.Speed > 0f ? path.Speed : CreatureMotion.WalkSpeed;
+
+    public CreatureMotionState At(double clock)
+    {
+        var seconds = clock - startClock;
+        var (position, facing, moving) = path.At(seconds);
+        var z = move.Airborne ? move.HeightAt(seconds) : position.Z;
+        var forward = (move.Flags & MoveFlags.Forward) != 0 ? 1f : move.Backward ? -1f : 0f;
+        if (moving && !move.Swimming && move.Side != 0)
+        {
+            facing += move.Backward ? MathF.Atan2(-move.Side, 1f) : MathF.Atan2(move.Side, MathF.Max(forward, 0f));
+        }
+
+        int? sequence = move.Swimming
+            ? !moving ? Formats.Models.M2SequenceIds.SwimIdle
+                : move.Backward ? Formats.Models.M2SequenceIds.SwimBackwards
+                : forward == 0 && move.Side > 0 ? Formats.Models.M2SequenceIds.SwimLeft
+                : forward == 0 && move.Side < 0 ? Formats.Models.M2SequenceIds.SwimRight
+                : Formats.Models.M2SequenceIds.Swim
+            : move.Airborne ? (move.Jumped ? Formats.Models.M2SequenceIds.Jump : Formats.Models.M2SequenceIds.Fall)
+            : moving && move.Backward ? Formats.Models.M2SequenceIds.WalkBackwards
+            : null;
+        return new CreatureMotionState(position.X, position.Y, z, facing, moving, sequence, move.Airborne);
+    }
+}
+
 /// <summary>How a unit looks to the player: hostile, neutral or friendly, as names and frames are colored.</summary>
 public enum Reaction
 {
@@ -365,12 +399,16 @@ public partial class ServerWorld : Node
                 NoteLook(changed.Guid, changed.Look);
                 break;
             case UnitMoved moved:
-                _creatures.SetLiveMotion((long)moved.Guid, new ServerMotion(moved.Path, _creatures.Clock - moved.PathElapsed));
+                _creatures.SetLiveMotion((long)moved.Guid, moved.Player is { } player
+                    ? new PlayerMotion(moved.Path, _creatures.Clock - moved.PathElapsed, player)
+                    : new ServerMotion(moved.Path, _creatures.Clock - moved.PathElapsed));
                 _moves++;
                 break;
             case UnitGone gone:
                 _creatures.RemoveLive((long)gone.Guid);
                 ForgetMelee(gone.Guid);
+                _unitCasts.Remove(gone.Guid);
+                _endedChannels.Remove(gone.Guid);
                 Units.Remove(gone.Guid);
                 Creatures--;
                 if (gone.Guid == Target)

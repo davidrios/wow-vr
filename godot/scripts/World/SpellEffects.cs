@@ -164,6 +164,13 @@ public partial class SpellEffects : Node3D
     public int ShowingShards => _shards.Count(s => s.Node.Visible);
 
     /// <summary>What's raining now, for checks: rains running, shards made and showing.</summary>
+    /// <summary>Missiles that set off, missiles that reached their unit, and impact kits played, for checks.</summary>
+    public (int Launched, int Arrived, int Impacts) MissileCounts => (_launched, _arrived, _impacts);
+
+    private int _launched;
+    private int _arrived;
+    private int _impacts;
+
     public string RainReport => $"{_rains.Count} rains ({_areaRains.Count} of areas), {_shards.Count} shards, {_shards.Count(s => s.Node.Visible)} showing";
 
     private readonly List<Rain> _rains = [];
@@ -475,6 +482,7 @@ public partial class SpellEffects : Node3D
 
     private void Impact(CreatureNode target, SpellKit impact)
     {
+        _impacts++;
         PlayAnimation(target, impact, hold: false);
         PlaySound(impact.Sound, target);
         ForEachEffect(impact, (effect, place) => Timed(target, effect, place));
@@ -504,6 +512,7 @@ public partial class SpellEffects : Node3D
             }
 
             _missiles.Add(new Missile(node, target, speed, impact, ServerWorld.Now));
+            _launched++;
         });
     }
 
@@ -543,6 +552,7 @@ public partial class SpellEffects : Node3D
             {
                 missile.Node.QueueFree();
                 _missiles.RemoveAt(i);
+                _arrived++;
                 if (missile.Impact is { } impact)
                 {
                     Impact(target, impact);

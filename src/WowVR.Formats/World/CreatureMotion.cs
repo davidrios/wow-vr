@@ -3,7 +3,9 @@ namespace WowVR.Formats.World;
 /// <summary>Where a creature is at some moment, in WoW coordinates.</summary>
 /// <param name="Z">Null when only the ground can say, as when wandering.</param>
 /// <param name="Facing">Radians, turning left from north.</param>
-public readonly record struct CreatureMotionState(double X, double Y, float? Z, float Facing, bool Moving);
+/// <param name="Sequence">The clip it plays, as another player swimming or jumping; null to walk, run and idle as creatures do.</param>
+/// <param name="Airborne">In the air, so <paramref name="Z"/> is a guess that mustn't sink into the ground.</param>
+public readonly record struct CreatureMotionState(double X, double Y, float? Z, float Facing, bool Moving, int? Sequence = null, bool Airborne = false);
 
 /// <summary>Where a creature is at each moment of the game's clock.</summary>
 public interface ICreatureMotion

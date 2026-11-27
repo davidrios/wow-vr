@@ -8,7 +8,8 @@ namespace WowVR.Debug;
 /// <summary>
 /// <c>--creature-check</c> places sample creatures, then prints PASS or FAIL for whether they
 /// appear, animate, move, stay on the ground and keep to the frame budget, turn in place, and
-/// fight as the server's melee has them: stand ready, swing and stagger at a critical, and quits.
+/// fight as the server's melee has them: stand ready, swing and stagger at a critical, and that
+/// another player jumps, falls, swims and walks backwards with their clips, and quits.
 /// </summary>
 public partial class CreatureCheck : Node
 {
@@ -70,6 +71,7 @@ public partial class CreatureCheck : Node
         }
         WatchTurning(delta);
         WatchMelee();
+        WatchOtherPlayer();
         foreach (var (node, start) in _startPositions)
         {
             if (!GodotObject.IsInstanceValid(node))
@@ -165,6 +167,16 @@ public partial class CreatureCheck : Node
         if (_meleeProblem is { } melee)
         {
             problems.Add(melee);
+        }
+
+        GD.Print($"Another player: {OtherPlayerReport}");
+        if (_otherProblem is { } other)
+        {
+            problems.Add(other);
+        }
+        else if (_otherStep < 10)
+        {
+            problems.Add($"another player's steps stopped at {_otherStep}");
         }
 
         if (_worstFrame > MaxFrameMilliseconds)

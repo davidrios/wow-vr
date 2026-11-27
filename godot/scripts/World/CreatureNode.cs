@@ -640,6 +640,11 @@ public partial class CreatureNode : Node3D
 
         if (sequence == M2SequenceIds.Stand)
         {
+            if (Land(moving: false) || _landing)
+            {
+                return;
+            }
+
             if (_moving || _clip.Length == 0)
             {
                 _moving = false;
@@ -647,6 +652,20 @@ public partial class CreatureNode : Node3D
             }
 
             return;
+        }
+
+        if (sequence == M2SequenceIds.Jump && TakeOff())
+        {
+            return;
+        }
+
+        if (sequence is M2SequenceIds.Jump or M2SequenceIds.Fall)
+        {
+            _airborne = true;
+        }
+        else
+        {
+            Land(moving: true);
         }
 
         var clip = ClipFor(sequence);
@@ -674,6 +693,66 @@ public partial class CreatureNode : Node3D
             _player.Play(clip, clip != _clip ? BlendSeconds : 0, (float)rate);
             (_clip, _rate) = (clip, rate);
         }
+    }
+
+    /// <summary>In the air, by a jump or a fall; the jump's start is playing; its landing is playing.</summary>
+    private bool _airborne;
+    private bool _jumpStarting;
+    private bool _landing;
+
+    /// <summary>
+    /// A jump's first moment: its start plays once, then the jump's loop. True while the start
+    /// plays, which the next calls leave be.
+    /// </summary>
+    private bool TakeOff()
+    {
+        if (_jumpStarting)
+        {
+            return true;
+        }
+
+        if (_airborne)
+        {
+            return false;
+        }
+
+        _airborne = true;
+        _landing = false;
+        if (ClipFor(M2SequenceIds.JumpStart) is not { } start)
+        {
+            return false;
+        }
+
+        _player.Play(start, BlendSeconds * 0.5f, 1f);
+        (_clip, _rate, _moving, _jumpStarting) = (start, 1f, true, true);
+        return true;
+    }
+
+    /// <summary>
+    /// Back on the ground: standing, the landing plays once, as the game's; moving, the stride
+    /// takes over at once. True when the landing began.
+    /// </summary>
+    private bool Land(bool moving)
+    {
+        if (moving)
+        {
+            _landing = false;
+        }
+
+        if (!_airborne)
+        {
+            return false;
+        }
+
+        (_airborne, _jumpStarting) = (false, false);
+        if (moving || ClipFor(M2SequenceIds.JumpEnd) is not { } end)
+        {
+            return false;
+        }
+
+        _player.Play(end, BlendSeconds * 0.5f, 1f);
+        (_clip, _rate, _moving, _landing) = (end, 1f, false, true);
+        return true;
     }
 
     private void Play(string clip, float rate)
@@ -734,6 +813,17 @@ public partial class CreatureNode : Node3D
             return;
         }
 
+        if (_jumpStarting)
+        {
+            _jumpStarting = false;
+            if (ClipFor(M2SequenceIds.Jump) is { } loop)
+            {
+                Play(loop, 1f);
+                return;
+            }
+        }
+
+        _landing = false;
         var wasOneShot = _oneShot;
         (_oneShot, _swingWhole) = (false, false);
         _clip = "";
@@ -842,11 +932,22 @@ public partial class CreatureNode : Node3D
 
         var stride = moving ? Stride(walkSpeed) : null;
         _stride = stride;
+        if (!moving && _landing)
+        {
+            return;
+        }
+
         if (moving != _moving || (stride is { } wanted && wanted.Clip != _clip))
         {
             _moving = moving;
+            if (!moving && Land(moving: false))
+            {
+                return;
+            }
+
             if (stride is { } s)
             {
+                Land(moving: true);
                 _player.Play(s.Clip, BlendSeconds, (float)s.Rate);
                 (_clip, _rate) = (s.Clip, s.Rate);
             }

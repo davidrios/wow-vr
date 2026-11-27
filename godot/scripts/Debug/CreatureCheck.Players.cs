@@ -11,7 +11,7 @@ namespace WowVR.Debug;
 /// <summary>
 /// Another player as their movement packets have them: a character beside the start jumps (the
 /// jump clip, rising about as high as the game's jump, and kept on the ground until its landing's
-/// packet though the arc goes on under it), lands, falls, swims, swims on the spot, walks
+/// packet though the arc goes on under it), lands, jumps and lands on the run, falls, swims, swims on the spot, walks
 /// backwards and strafes, each with its clip, then stands.
 /// </summary>
 public partial class CreatureCheck
@@ -30,12 +30,20 @@ public partial class CreatureCheck
     private float _otherLowest = float.MaxValue;
     private readonly List<string> _otherNotes = [];
     private string? _otherProblem;
-    private bool _sawJumpClip;
+    private readonly List<string> _otherSeen = [];
 
     private string OtherPlayerReport => _otherNotes.Count == 0 ? "not watched" : string.Join(", ", _otherNotes);
 
     private void WatchOtherPlayer()
     {
+        void Seen(string id)
+        {
+            if (_otherSeen.Count == 0 || _otherSeen[^1] != id)
+            {
+                _otherSeen.Add(id);
+            }
+        }
+
         static string Id(string clip) => clip.Split('_')[0];
         var node = Creatures.LiveNode(OtherPlayerGuid);
         var since = Creatures.Clock - _otherAt;
@@ -93,11 +101,7 @@ public partial class CreatureCheck
             }
             case 2:
                 _otherPeak = Mathf.Max(_otherPeak, node!.GlobalPosition.Y - _otherStart.Z);
-                if (since > 0.3 && !_sawJumpClip)
-                {
-                    _sawJumpClip = true;
-                    Expect("jumping", "38");
-                }
+                Seen(Id(node.Clip));
 
                 // The arc would be 4 yards under the ground by now; no landing's packet has come.
                 if (since > 1.2)
@@ -114,15 +118,45 @@ public partial class CreatureCheck
                         _otherProblem ??= $"another player falling sank {-_otherLowest:F2} yards into the ground";
                     }
 
+                    // The start plays once, then the jump's loop.
+                    _otherNotes.Add($"in the air played {string.Join(" then ", _otherSeen)}");
+                    if (!_otherSeen.Contains("37") || !_otherSeen.Contains("38"))
+                    {
+                        _otherProblem ??= $"another player's jump played {string.Join(", ", _otherSeen)}, not its start and loop";
+                    }
+
+                    _otherSeen.Clear();
                     Move(MoveFlags.None);
                     _otherStep++;
                 }
 
                 break;
-            case 3 when since > 0.5:
-                Expect("landed", "0", "1", "2", "3", "60", "61", "62", "63", "64", "65", "66");
+            case 3:
+                // Landing standing plays the landing once, then the idles.
+                Seen(Id(node!.Clip));
+                if (since > 1.5)
+                {
+                    _otherNotes.Add($"landing played {string.Join(" then ", _otherSeen)}");
+                    if (!_otherSeen.Contains("39"))
+                    {
+                        _otherProblem ??= $"another player landing played {string.Join(", ", _otherSeen)}, not the landing";
+                    }
+
+                    Expect("landed", "0", "1", "2", "3", "60", "61", "62", "63", "64", "65", "66");
+                    Move(MoveFlags.Falling | MoveFlags.Forward, _otherStart + new System.Numerics.Vector3(14f, 0f, 0f), up: JumpSpeed);
+                    _otherStep = 20;
+                }
+
+                break;
+            case 20 when since > 0.6:
+                // Landing on the run goes straight back to running.
+                Move(MoveFlags.Forward, _otherStart + new System.Numerics.Vector3(18f, 0f, 0f));
+                _otherStep = 21;
+                break;
+            case 21 when since > 0.15:
+                Expect("landing on the run", "4", "5");
                 Move(MoveFlags.Falling, fallen: 0.6f);
-                _otherStep++;
+                _otherStep = 4;
                 break;
             case 4 when since > 0.1:
                 Expect("falling", "40");

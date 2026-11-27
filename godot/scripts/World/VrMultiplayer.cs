@@ -33,6 +33,11 @@ public partial class VrMultiplayer : Node
     private bool _sentVr;
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
 
+    /// <summary>How long after entering the world a server that speaks the protocol has announced it, in seconds.</summary>
+    private const double AnnouncementSeconds = 15;
+
+    private bool _toldNoAnnouncement;
+
     /// <summary>For checks: poses sent, and remote bodies being posed now.</summary>
     public int PosesSent { get; private set; }
 
@@ -49,6 +54,10 @@ public partial class VrMultiplayer : Node
         public CreatureNode? Node;
         public VrBodyIk? Ik;
         public bool Posing;
+
+        /// <summary>What the log has said of it: its first pose, and its first posing or why it couldn't be.</summary>
+        public bool ToldArrived;
+        public bool ToldPosed;
     }
 
     public override void _Ready()
@@ -81,6 +90,12 @@ public partial class VrMultiplayer : Node
                     break;
                 }
 
+                if (!remote.ToldArrived)
+                {
+                    remote.ToldArrived = true;
+                    GD.Print($"VR poses are arriving from {NameOf(guid)} (state {pose.State})");
+                }
+
                 (remote.Previous, remote.PreviousAt) = (remote.Latest, remote.LatestAt);
                 (remote.Latest, remote.LatestAt) = (pose, now);
                 remote.State = pose.State;
@@ -98,8 +113,19 @@ public partial class VrMultiplayer : Node
     public override void _Process(double delta)
     {
         // The session goes to the next map's world while this one is being taken down.
-        if (Server.Released || Server.Session.Vr is not { } vr)
+        if (Server.Released)
         {
+            return;
+        }
+
+        if (Server.Session.Vr is not { } vr)
+        {
+            if (!_toldNoAnnouncement && _clock.Elapsed.TotalSeconds > AnnouncementSeconds)
+            {
+                _toldNoAnnouncement = true;
+                GD.Print($"The server hasn't announced WowVR's VR protocol in {AnnouncementSeconds} s: no VR poses go out or come in");
+            }
+
             return;
         }
 
@@ -137,6 +163,10 @@ public partial class VrMultiplayer : Node
         Server.Session.SendVrPose(pose);
         _sentVr = true;
         PosesSent++;
+        if (PosesSent == 1)
+        {
+            GD.Print($"Sending VR poses, {vr.SendRate} a second");
+        }
     }
 
     private void PoseRemotes(VrReady vr)
@@ -180,7 +210,19 @@ public partial class VrMultiplayer : Node
 
             if (remote.Ik is null)
             {
+                if (!remote.ToldPosed)
+                {
+                    remote.ToldPosed = true;
+                    GD.Print($"{NameOf(guid)}'s VR pose can't be shown: their body has no solver");
+                }
+
                 continue;
+            }
+
+            if (!remote.ToldPosed)
+            {
+                remote.ToldPosed = true;
+                GD.Print($"Posing {NameOf(guid)}'s character from their VR poses");
             }
 
             // Drawn behind by a little more than one interval, between the two poses around then.
@@ -229,6 +271,8 @@ public partial class VrMultiplayer : Node
 
         remote.Posing = false;
     }
+
+    private string NameOf(ulong guid) => Server.Units.TryGetValue(guid, out var unit) && unit.Name.Length > 0 ? unit.Name : $"player {guid:X}";
 
     /// <summary>For checks: poses another player's character as if the server had relayed this.</summary>
     public void Receive(ulong guid, VrPoseMessage pose) => OnMessage(new VrPoseReceived(guid, pose));

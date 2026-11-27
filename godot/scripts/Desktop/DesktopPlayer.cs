@@ -31,7 +31,7 @@ public partial class DesktopPlayer : CharacterBody3D, IPlayer
     private const float MaxRise = 2.5f;
 
     /// <summary>A jump's upward speed, in yards a second, as the game's.</summary>
-    private const float JumpSpeed = 7.96f;
+    public const float JumpSpeed = 7.96f;
 
     /// <summary>Turning with A and D, in radians a second: half a turn a second, as the game's.</summary>
     private const float KeyTurnRate = Mathf.Pi;

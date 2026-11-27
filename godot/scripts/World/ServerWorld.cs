@@ -108,6 +108,13 @@ public partial class ServerWorld : Node
     private double _offGround;
     private bool _wasFalling;
 
+    /// <summary>The jump or fall under way as packets carry it: up at take-off, and the way and speed along the ground then.</summary>
+    private bool _jumpSent;
+    private float _jumpUp;
+    private float _jumpSin;
+    private float _jumpCos;
+    private float _jumpAlong;
+
     public int Creatures { get; private set; }
 
     public RealmSession Session => _session;
@@ -690,8 +697,22 @@ public partial class ServerWorld : Node
             flags |= MoveFlags.CanFly;
         }
 
-        _offGround = _iplayer.OnGround || _iplayer.Flying || swimming ? 0 : _offGround + delta;
-        var falling = _offGround > FallingSeconds;
+        // A jump is in the air from the key press, with its take-off speed; walking off an edge
+        // only after a moment off the ground, as uneven ground leaves it for a frame or two.
+        var jumping = _player is DesktopPlayer { Jumping: true } && !_iplayer.Flying && !swimming;
+        var jumpStarted = jumping && !_jumpSent;
+        var airTime = _offGround;
+        _offGround = jumpStarted ? 0 : jumping || !(_iplayer.OnGround || _iplayer.Flying || swimming) ? _offGround + delta : 0;
+        var falling = jumping || _offGround > FallingSeconds;
+        if (falling && !_wasFalling)
+        {
+            // The client works the arc out from these, so they're the take-off's, not the moment's.
+            var along = new Vector2(velocity.X, velocity.Z);
+            var angle = Mathf.Atan2(-along.X, -along.Y);
+            (_jumpUp, _jumpSin, _jumpCos, _jumpAlong) = (jumping ? DesktopPlayer.JumpSpeed : 0f, Mathf.Sin(angle), Mathf.Cos(angle), along.Length());
+        }
+
+        _jumpSent = jumping;
         if (falling)
         {
             flags |= MoveFlags.Falling;
@@ -703,8 +724,13 @@ public partial class ServerWorld : Node
             Flags = flags,
             Position = new System.Numerics.Vector3((float)x, (float)y, z),
             Orientation = WowCoords.NormalizeOrientation(facing),
-            FallTime = falling ? (uint)(_offGround * 1000) : 0,
-            JumpVerticalSpeed = falling ? -velocity.Y : 0,
+
+            // Landing carries how long the fall took.
+            FallTime = falling ? (uint)(_offGround * 1000) : _wasFalling ? (uint)(airTime * 1000) : 0,
+            JumpVerticalSpeed = falling ? -_jumpUp : 0,
+            JumpSin = falling ? _jumpSin : 0,
+            JumpCos = falling ? _jumpCos : 0,
+            JumpHorizontalSpeed = falling ? _jumpAlong : 0,
         };
         if (Transports?.RideOffset(move.Position, move.Orientation) is { } ride)
         {
@@ -716,7 +742,14 @@ public partial class ServerWorld : Node
         }
 
         _wasFalling = falling;
-        _session.UpdateMovement(move);
+        if (jumpStarted)
+        {
+            _session.Jump(move);
+        }
+        else
+        {
+            _session.UpdateMovement(move);
+        }
     }
 
     /// <summary>Walking into an instance's entrance, or out of its exit, tells the server, which moves the player.</summary>

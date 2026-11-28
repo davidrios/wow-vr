@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using WowVR.Desktop;
 using WowVR.Formats.Database;
@@ -37,7 +38,8 @@ public partial class PlayCheck
 
     private SpellEffects? Effects => GetParent().GetNodeOrNull<SpellEffects>("SpellEffects");
 
-    private void AddFightSteps()
+    /// <param name="only">With <c>--fight-check=charge</c>, only the charge, to look into it.</param>
+    private void AddFightSteps(string? only)
     {
         Step("gm on and revive", age =>
         {
@@ -50,10 +52,98 @@ public partial class PlayCheck
             return age > 2 ? Server.Self is { } self && !self.IsGhost && !self.Unit.IsDead : null;
         });
         GoTo("go hunting on Tirisfal's coast", HuntingSpot);
+        if (only == "charge")
+        {
+            Step("Charge runs the player to a creature", ChargeAtFoe);
+            return;
+        }
+
         Step("a missile flies to a creature and strikes it", MissileAtFoe);
         Step("a creature's cast shows on its frame and its missile flies at the player", FoeCasts);
         Step("a channel cut short shows as interrupted on the frame", InterruptedOnFrame);
         Step("Blizzard's ice falls on a creature", BlizzardOnFoe);
+        Step("Charge runs the player to a creature", ChargeAtFoe);
+    }
+
+    /// <summary>Warrior's Charge, rank 1, cast by GM command whatever the class.</summary>
+    private const uint ChargeSpell = 100;
+
+    /// <summary>Battle Stance, which Charge needs.</summary>
+    private const uint BattleStanceSpell = 2457;
+
+    private bool _followed;
+    private readonly HashSet<string> _chargeClips = [];
+
+    /// <summary>
+    /// Charge, cast with the GM's <c>.cast 100</c> after putting the player in Battle Stance, as a warrior must be:
+    /// the server runs the player along its path to the creature, which the client follows with the
+    /// body running, and leaves them beside it.
+    /// </summary>
+    private bool? ChargeAtFoe(double age)
+    {
+        if (First)
+        {
+            (_phase, _phaseAt, _followed, _fightShot) = (0, 0, false, false);
+            _chargeClips.Clear();
+            // One on land: a charge starting in the water doesn't go.
+            var feet = ((IPlayer)Player).Feet;
+            var dry = Creatures.LiveNodes
+                .Where(n => Server.Units.TryGetValue((ulong)n.Guid, out var u) && !u.IsDead && u.Type == ObjectType.Unit && !u.IsNpc && !u.NotAttackable
+                    && Server.ReactionTo(u) != Reaction.Friendly && Tiles.LiquidAt(n.Node.GlobalPosition + (Vector3.Up * 1.5f)) is null)
+                .OrderBy(n => n.Node.GlobalPosition.DistanceTo(feet))
+                .Select(n => ((long Guid, Node3D Node)?)n)
+                .FirstOrDefault();
+            if (dry is not { } foe)
+            {
+                Note("  nothing on land to charge in view");
+                return false;
+            }
+
+            _castAt = (ulong)foe.Guid;
+            Server.SetTarget(_castAt);
+            Note($"  target {Server.Units[_castAt].Name}");
+        }
+
+        StandOffFrom(_castAt, First, age, face: _phase == 0);
+        var node = Creatures.LiveNode((long)_castAt);
+        switch (_phase)
+        {
+            case 0 when age > 4:
+                Note($"  {node?.GlobalPosition.DistanceTo(((IPlayer)Player).Feet):F1} yards away before");
+                // Charge wants Battle Stance, which a GM can put any class in.
+                Server.Say($".cast {BattleStanceSpell} triggered");
+                NextPhase(age);
+                break;
+            case 1 when age - _phaseAt > 1:
+                Server.Say($".cast {ChargeSpell}");
+                NextPhase(age);
+                break;
+            case 2:
+                _followed |= Server.FollowingServerPath;
+                if (Server.Avatar?.Body?.Clip is { Length: > 0 } clip)
+                {
+                    _chargeClips.Add(clip.Split('_')[0]);
+                }
+
+                if (Server.FollowingServerPath && !_fightShot)
+                {
+                    _fightShot = true;
+                    Shot("charge");
+                }
+
+                if (age - _phaseAt > 3)
+                {
+                    var after = node is null ? float.NaN : node.GlobalPosition.DistanceTo(((IPlayer)Player).Feet);
+                    Note($"  followed the server's path: {_followed}; body clips {string.Join(' ', _chargeClips)}; {after:F1} yards away after");
+                    Server.SetTarget(Server.Session.SelfGuid);
+                    Server.Say($".unaura {BattleStanceSpell}");
+                    return _followed && _chargeClips.Contains("5") && after < 6f;
+                }
+
+                break;
+        }
+
+        return null;
     }
 
     /// <summary>Where the check hunts, on land by Tirisfal's coast.</summary>

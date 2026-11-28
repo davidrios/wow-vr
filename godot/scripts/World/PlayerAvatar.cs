@@ -295,6 +295,9 @@ public partial class PlayerAvatar : Node3D
         return new Vector3(stand.X, feet.Y, stand.Z);
     }
 
+    /// <summary>The server is moving the player along a path, as a charge: the body runs at this pace, whatever the keys say.</summary>
+    public float? ForcedRunSpeed { get; set; }
+
     /// <summary>
     /// WoW's movement clips: running forward, strafing with the body turned toward where it goes,
     /// walking backwards turned the other way, swimming, and in the air, jumping.
@@ -302,6 +305,13 @@ public partial class PlayerAvatar : Node3D
     private void AnimateDesktop(DesktopPlayer player, float delta)
     {
         _facing = Formats.WowCoords.OrientationFromCameraYaw(player.Rotation.Y);
+        if (ForcedRunSpeed is { } forced)
+        {
+            _strafeTurn = 0;
+            _body!.PlayMotion(M2SequenceIds.Run, forced);
+            return;
+        }
+
         var intent = player.MoveIntent;
         var moving = intent != Vector2.Zero && _speed > StandSpeed;
         var back = intent.Y < 0;
@@ -342,6 +352,13 @@ public partial class PlayerAvatar : Node3D
     /// <summary>Stands still, or walks with the legs at the pace the player moves.</summary>
     private void AnimateVr(float delta)
     {
+        if (ForcedRunSpeed is { } forced)
+        {
+            _strafeTurn = 0;
+            _body!.PlayMotion(M2SequenceIds.Run, forced / _bodyScale);
+            return;
+        }
+
         var walking = _player.OnGround && !_player.Flying && _speed > StandSpeed;
         UpdateVrFacing(delta, walking);
         _strafeTurn = 0;

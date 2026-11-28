@@ -112,9 +112,9 @@ public partial class PlayCheck : Node
         {
             AddMeleeSteps();
         }
-        else if (arguments.Contains("--fight-check"))
+        else if (arguments.FirstOrDefault(a => a.StartsWith("--fight-check")) is { } fight)
         {
-            AddFightSteps();
+            AddFightSteps(fight.Contains('=') ? fight[(fight.IndexOf('=') + 1)..] : null);
         }
         else
         {

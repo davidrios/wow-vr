@@ -89,6 +89,12 @@ public sealed record UnitAppeared(UnitInfo Unit) : SessionEvent;
 /// <summary>Another player put something on or took it off, or changed how they look.</summary>
 public sealed record PlayerLookChanged(ulong Guid, PlayerLook Look) : SessionEvent;
 
+/// <summary>
+/// The server moves the player along a path, as Charge, fear or a knock along the ground do: a
+/// real client runs them along it, sending nothing of its own until it ends.
+/// </summary>
+public sealed record SelfMoved(MovePath Path, double PathElapsed) : SessionEvent;
+
 /// <summary>A unit set off on a new path, or stopped, which is a path of one point.</summary>
 /// <param name="Player">Another player's flags and jump, when their own movement packet moved them.</param>
 public sealed record UnitMoved(ulong Guid, MovePath Path, double PathElapsed, PlayerMove? Player = null) : SessionEvent;
@@ -540,6 +546,11 @@ public sealed partial class RealmSession : IDisposable
                 _objects.ReadDestroy(p.Data);
                 break;
             case Opcodes.SMSG_MONSTER_MOVE:
+                if (LogMoves && new PacketReader(p.Data).PackedGuid() == Character.Guid)
+                {
+                    _log($"monster move for the player, {p.Data.Length} bytes");
+                }
+
                 _objects.ReadMonsterMove(p.Data);
                 break;
             case Opcodes.SMSG_COMPRESSED_MOVES:
@@ -649,6 +660,17 @@ public sealed partial class RealmSession : IDisposable
 
     private void OnMoved(TrackedObject obj)
     {
+        // The player's own moves come from the client, except the server's paths for it.
+        if (obj.Guid == Character.Guid)
+        {
+            if (obj.PlayerMove is null && obj.Path is { Points.Count: > 1 } own)
+            {
+                Events.Enqueue(new SelfMoved(own, obj.PathElapsed));
+            }
+
+            return;
+        }
+
         if (_announced.Contains(obj.Guid) && obj.Path is { } path)
         {
             Events.Enqueue(new UnitMoved(obj.Guid, path, obj.PathElapsed, obj.PlayerMove));

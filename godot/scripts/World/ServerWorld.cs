@@ -214,7 +214,11 @@ public partial class ServerWorld : Node
             }
         }
 
-        SendMovement(delta);
+        if (!FollowServerPath())
+        {
+            SendMovement(delta);
+        }
+
         CheckAreaTriggers(delta);
         ProcessMelee();
 
@@ -412,6 +416,9 @@ public partial class ServerWorld : Node
             case PlayerLookChanged changed:
                 _creatures.Redress((long)changed.Guid, AppearanceOf(changed.Look));
                 NoteLook(changed.Guid, changed.Look);
+                break;
+            case SelfMoved self:
+                _serverPath = (self.Path, Now - self.PathElapsed);
                 break;
             case UnitMoved moved:
                 _creatures.SetLiveMotion((long)moved.Guid, moved.Player is { } player
@@ -640,6 +647,54 @@ public partial class ServerWorld : Node
             HideHelm = look.HidesHelm,
             HideCloak = look.HidesCloak,
         };
+    }
+
+    /// <summary>A path the server is moving the player along, as a charge, and when it began on <see cref="Now"/>.</summary>
+    private (MovePath Path, double Start)? _serverPath;
+    private bool _heldOnPath;
+
+    /// <summary>The server is moving the player along a path now, for checks.</summary>
+    public bool FollowingServerPath => _serverPath is not null;
+
+    /// <summary>
+    /// Carries the player along the server's path, held so neither the keys nor gravity move them,
+    /// facing the way it goes, with the body running at its pace; what the client says of its own
+    /// movement waits until the path ends, as the server takes none meanwhile. True while it lasts.
+    /// </summary>
+    private bool FollowServerPath()
+    {
+        if (_serverPath is not { } following)
+        {
+            return false;
+        }
+
+        var seconds = Now - following.Start;
+        var (position, facing, _) = following.Path.At(seconds);
+        var done = seconds >= following.Path.Duration;
+        _iplayer.PlaceAt(_tiles.LocalPosition(position));
+        if (_player is DesktopPlayer desktop)
+        {
+            desktop.RotationDegrees = new Vector3(0, Mathf.RadToDeg(WowCoords.CameraYawFromOrientation(facing)), 0);
+        }
+
+        if (_heldOnPath == done)
+        {
+            _heldOnPath = !done;
+            _iplayer.Held = !done;
+        }
+
+        if (Avatar is not null)
+        {
+            Avatar.ForcedRunSpeed = done ? null : following.Path.Speed;
+        }
+
+        if (done)
+        {
+            _serverPath = null;
+            _hasLastFeet = false;
+        }
+
+        return !done;
     }
 
     /// <summary>The way the player faces, as a WoW orientation: the desktop body's, or the VR body's.</summary>

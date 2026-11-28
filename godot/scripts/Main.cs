@@ -157,22 +157,80 @@ public partial class Main : Node3D
 
         if (AppSettings.ClientPath.Length > 0)
         {
-            if (ShowsLogin())
+            StartWithClient();
+        }
+        else if (!IsTestRun)
+        {
+            AskForClient("Choose your World of Warcraft 3.3.5a folder");
+        }
+    }
+
+    /// <summary>The game, once it knows where the player's client is.</summary>
+    private void StartWithClient()
+    {
+        if (ShowsLogin())
+        {
+            ShowLogin();
+        }
+        else if (_carry is { } carry)
+        {
+            // The server moved the character to another map: the same session goes on there.
+            _carry = null;
+            _login = (carry.Auth, carry.Realms, carry.Host);
+            BeginWorld(carry.Session, askServer: false);
+        }
+        else
+        {
+            BeginWorld(null, askServer: true);
+        }
+    }
+
+    /// <summary>
+    /// A first run has no client: the system's folder picker asks for it, taking the game's folder
+    /// or its Data folder, until one has MPQs in its Data, and saves it. In VR it shows on the
+    /// desktop's window. Closing it quits, as there's nothing to show without a client.
+    /// </summary>
+    private void AskForClient(string title)
+    {
+        var dialog = new FileDialog
+        {
+            Title = title,
+            FileMode = FileDialog.FileModeEnum.OpenDir,
+            Access = FileDialog.AccessEnum.Filesystem,
+            UseNativeDialog = true,
+        };
+        AddChild(dialog);
+        dialog.DirSelected += chosen =>
+        {
+            dialog.QueueFree();
+            if (ClientFolderOf(chosen) is not { } client)
             {
-                ShowLogin();
+                AskForClient($"No MPQ files in {System.IO.Path.Combine(chosen, "Data")}: choose the folder that has Wow.exe and Data");
+                return;
             }
-            else if (_carry is { } carry)
+
+            AppSettings.SaveClientPath(client);
+            LogClientPath();
+            StartWithClient();
+        };
+        dialog.Canceled += () => GetTree().Quit();
+        dialog.PopupCentered(new Vector2I(900, 600));
+    }
+
+    /// <summary>The client's folder, given it or its Data folder, when its Data has MPQs; else null.</summary>
+    private static string? ClientFolderOf(string chosen)
+    {
+        foreach (var folder in new[] { chosen, System.IO.Path.GetDirectoryName(chosen.TrimEnd('/', '\\')) })
+        {
+            var data = folder is null ? null : System.IO.Path.Combine(folder, "Data");
+            if (data is not null && System.IO.Directory.Exists(data)
+                && System.IO.Directory.EnumerateFiles(data, "*.mpq", new System.IO.EnumerationOptions { MatchCasing = System.IO.MatchCasing.CaseInsensitive, RecurseSubdirectories = true }).Any())
             {
-                // The server moved the character to another map: the same session goes on there.
-                _carry = null;
-                _login = (carry.Auth, carry.Realms, carry.Host);
-                BeginWorld(carry.Session, askServer: false);
-            }
-            else
-            {
-                BeginWorld(null, askServer: true);
+                return folder;
             }
         }
+
+        return null;
     }
 
     /// <summary>

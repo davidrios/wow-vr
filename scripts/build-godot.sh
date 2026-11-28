@@ -10,6 +10,11 @@
 # the same version, which works because the patches don't change Godot's API.
 # Needs Python with SCons (pip install scons) and, on Windows, Visual Studio's
 # C++ tools; see Godot's "Compiling" docs for other platforms.
+#
+# GODOT_DEBUG_SYMBOLS=no leaves symbols out (CI does, to keep its caches small).
+# GODOT_CACHE=<folder> keeps every compiled object there (SCons' cache_path), so
+# a later build only compiles what changed, even from a fresh tree, and
+# GODOT_CACHE_LIMIT caps it in GiB.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,12 +31,13 @@ esac
 
 # The screen reader driver and Direct3D 12 need extra SDKs and nothing here uses them.
 EXTRA=(accesskit=no)
+[ -n "${GODOT_CACHE:-}" ] && EXTRA+=(cache_path="$GODOT_CACHE" cache_limit="${GODOT_CACHE_LIMIT:-0}")
 [ "$PLATFORM" = windows ] && EXTRA+=(d3d12=no)
 
 JOBS="$(nproc 2>/dev/null || echo 8)"
 for target in "${TARGETS[@]}"; do
   echo "==> building $target"
-  (cd "$GODOT" && "$PYTHON" -m SCons platform="$PLATFORM" target="$target" module_mono_enabled=yes debug_symbols=yes "${EXTRA[@]}" -j"$JOBS")
+  (cd "$GODOT" && "$PYTHON" -m SCons platform="$PLATFORM" target="$target" module_mono_enabled=yes debug_symbols="${GODOT_DEBUG_SYMBOLS:-yes}" "${EXTRA[@]}" -j"$JOBS")
 done
 
 if [[ " ${TARGETS[*]} " == *" editor "* ]]; then

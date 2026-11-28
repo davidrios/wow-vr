@@ -1,7 +1,6 @@
 # Godot
 .godot/
 *.translation
-godot/export_presets.cfg
 
 # .NET
 bin/
@@ -44,3 +43,4 @@ docs/handoff.md
 extensions/**/*.obj
 extensions/**/*.o
 extensions/**/.sconsign.dblite
+/build/

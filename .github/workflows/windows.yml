@@ -1,0 +1,199 @@
+# Builds the Windows release: our patched Godot's release template, wow-alchemy's library, the
+# HumanoidIK3D extension and the game, exported into a zip. A pushed tag v* publishes it as a
+# GitHub release; running it by hand only keeps the zip as the run's artifact.
+#
+# Each slow part is cached on exactly what it's built from, so a release that changes only the
+# game rebuilds only the game:
+# - the Godot template, on the submodule's commit, the patch queue and the build scripts; when
+#   those change, SCons' object cache (restored from the closest earlier build) means only the
+#   files the change touches compile again;
+# - the HumanoidIK3D library, on godot-cpp's commit and the extension's sources;
+# - wow-alchemy's build, on its commit and the Rust version;
+# - the Godot editor download and NuGet's packages.
+name: Windows build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: 4.7.2
+  # The official .NET editor, which exports with our template. Its SHA-512 is the release's own.
+  GODOT_EDITOR_ZIP: Godot_v4.7.2-stable_mono_win64.zip
+  GODOT_EDITOR_SHA512: 79229fd112b0c9cbeab82363a4ef7be18ea70f1caf86bf912789335b136fbe7e01db0053a33461438c5da1c680c17bbb10040bd09bedc51221cd4423d0367757
+  # wow-alchemy's ffi-crate branch, at the commit this release is built against.
+  WOW_ALCHEMY_REPOSITORY: davidrios/wow-alchemy
+  WOW_ALCHEMY_COMMIT: 4fd1e1509421d09070966ab626736adf5d2cf60c
+  RUST_TOOLCHAIN: 1.99.0
+  SCONS_VERSION: 4.11.1
+  TEMPLATE: third_party/godot/bin/godot.windows.template_release.x86_64.mono.exe
+  HUMANOID_IK_LIBRARY: godot/addons/humanoid_ik/bin/libhumanoid_ik.windows.template_release.x86_64.dll
+  # Everything here builds for release; the debug build of the extension isn't needed.
+  SkipHumanoidIk: "true"
+  GODOT_DEBUG_SYMBOLS: "no"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Versions to cache on
+        id: versions
+        run: |
+          # The submodules' commits, read from the tree without checking them out.
+          echo "godot=$(git ls-tree HEAD third_party/godot | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+          echo "godot_cpp=$(git ls-tree HEAD third_party/godot-cpp | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
+      # Godot's release template.
+      - name: Restore the Godot template
+        id: template
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.TEMPLATE }}
+          key: godot-template-windows-${{ steps.versions.outputs.godot }}-${{ hashFiles('patches/godot/**', 'scripts/build-godot.sh', 'scripts/prepare-godot.sh') }}
+
+      - name: Check out Godot
+        if: steps.template.outputs.cache-hit != 'true'
+        run: git submodule update --init --depth 1 third_party/godot
+
+      - name: Restore SCons' objects
+        if: steps.template.outputs.cache-hit != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/godot-scons
+          key: godot-scons-windows-${{ steps.versions.outputs.godot }}-${{ hashFiles('patches/godot/**', 'scripts/build-godot.sh', 'scripts/prepare-godot.sh') }}
+          restore-keys: |
+            godot-scons-windows-${{ steps.versions.outputs.godot }}-
+            godot-scons-windows-
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install SCons
+        run: python -m pip install "scons==$SCONS_VERSION"
+
+      - name: Build the Godot template
+        if: steps.template.outputs.cache-hit != 'true'
+        env:
+          GODOT_CACHE: ${{ runner.temp }}/godot-scons
+          GODOT_CACHE_LIMIT: "4"
+        run: scripts/build-godot.sh template_release
+
+      # The zip carries Godot's license and its third-party notices, which a cached template
+      # leaves unchecked-out: fetched alone, at the same commit.
+      - name: Godot's license files
+        if: steps.template.outputs.cache-hit == 'true'
+        run: |
+          mkdir -p third_party/godot
+          for file in LICENSE.txt COPYRIGHT.txt; do
+            curl -fsSL -o "third_party/godot/$file" "https://raw.githubusercontent.com/godotengine/godot/${{ steps.versions.outputs.godot }}/$file"
+          done
+
+      # The HumanoidIK3D extension.
+      - name: Restore HumanoidIK3D
+        id: humanoid-ik
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.HUMANOID_IK_LIBRARY }}
+          key: humanoid-ik-windows-${{ steps.versions.outputs.godot_cpp }}-${{ hashFiles('extensions/humanoid_ik/**', 'scripts/build-humanoid-ik.sh') }}
+
+      - name: Build HumanoidIK3D
+        if: steps.humanoid-ik.outputs.cache-hit != 'true'
+        run: scripts/build-humanoid-ik.sh template_release
+
+      - name: godot-cpp's license
+        if: steps.humanoid-ik.outputs.cache-hit == 'true'
+        run: |
+          mkdir -p third_party/godot-cpp
+          curl -fsSL -o third_party/godot-cpp/LICENSE.md "https://raw.githubusercontent.com/godotengine/godot-cpp/${{ steps.versions.outputs.godot_cpp }}/LICENSE.md"
+
+      # wow-alchemy, which dotnet builds through cargo.
+      - name: Check out wow-alchemy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.WOW_ALCHEMY_REPOSITORY }}
+          ref: ${{ env.WOW_ALCHEMY_COMMIT }}
+          path: wow-alchemy
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Restore wow-alchemy's build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            wow-alchemy/target
+          key: cargo-windows-${{ env.RUST_TOOLCHAIN }}-${{ env.WOW_ALCHEMY_COMMIT }}
+          restore-keys: cargo-windows-${{ env.RUST_TOOLCHAIN }}-
+
+      # .NET and the Godot editor that exports.
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore NuGet's packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-windows-${{ hashFiles('**/*.csproj', 'global.json') }}
+          restore-keys: nuget-windows-
+
+      - name: Restore the Godot editor
+        id: editor
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/godot-editor
+          key: godot-editor-${{ env.GODOT_EDITOR_SHA512 }}
+
+      - name: Download the Godot editor
+        if: steps.editor.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/editor.zip" "https://github.com/godotengine/godot-builds/releases/download/$GODOT_VERSION-stable/$GODOT_EDITOR_ZIP"
+          echo "$GODOT_EDITOR_SHA512  $RUNNER_TEMP/editor.zip" | sha512sum -c -
+          unzip -q "$RUNNER_TEMP/editor.zip" -d "$RUNNER_TEMP/godot-editor"
+
+      # The game.
+      - name: Export
+        env:
+          WowAlchemyDir: ${{ github.workspace }}\wow-alchemy\
+          HUMANOID_IK_PREBUILT: "1"
+        run: |
+          editors=("$RUNNER_TEMP"/godot-editor/*/Godot_v*_console.exe)
+          export GODOT_EDITOR="${editors[0]}"
+          scripts/export-windows.sh build/windows
+
+      - name: Zip
+        run: |
+          name="WowVR-${{ steps.versions.outputs.version }}-windows-x86_64"
+          mv build/windows "build/$name"
+          (cd build && 7z a -tzip -mx=9 "$name.zip" "$name" > /dev/null)
+          echo "ZIP=build/$name.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-build
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "$ZIP" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes

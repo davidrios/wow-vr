@@ -10,6 +10,7 @@
 # - the HumanoidIK3D library, on godot-cpp's commit and the extension's sources;
 # - wow-alchemy's build, on its commit and the Rust version;
 # - the Godot editor download and NuGet's packages.
+# Each is saved as soon as it's built, so a later step failing doesn't throw it away.
 name: Windows build
 
 on:
@@ -59,7 +60,7 @@ jobs:
       # Godot's release template.
       - name: Restore the Godot template
         id: template
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.TEMPLATE }}
           key: godot-template-windows-${{ steps.versions.outputs.godot }}-${{ hashFiles('patches/godot/**', 'scripts/build-godot.sh', 'scripts/prepare-godot.sh') }}
@@ -69,8 +70,9 @@ jobs:
         run: git submodule update --init --depth 1 third_party/godot
 
       - name: Restore SCons' objects
+        id: scons
         if: steps.template.outputs.cache-hit != 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/godot-scons
           key: godot-scons-windows-${{ steps.versions.outputs.godot }}-${{ hashFiles('patches/godot/**', 'scripts/build-godot.sh', 'scripts/prepare-godot.sh') }}
@@ -92,6 +94,20 @@ jobs:
           GODOT_CACHE_LIMIT: "4"
         run: scripts/build-godot.sh template_release
 
+      - name: Save the Godot template
+        if: steps.template.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.TEMPLATE }}
+          key: ${{ steps.template.outputs.cache-primary-key }}
+
+      - name: Save SCons' objects
+        if: steps.template.outputs.cache-hit != 'true' && steps.scons.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/godot-scons
+          key: ${{ steps.scons.outputs.cache-primary-key }}
+
       # The zip carries Godot's license and its third-party notices, which a cached template
       # leaves unchecked-out: fetched alone, at the same commit.
       - name: Godot's license files
@@ -105,7 +121,7 @@ jobs:
       # The HumanoidIK3D extension.
       - name: Restore HumanoidIK3D
         id: humanoid-ik
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.HUMANOID_IK_LIBRARY }}
           key: humanoid-ik-windows-${{ steps.versions.outputs.godot_cpp }}-${{ hashFiles('extensions/humanoid_ik/**', 'scripts/build-humanoid-ik.sh') }}
@@ -113,6 +129,13 @@ jobs:
       - name: Build HumanoidIK3D
         if: steps.humanoid-ik.outputs.cache-hit != 'true'
         run: scripts/build-humanoid-ik.sh template_release
+
+      - name: Save HumanoidIK3D
+        if: steps.humanoid-ik.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.HUMANOID_IK_LIBRARY }}
+          key: ${{ steps.humanoid-ik.outputs.cache-primary-key }}
 
       - name: godot-cpp's license
         if: steps.humanoid-ik.outputs.cache-hit == 'true'
@@ -134,7 +157,8 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
 
       - name: Restore wow-alchemy's build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cargo
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -149,7 +173,8 @@ jobs:
           global-json-file: global.json
 
       - name: Restore NuGet's packages
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: nuget
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
           key: nuget-windows-${{ hashFiles('**/*.csproj', 'global.json') }}
@@ -157,7 +182,7 @@ jobs:
 
       - name: Restore the Godot editor
         id: editor
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/godot-editor
           key: godot-editor-${{ env.GODOT_EDITOR_SHA512 }}
@@ -169,8 +194,17 @@ jobs:
           echo "$GODOT_EDITOR_SHA512  $RUNNER_TEMP/editor.zip" | sha512sum -c -
           unzip -q "$RUNNER_TEMP/editor.zip" -d "$RUNNER_TEMP/godot-editor"
 
+      - name: Save the Godot editor
+        if: steps.editor.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/godot-editor
+          key: ${{ steps.editor.outputs.cache-primary-key }}
+
       # The game.
+      # Godot can sit for many minutes after a failed export before it exits.
       - name: Export
+        timeout-minutes: 30
         env:
           WowAlchemyDir: ${{ github.workspace }}\wow-alchemy\
           HUMANOID_IK_PREBUILT: "1"
@@ -178,6 +212,25 @@ jobs:
           editors=("$RUNNER_TEMP"/godot-editor/*/Godot_v*_console.exe)
           export GODOT_EDITOR="${editors[0]}"
           scripts/export-windows.sh build/windows
+
+      # dotnet builds wow-alchemy and restores NuGet's packages during the export, so these are
+      # saved after it, whether it worked or not.
+      - name: Save wow-alchemy's build
+        if: always() && steps.cargo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            wow-alchemy/target
+          key: ${{ steps.cargo.outputs.cache-primary-key }}
+
+      - name: Save NuGet's packages
+        if: always() && steps.nuget.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ steps.nuget.outputs.cache-primary-key }}
 
       - name: Zip
         run: |

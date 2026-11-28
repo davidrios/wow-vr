@@ -12,10 +12,22 @@
 # repo, or wherever WowAlchemyDir says.
 set -euo pipefail
 
+# The export runs dotnet, whose MSBuild worker nodes, build server and compiler server would
+# otherwise stay alive after it, holding Godot's output open, so it waits for them to time out:
+# 15 minutes after each export.
+export MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0 UseSharedCompilation=false
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/windows}"
 EDITOR="${GODOT_EDITOR:-$ROOT/third_party/godot/bin/godot.windows.editor.x86_64.mono.console.exe}"
 TEMPLATE="${GODOT_TEMPLATE:-$ROOT/third_party/godot/bin/godot.windows.template_release.x86_64.mono.exe}"
+
+# Godot takes a relative export path as relative to the project, not to here: every path it's
+# given is made absolute.
+absolute() { case "$1" in /*|[A-Za-z]:*) echo "$1" ;; *) echo "$PWD/$1" ;; esac; }
+OUT="$(absolute "$OUT")"
+EDITOR="$(absolute "$EDITOR")"
+TEMPLATE="$(absolute "$TEMPLATE")"
 
 [ -f "$EDITOR" ] || { echo "error: no Godot editor at $EDITOR (set GODOT_EDITOR)" >&2; exit 1; }
 [ -f "$TEMPLATE" ] || { echo "error: no release template at $TEMPLATE (scripts/build-godot.sh template_release, or set GODOT_TEMPLATE)" >&2; exit 1; }
